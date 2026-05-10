@@ -10,6 +10,9 @@ from typing import Sequence
 
 from rich.console import Console
 from rich.table import Table
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit.key_binding import KeyBindings
 
 from openpilot.openpilot_log import OpenPilotLogger
 from openpilot.openpilot_session import OpenPilotSession
@@ -24,6 +27,20 @@ from openpilot.workflow_executor import WorkflowExecutor
 
 DEFAULT_OPENPILOT_LOG = Path(__file__).resolve().parents[2] / "logs" / "openpilot.jsonl"
 DEFAULT_TASK_LOG_DIR = Path(__file__).resolve().parents[2] / "data" / "task_logs"
+
+# 系统命令列表
+SYSTEM_COMMANDS = [
+    "/help",
+    "/config",
+    "/plan",
+    "/execute",
+    "/task",
+    "/report",
+    "/memory",
+    "/clear",
+    "/exit",
+    "/quit",
+]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -169,10 +186,15 @@ def _run_openpilot(args, console: Console, llm_client: CompletionClient | None) 
     if args.once:
         ui.show_welcome(settings, logger.log_file)
         ui.warn_missing_config(settings)
+
+        # 检查是否是系统命令
+        if args.once.startswith("/"):
+            return _handle_system_command(args.once, console, llm_client)
+
         result = session.handle_goal(args.once, assume_defaults=True)
         return 0 if result.ok else 2
 
-    return session.run()
+    return _interactive_loop(session, console, llm_client)
 
 
 def _config_check(console: Console) -> int:
@@ -358,6 +380,230 @@ def _handle_report_command(args, console: Console, err_console: Console) -> int:
             return 2
 
     return 2
+
+
+def _interactive_loop(session, console: Console, llm_client: CompletionClient | None) -> int:
+    """交互式循环，支持系统命令"""
+    while True:
+        try:
+            user_input = session.ui.prompt()
+
+            if not user_input:
+                continue
+
+            # 检查退出命令
+            if user_input.lower() in {"exit", "quit", ":q", "/exit", "/quit"}:
+                console.print("[dim]Goodbye![/dim]")
+                return 0
+
+            # 处理系统命令
+            if user_input.startswith("/"):
+                result = _handle_system_command(user_input, console, llm_client)
+                if result == 0:
+                    continue
+                elif result == 99:  # 特殊退出码
+                    return 0
+                else:
+                    continue
+
+            # 处理普通目标
+            result = session.handle_goal(user_input, assume_defaults=False)
+            session.ui.show_turn_result(result)
+
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[dim]Interrupted. Type 'exit' to quit.[/dim]")
+            continue
+
+
+def _handle_system_command(command: str, console: Console, llm_client: CompletionClient | None) -> int:
+    """处理系统命令"""
+    parts = command.split(maxsplit=1)
+    cmd = parts[0].lower()
+    args_str = parts[1] if len(parts) > 1 else ""
+
+    if cmd == "/help":
+        _show_help(console)
+        return 0
+
+    elif cmd == "/config":
+        return _config_check(console)
+
+    elif cmd == "/plan":
+        if not args_str:
+            console.print("[red]Usage:[/red] /plan <goal>")
+            return 1
+        planner = TaskPlanner(llm_client or LLMClient())
+        try:
+            plan = planner.plan(args_str, constraints=[])
+            _print_plan(console, plan)
+            return 0
+        except OpenPilotError as exc:
+            console.print(f"[red]Planning failed:[/red] {exc}", style="red")
+            return 2
+
+    elif cmd == "/execute":
+        if not args_str:
+            console.print("[red]Usage:[/red] /execute <goal>")
+            return 1
+        return _execute_from_command(args_str, console, llm_client)
+
+    elif cmd == "/autopilot":
+        if not args_str:
+            console.print("[red]Usage:[/red] /autopilot <goal>")
+            return 1
+        return _autopilot_mode(args_str, console, llm_client)
+
+    elif cmd == "/task":
+        _show_task_help(console)
+        return 0
+
+    elif cmd == "/report":
+        _show_report_help(console)
+        return 0
+
+    elif cmd == "/memory":
+        _show_memory_status(console)
+        return 0
+
+    elif cmd == "/clear":
+        console.clear()
+        return 0
+
+    elif cmd in {"/exit", "/quit"}:
+        return 99  # 特殊退出码
+
+    else:
+        console.print(f"[red]Unknown command:[/red] {cmd}")
+        console.print("Type [cyan]/help[/cyan] for available commands")
+        return 1
+
+
+def _show_help(console: Console) -> None:
+    """显示帮助信息"""
+    help_text = """
+[bold cyan]OpenPilot System Commands[/bold cyan]
+
+[bold]Planning & Execution:[/bold]
+  /plan <goal>        Generate a task plan
+  /execute <goal>     Execute goal with full workflow (8-stage pipeline)
+  /autopilot <goal>   [bold green]AGI mode:[/bold green] Fully autonomous execution
+
+[bold]Task Management:[/bold]
+  /task               Show task commands help
+  /report             Show report commands help
+  /memory             Show memory system status
+
+[bold]System:[/bold]
+  /config             Check LLM configuration
+  /clear              Clear screen
+  /help               Show this help
+  /exit, /quit        Exit OpenPilot
+
+[bold]Tips:[/bold]
+  - Type '/' to see command suggestions
+  - Use arrow keys to navigate command history
+  - Press Tab for command completion
+  - Type any text without '/' for interactive planning
+"""
+    console.print(help_text)
+
+
+def _show_task_help(console: Console) -> None:
+    """显示任务命令帮助"""
+    console.print("""
+[bold cyan]Task Commands[/bold cyan]
+
+Use these commands in a new terminal or via 'openpilot task':
+  openpilot task list
+  openpilot task log <task_id> <event_type> [options]
+  openpilot task history <task_id>
+
+Example:
+  openpilot task log my_task created
+  openpilot task log my_task status_changed --old-status planned --new-status in_progress
+  openpilot task history my_task
+""")
+
+
+def _show_report_help(console: Console) -> None:
+    """显示报告命令帮助"""
+    console.print("""
+[bold cyan]Report Commands[/bold cyan]
+
+Use these commands in a new terminal or via 'openpilot report':
+  openpilot report daily [--date YYYY-MM-DD] [--save FILE]
+  openpilot report weekly [--week-start YYYY-MM-DD] [--save FILE]
+
+Example:
+  openpilot report daily
+  openpilot report weekly --save reports/weekly.md
+""")
+
+
+def _show_memory_status(console: Console) -> None:
+    """显示记忆系统状态"""
+    from openpilot.memory_store import MemoryStore
+
+    store = MemoryStore()
+    stats = {
+        "short_term": len(store.query(memory_type="short_term", limit=1000)),
+        "long_term": len(store.query(memory_type="long_term", limit=1000)),
+        "task": len(store.query(memory_type="task", limit=1000)),
+        "skill": len(store.query(memory_type="skill", limit=1000)),
+    }
+
+    console.print("\n[bold cyan]Memory System Status[/bold cyan]\n")
+    for mem_type, count in stats.items():
+        console.print(f"  {mem_type}: {count} records")
+    console.print()
+
+
+def _execute_from_command(goal: str, console: Console, llm_client: CompletionClient | None) -> int:
+    """从命令执行工作流"""
+    try:
+        executor = WorkflowExecutor(
+            llm_client=llm_client or LLMClient(),
+            console=console,
+            dry_run=False,
+            auto_approve=False,
+            save_report=None,
+        )
+        result = executor.execute(goal, constraints=[])
+        return 0 if result["success"] else 2
+    except Exception as exc:
+        console.print(f"[red]Execution failed:[/red] {exc}")
+        return 2
+
+
+def _autopilot_mode(goal: str, console: Console, llm_client: CompletionClient | None) -> int:
+    """
+    自动驾驶模式 - AGI 能力测试
+
+    完全自主执行，自动批准低风险和中风险操作，只在高风险时询问
+    """
+    console.print("\n[bold green]🚀 Autopilot Mode Activated[/bold green]")
+    console.print("[dim]Autonomous execution with minimal human intervention[/dim]\n")
+
+    try:
+        executor = WorkflowExecutor(
+            llm_client=llm_client or LLMClient(),
+            console=console,
+            dry_run=False,
+            auto_approve=True,  # 自动批准低风险操作
+            save_report=None,
+        )
+        result = executor.execute(goal, constraints=[])
+
+        if result["success"]:
+            console.print("\n[bold green]✓ Autopilot mission completed successfully[/bold green]")
+        else:
+            console.print("\n[bold red]✗ Autopilot mission failed[/bold red]")
+
+        return 0 if result["success"] else 2
+
+    except Exception as exc:
+        console.print(f"[red]Autopilot failed:[/red] {exc}")
+        return 2
 
 
 if __name__ == "__main__":

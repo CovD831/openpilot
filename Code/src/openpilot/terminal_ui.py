@@ -26,6 +26,48 @@ class TerminalUI:
 
     def __init__(self, console: Console | None = None) -> None:
         self.console = console or Console()
+        self._prompt_session = None  # 延迟初始化
+
+    def _get_prompt_session(self):
+        """获取或创建 prompt session（带历史记录和补全菜单）"""
+        if self._prompt_session is None:
+            try:
+                from prompt_toolkit import PromptSession
+                from prompt_toolkit.completion import WordCompleter
+                from prompt_toolkit.history import InMemoryHistory
+                from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+
+                # 系统命令列表
+                commands = [
+                    "/help", "/config", "/plan", "/execute", "/autopilot",
+                    "/task", "/report", "/memory", "/clear", "/exit", "/quit"
+                ]
+
+                # 创建补全器（显示下拉菜单）
+                completer = WordCompleter(
+                    commands,
+                    ignore_case=True,
+                    sentence=True,
+                    match_middle=True,  # 允许中间匹配
+                )
+
+                # 创建历史记录
+                history = InMemoryHistory()
+
+                # 创建 session
+                self._prompt_session = PromptSession(
+                    completer=completer,
+                    history=history,
+                    enable_history_search=True,  # 启用 Ctrl+R 搜索
+                    auto_suggest=AutoSuggestFromHistory(),  # 自动建议
+                    complete_while_typing=True,  # 输入时显示补全
+                    complete_in_thread=True,  # 在后台线程中补全
+                )
+            except ImportError:
+                # 如果没有 prompt_toolkit，返回 None
+                self._prompt_session = None
+
+        return self._prompt_session
 
     def show_welcome(self, settings: LLMSettings, log_file: str | Path) -> None:
         missing = settings.missing_fields()
@@ -76,7 +118,18 @@ class TerminalUI:
             )
 
     def prompt(self) -> str:
-        return Prompt.ask("[bold cyan]openpilot[/bold cyan]").strip()
+        """获取用户输入，支持命令补全和历史记录"""
+        session = self._get_prompt_session()
+
+        if session:
+            # 使用 prompt_toolkit（支持历史记录和补全）
+            try:
+                return session.prompt("openpilot> ").strip()
+            except (KeyboardInterrupt, EOFError):
+                raise
+        else:
+            # 回退到简单输入（无历史记录）
+            return Prompt.ask("[bold cyan]openpilot[/bold cyan]").strip()
 
     def ask_clarification(self, question: str) -> str:
         return Prompt.ask(f"[yellow]{question}[/yellow]").strip()

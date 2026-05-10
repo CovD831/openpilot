@@ -71,6 +71,11 @@ class WorkflowExecutor:
         self.planner = TaskPlanner(llm_client)
         self.memory_store = MemoryStore()
         self.tool_registry = ToolRegistry()
+
+        # 注册内置工具
+        from openpilot.builtin_tools import register_builtin_tools
+        register_builtin_tools(self.tool_registry)
+
         self.orchestrator = ToolOrchestrator(self.tool_registry)
         self.executor = ToolExecutor(self.tool_registry)
         self.validator = ResultValidator()
@@ -231,13 +236,39 @@ class WorkflowExecutor:
     def _stage_4_tool_orchestration(self, plan: ExecutionPlan):
         """阶段4: 工具编排"""
         with self.console.status("[bold cyan][4/8] 🔧 编排工具...[/bold cyan]"):
+            # 创建编排上下文
+            from openpilot.tool_orchestration_models import OrchestrationContext
+
+            context = OrchestrationContext(
+                task_type=plan.task_card.task_type.value,
+                required_capabilities=[],
+                max_parallel_tools=3,
+                prefer_parallel=True,
+                use_memory=True,
+                auto_approve_low_risk=self.auto_approve,
+            )
+
             # 为每个步骤选择工具
-            orchestration_plan = self.orchestrator.orchestrate(plan)
+            result = self.orchestrator.create_orchestration_plan(plan, context)
+
+            if not result.success:
+                raise Exception(f"工具编排失败: {result.error}")
+
+            orchestration_plan = result.plan
             self.stats["stages_completed"] += 1
 
         # 显示结果
         self.console.print("[bold green]✓[/bold green] [4/8] 工具编排完成")
         self.console.print(f"  • 工具调用: {len(orchestration_plan.tool_selections)}个")
+
+        # 显示推荐和警告
+        if result.recommendations:
+            for rec in result.recommendations[:3]:
+                self.console.print(f"  💡 {rec}")
+        if result.warnings:
+            for warn in result.warnings[:3]:
+                self.console.print(f"  ⚠️  {warn}")
+
         self.console.print()
 
         return orchestration_plan
@@ -271,7 +302,7 @@ class WorkflowExecutor:
                 progress.update(task, description=f"步骤 {i}/{len(orchestration_plan.tool_selections)}: {selection.step_id}")
 
                 # 执行工具
-                result = self.executor.execute(selection)
+                result = self.executor.execute_single(selection)
                 execution_results.append(result)
 
                 # 显示结果
@@ -310,12 +341,15 @@ class WorkflowExecutor:
         # 计算平均质量分数
         if validation_results:
             quality_scores = []
-            for result in execution_results:
-                metrics = self.validator.calculate_quality_metrics(result)
-                quality_scores.append(metrics.overall_score)
+            for i, result in enumerate(execution_results):
+                validation = validation_results[i] if i < len(validation_results) else None
+                if validation:
+                    metrics = self.validator.calculate_quality_metrics(result, validation)
+                    quality_scores.append(metrics.overall_score)
 
-            avg_quality = sum(quality_scores) / len(quality_scores)
-            self.console.print(f"  • 平均质量: {avg_quality:.2f}")
+            if quality_scores:
+                avg_quality = sum(quality_scores) / len(quality_scores)
+                self.console.print(f"  • 平均质量: {avg_quality:.2f}")
 
         self.console.print()
 
@@ -333,7 +367,21 @@ class WorkflowExecutor:
             reflections = []
             for i, result in enumerate(execution_results):
                 validation = validation_results[i] if i < len(validation_results) else None
-                metrics = self.validator.calculate_quality_metrics(result)
+
+                # 只有在有验证结果时才计算质量指标
+                if validation:
+                    metrics = self.validator.calculate_quality_metrics(result, validation)
+                else:
+                    # 创建默认的质量指标
+                    from openpilot.validation_models import QualityMetrics, QualityLevel
+                    metrics = QualityMetrics(
+                        correctness_score=0.0,
+                        completeness_score=0.0,
+                        efficiency_score=0.0,
+                        user_satisfaction_score=0.0,
+                        overall_score=0.0,
+                        quality_level=QualityLevel.POOR
+                    )
 
                 reflection = self.analyzer.analyze_execution_result(
                     result, validation, metrics
@@ -407,11 +455,15 @@ class WorkflowExecutor:
 
         if validation_results:
             quality_scores = []
-            for result in execution_results:
-                metrics = self.validator.calculate_quality_metrics(result)
-                quality_scores.append(metrics.overall_score)
-            avg_quality = sum(quality_scores) / len(quality_scores)
-            table.add_row("平均质量", f"{avg_quality:.2f}")
+            for i, result in enumerate(execution_results):
+                validation = validation_results[i] if i < len(validation_results) else None
+                if validation:
+                    metrics = self.validator.calculate_quality_metrics(result, validation)
+                    quality_scores.append(metrics.overall_score)
+
+            if quality_scores:
+                avg_quality = sum(quality_scores) / len(quality_scores)
+                table.add_row("平均质量", f"{avg_quality:.2f}")
 
         self.console.print()
         self.console.print("━" * 80)
