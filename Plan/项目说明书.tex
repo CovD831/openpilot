@@ -1,0 +1,749 @@
+% !TEX program = xelatex
+\documentclass[12pt,a4paper]{ctexart}
+
+% 页面布局
+\usepackage[top=2.5cm, bottom=2.5cm, left=2.8cm, right=2.8cm]{geometry}
+\setlength{\headheight}{14pt}
+
+% 表格与排版
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{hyperref}
+
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = black,
+  urlcolor   = black
+}
+
+% 页眉页脚
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small{AutoPilot Personal Agent~创业融资计划书}}
+\fancyhead[R]{\small{保密文件}}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\setlist{nosep, left=2em}
+\renewcommand{\arraystretch}{1.25}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\begin{document}
+
+\begin{titlepage}
+  \begin{center}
+    \vspace*{3cm}
+
+    {\huge\bfseries AutoPilot Personal Agent}\\[0.5cm]
+    {\LARGE\bfseries 自主学习型个人任务执行代理}\\[1cm]
+    {\large 创业融资计划书}\\[1.5cm]
+
+    \vfill
+
+    {\large 日期：\today}\\[0.3cm]
+
+    \vspace*{2cm}
+  \end{center}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{项目概述}
+
+\subsection{项目名称}
+\textbf{AutoPilot Personal Agent}（自主学习型个人任务执行代理）。
+
+\subsection{项目定位}
+
+\textbf{OpenPilot 不是一个简单的 AI 助手，而是一个革命性的智能增强框架}，能够将任何普通的 LLM 模型内核转变为具备接近 AGI 能力的超级智能体。
+
+通过系统化的任务拆解、记忆管理、自主决策和工具编排，OpenPilot 让基础模型获得了它们原本不具备的能力：自主思考、持续学习、安全执行和智能决策。这不是简单的提示词工程，而是一个完整的智能增强系统。
+
+\textbf{核心价值}：让普通 LLM 模型（如 GPT-3.5 级别）达到接近 GPT-4 甚至更强的实际效果。
+
+\textbf{三大核心功能模块}：
+\begin{enumerate}
+  \item \textbf{Phase 1: 个人助手} —— 建立基础能力和用户信任（当前实现中）
+  \item \textbf{Phase 2: AGI 智能体} —— 实现自主思考和执行能力（核心目标）
+  \item \textbf{Phase 3: GUI 界面} —— 降低使用门槛，扩大用户群（未来扩展）
+\end{enumerate}
+
+每个阶段都是独立可用的产品，同时又是通往 AGI 的必经之路。三个阶段共享统一的核心引擎，能力递进式增长，数据和经验连续积累。
+
+\subsection{一句话简介}
+
+OpenPilot 是一个智能增强框架，通过系统化的任务拆解、记忆管理、自主决策和工具编排，让任何普通的 LLM 模型内核变得异常强大，具备接近 AGI 的能力。
+
+\subsection{融资阶段定位}
+
+项目当前适合作为种子轮或天使轮早期项目推进，重点验证三件事：
+\begin{enumerate}
+  \item 个人研究、资料整理、报告生成等高频任务能否被稳定自动化；
+  \item 记忆与复盘机制能否显著提升下一次任务的执行质量；
+  \item 安全边界与权限确认机制能否让用户放心授权代理执行真实操作。
+\end{enumerate}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\textwidth}{p{3cm} X p{3cm}}
+    \toprule
+    \textbf{阶段} & \textbf{核心目标} & \textbf{时间} \\
+    \midrule
+    原型验证 & 验证自主规划、工具调用、记忆更新与研究报告生成闭环 & 第 1 个月 \\
+    MVP 内测 & 聚焦个人研究与任务助理场景，获取种子用户反馈 & 第 2--3 个月 \\
+    产品化 & 完成 GUI Agent、安全权限、插件体系与商业化试点 & 第 4--6 个月 \\
+    规模化试点 & 扩展团队、小企业与垂直工作流市场，验证付费转化 & 第 7--12 个月 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{项目发展阶段规划}
+  \label{tab:stages}
+\end{table}
+
+\section{市场机会}
+
+\subsection{行业现状}
+
+2024--2026 年，AI 个人助理和 Agent 产品正在从“对话问答”向“任务执行”演进。现有市场大致分为四类：
+
+\begin{enumerate}
+  \item \textbf{通用 Chatbot}：如 ChatGPT、Claude、Gemini 等，覆盖面广，但多数任务仍需要用户逐轮指挥，长期任务记忆与跨工具执行能力仍有限。
+  \item \textbf{编码 Agent 与开发者工具}：如 OpenCode、Claude Code、OpenAI Codex/GPT、GitHub Copilot、Cursor、Windsurf 等，在编程场景表现出色，但能力边界集中在终端、IDE、代码仓库与软件工程上下文。
+  \item \textbf{Agent 开发框架}：如 LangChain、CrewAI、AutoGPT 类框架，适合开发者搭建自动化流程，但普通用户配置和维护成本较高。
+  \item \textbf{桌面级 Copilot}：依托操作系统或办公套件集成，体验自然，但生态封闭，用户难以自由接入自己的模型、脚本、企业工具和私有数据。
+\end{enumerate}
+
+AutoPilot Personal Agent 面向这四类产品之间的空白地带：它不是单纯聊天工具，也不是只给开发者使用的框架，而是一个可被普通知识工作者授权、监督和长期训练的个人任务执行代理。
+
+\subsection{竞品对比}
+
+OpenClaw 以及以 OpenCode、Claude Code、OpenAI Codex/GPT 系列开发工具为代表的编码 Agent，体现了当前 Agent 产品的两个重要方向。OpenClaw 的优势在于本地运行、聊天渠道接入和真实个人助理动作，例如通过 Telegram、WhatsApp 等入口处理邮件、日历和个人工作流；但其现有形态也暴露出若干不足：一是入口偏聊天化，适合触发简单动作，却不天然适合承载复杂研究、资料整理和多阶段任务管理；二是执行过程如果缺少结构化规划、权限分级、任务日志和复盘机制，用户很难判断 Agent 为什么这么做、做到了哪一步、失败后如何恢复；三是个人知识、长期偏好、历史任务经验与工具调用之间的记忆闭环仍需进一步产品化，否则系统容易停留在“会操作工具”的助理，而不是“越用越懂用户”的个人执行代理。编码 Agent 则聚焦终端、IDE、桌面开发环境和代码仓库自动化。\footnote{OpenClaw、OpenCode、Claude Code、OpenAI Codex/GPT 系列开发工具等功能描述基于其公开网站与文档信息，正式融资材料中应继续核验版本、用户数据和发布时间。}
+
+因此，本项目的机会不在于简单复制 OpenClaw 的聊天入口，也不在于和 OpenCode、Claude Code、OpenAI Codex/GPT 等编码 Agent 在软件工程场景正面硬碰，而在于补齐 OpenClaw 现有形态中“复杂任务承载不足、执行过程不可复盘、长期记忆弱、权限边界不够显性”的短板。AutoPilot 的解决方案是以个人研究和知识工作流为 MVP：先把资料搜索、阅读、归纳、报告生成、文件整理等高频知识任务做成可规划、可授权、可追踪、可复盘的闭环；再通过四层记忆、工具权限分级、执行日志和反思机制，把一次性聊天指令升级为长期可审计的跨工具个人任务执行代理。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{p{2.5cm} X X}
+    \toprule
+    \textbf{产品} & \textbf{核心定位与优势} & \textbf{AutoPilot 的差异化机会} \\
+    \midrule
+    OpenClaw & 本地/自托管个人 AI 助理，强调通过 Telegram、WhatsApp 等聊天渠道触发邮件、日历和个人工作流；优势是隐私优先、入口自然、通信工具覆盖广。 & AutoPilot 更强调可审计的规划-执行-反思闭环、四层记忆和研究/知识工作流，避免只停留在聊天入口自动化。 \\
+    编码 Agent/开发者工具 & 代表产品包括 OpenCode、Claude Code、OpenAI Codex/GPT、Copilot、Cursor 等；优势是代码上下文强、可编辑文件、可运行测试，适合软件工程任务。 & AutoPilot 不局限于代码场景，而是面向研究、文档、日程、文件和 GUI 操作等个人工作流。 \\
+    通用 Chatbot & 对话式 AI 助手，覆盖问答、写作和通用推理；优势是易用、模型能力强、用户认知成熟。 & AutoPilot 重点补齐长期任务记忆、工具执行、权限确认和任务复盘能力。 \\
+    桌面级 Copilot & 操作系统或办公套件内置 AI 助理；优势是系统集成深、默认入口强、体验一致。 & AutoPilot 保持模型与工具开放，支持本地部署、插件化工具和用户自定义工作流。 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{主要竞品与差异化定位}
+  \label{tab:competitors}
+\end{table}
+
+
+\subsection{目标客户}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\textwidth}{p{2.6cm} X X}
+    \toprule
+    \textbf{客户层级} & \textbf{典型画像} & \textbf{核心需求} \\
+    \midrule
+    种子用户 & 学术研究者、独立开发者、咨询顾问、内容创作者 & 资料搜索、信息整理、报告生成、重复流程自动化 \\
+    扩展用户 & 产品经理、分析师、运营人员、远程知识工作者 & 跨工具信息整合、会议纪要、任务拆解、文档处理 \\
+    商业用户 & 小团队、创业公司、专业服务机构 & 可审计的内部工作流自动化、知识沉淀、低成本助理能力 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{目标客户分层}
+  \label{tab:customers}
+\end{table}
+
+\subsection{市场空间与商业假设}
+
+根据公开行业报告和生产力工具市场数据，AI Agent、AI 办公助手和知识工作者自动化工具均处于快速增长阶段。本文档中的市场规模仅作为融资模型初步假设，正式融资材料应进一步补充可核验来源、报告日期和计算口径。
+
+\begin{itemize}
+  \item \textbf{TAM}：全球知识工作者、研究者、创作者和小团队自动化软件市场，可按数亿级潜在用户估算。
+  \item \textbf{SAM}：愿意为 AI 个人助理、研究工具、自动化工作流和本地隐私能力付费的专业用户。
+  \item \textbf{SOM}：早期聚焦个人研究与任务助理场景，优先获取高频使用、反馈明确、可传播的种子用户。
+\end{itemize}
+
+商业模式初期采用 Freemium + Pro 订阅：免费版用于基础研究助手和本地记忆体验，Pro 版提供多工具插件、更多模型额度、GUI Agent、任务队列和高级安全审计。团队版与私有化部署属于 MVP 验证后的扩展方向，可按席位收费，并提供私有部署、企业工具接入和权限管理。
+
+\section{产品方案}
+
+\subsection{三阶段统一架构}
+
+OpenPilot 的三个阶段不是独立的产品，而是一个统一的智能体系统的不同表现形式：
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{p{2.5cm} X X X}
+    \toprule
+    \textbf{阶段} & \textbf{Phase 1: 个人助手} & \textbf{Phase 2: AGI 智能体} & \textbf{Phase 3: GUI 界面} \\
+    \midrule
+    定位 & 建立基础能力和用户信任 & 实现自主思考和执行 & 降低使用门槛 \\
+    核心能力 & 任务管理、进度跟踪、记忆学习 & 自主思考、工具编排、代码执行 & 可视化交互、图形化配置 \\
+    状态 & 当前实现中（60\%） & 核心目标 & 未来扩展 \\
+    时间 & 2-3 个月 & 4-6 个月 & 3-4 个月 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{三阶段统一架构}
+  \label{tab:three-phases}
+\end{table}
+
+\textbf{统一性体现}：
+\begin{itemize}
+  \item \textbf{共享核心引擎}：所有阶段使用相同的任务拆解、记忆、决策引擎
+  \item \textbf{能力递进}：每个阶段都在前一阶段的基础上增加新能力
+  \item \textbf{数据连续}：用户的记忆、偏好、任务历史在所有阶段共享
+  \item \textbf{无缝升级}：用户可以平滑地从一个阶段过渡到下一个阶段
+\end{itemize}
+
+\subsection{核心竞争力}
+
+\subsubsection{智能增强框架，而非简单工具}
+
+\textbf{传统 AI 助手的问题}：
+\begin{itemize}
+  \item 依赖模型本身的能力上限
+  \item 无法持续学习和改进
+  \item 缺乏系统化的任务拆解
+  \item 无法安全地执行复杂任务
+\end{itemize}
+
+\textbf{OpenPilot 的解决方案}：
+
+\begin{center}
+\fbox{\parbox{0.9\textwidth}{
+\centering
+普通 LLM 模型 + OpenPilot 框架 = 接近 AGI 的超级智能体
+}}
+\end{center}
+
+\textbf{关键优势}：
+\begin{itemize}
+  \item \textbf{模型无关}：支持任何 OpenAI-compatible LLM
+  \item \textbf{能力倍增}：让 GPT-3.5 级别的模型达到接近 GPT-4 的效果
+  \item \textbf{持续进化}：从每次执行中学习，不断提升
+  \item \textbf{安全可控}：完善的权限系统和风险控制
+\end{itemize}
+
+\subsubsection{置信度驱动的自主度}
+
+\textbf{行业痛点}：
+\begin{itemize}
+  \item 完全自动化 → 不安全，用户不信任
+  \item 完全人工确认 → 效率低，用户疲劳
+\end{itemize}
+
+\textbf{OpenPilot 的创新}：置信度驱动的渐进式自主
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{p{3cm} X X X}
+    \toprule
+    \textbf{阶段} & \textbf{初期（低置信度）} & \textbf{中期（中置信度）} & \textbf{长期（高置信度）} \\
+    \midrule
+    行为 & 所有操作需确认 & 低风险自动执行 & 大部分自动执行 \\
+    学习 & 系统学习偏好 & 中风险通知后执行 & 仅关键决策确认 \\
+    信任 & 建立信任关系 & 高风险仍需确认 & 用户可随时干预 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{置信度驱动的渐进式自主}
+  \label{tab:confidence}
+\end{table}
+
+\textbf{竞争优势}：
+\begin{itemize}
+  \item 比完全自动化更安全
+  \item 比完全人工确认更高效
+  \item 随着使用时间增长，效率持续提升
+  \item 用户始终保持控制权
+\end{itemize}
+
+\subsubsection{四层记忆系统}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\textwidth}{p{3cm} X X}
+    \toprule
+    \textbf{记忆类型} & \textbf{作用} & \textbf{效果} \\
+    \midrule
+    短期记忆 & 保存当前任务上下文、已执行步骤、临时观察和中间结果 & 任务执行连贯性 \\
+    长期记忆 & 保存用户偏好、长期目标、常用信息和稳定约束 & 个性化体验 \\
+    任务记忆 & 保存过去任务的计划、执行过程、结果、失败原因和用户反馈 & 从历史中学习 \\
+    技能记忆 & 保存可复用流程、脚本、提示词、工具组合和操作模板 & 能力积累 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{四层记忆系统}
+  \label{tab:memory-system}
+\end{table}
+
+\textbf{学习效果}：
+\begin{itemize}
+  \item 第 1 次使用：需要大量确认和指导
+  \item 第 10 次使用：开始理解用户习惯
+  \item 第 100 次使用：高度个性化，自主度显著提升
+  \item 第 1000 次使用：成为真正的”个人 AI 助手”
+\end{itemize}
+
+\subsubsection{与 AI 壳子产品的本质区别}
+
+当前市场上存在大量”AI 壳子”产品，它们在特定场景下提供 AI 能力，但本质上是功能型工具。OpenPilot 与这些产品有根本性差异：
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{p{2.5cm} p{3cm} X}
+    \toprule
+    \textbf{类型} & \textbf{代表产品} & \textbf{核心价值} \\
+    \midrule
+    会议壳子 & Granola, Otter, Tana & 把会议变成结构化记忆和行动项 \\
+    邮箱壳子 & Superhuman & 写信、回信、跟进、搜索、排程 \\
+    日程任务壳子 & Motion, Reclaim & 自动排程和任务重排 \\
+    输入法/语音壳子 & Wispr Flow, Superwhisper & 把 AI 变成全局输入入口 \\
+    搜索研究壳子 & Perplexity & 搜索、引用、总结、研究流 \\
+    OS 启动器壳子 & Raycast & 快捷键、命令、扩展、App 调用 \\
+    知识库壳子 & Notion AI, Tana & 知识沉淀、搜索、Agent 执行 \\
+    个人记忆壳子 & Limitless/Rewind, Plaud, Bee & 记录现实世界、生成可搜索记忆 \\
+    垂直行业壳子 & Hazel for financial advisors & 针对行业数据和流程做助理 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{AI 壳子产品分类}
+  \label{tab:ai-shells}
+\end{table}
+
+\textbf{OpenPilot 的本质差异}：
+
+\begin{enumerate}
+  \item \textbf{不是单一场景的壳子，而是跨场景的智能体框架}
+  \begin{itemize}
+    \item AI 壳子：在单一场景（会议、邮件、日程）内提供 AI 能力
+    \item OpenPilot：跨越多个场景，统一的任务拆解、执行和学习能力
+  \end{itemize}
+
+  \item \textbf{不是功能增强，而是能力倍增}
+  \begin{itemize}
+    \item AI 壳子：在现有工具上叠加 AI 功能（如邮件自动回复）
+    \item OpenPilot：通过系统化框架让普通模型获得接近 AGI 的能力
+  \end{itemize}
+
+  \item \textbf{不是静态工具，而是进化系统}
+  \begin{itemize}
+    \item AI 壳子：功能相对固定，依赖产品迭代升级
+    \item OpenPilot：从每次执行中学习，持续优化决策质量
+  \end{itemize}
+
+  \item \textbf{不是数据孤岛，而是记忆连续}
+  \begin{itemize}
+    \item AI 壳子：各个工具的数据和经验相互隔离
+    \item OpenPilot：四层记忆系统，跨场景共享用户偏好和执行经验
+  \end{itemize}
+
+  \item \textbf{不是被动响应，而是主动执行}
+  \begin{itemize}
+    \item AI 壳子：等待用户触发，执行预定义的功能
+    \item OpenPilot：自主拆解任务、编排工具、执行计划，并根据结果调整策略
+  \end{itemize}
+\end{enumerate}
+
+\textbf{类比说明}：
+
+\begin{quote}
+AI 壳子产品就像给传统工具（会议软件、邮箱、日程表）加上了”AI 按钮”，让它们变得更智能。但 OpenPilot 不是在某个工具上加按钮，而是构建了一个完整的”AI 操作系统”，它能理解你的目标、拆解任务、调用各种工具、从经验中学习，并随着使用变得越来越强大。
+
+如果说 AI 壳子是”智能化的单一工具”，那么 OpenPilot 就是”让普通模型变成超级智能体的框架”。
+\end{quote}
+
+\subsection{Phase 1: 个人助手（当前阶段）}
+
+\textbf{定位}：建立用户信任，积累数据基础
+
+\textbf{核心功能}：
+\begin{itemize}
+  \item 智能任务拆解与规划
+  \item 时间线管理与提醒
+  \item 任务日志与进度跟踪
+  \item 自动生成日报/周报
+  \item 对话式需求澄清
+  \item 记忆管理与偏好学习
+\end{itemize}
+
+\textbf{为 Phase 2 铺路}：
+\begin{itemize}
+  \item 建立任务拆解的基础能力
+  \item 积累用户偏好和历史数据
+  \item 验证记忆系统的有效性
+  \item 建立用户对系统的信任
+\end{itemize}
+
+\textbf{商业价值}：
+\begin{itemize}
+  \item 独立可用的任务管理工具
+  \item 提升个人工作效率 30-50\%
+  \item 减少任务遗漏和延期
+  \item 自动化进度报告
+\end{itemize}
+
+\textbf{当前进度}：60\% 完成
+
+\subsection{Phase 2: AGI 智能体（核心目标）}
+
+\textbf{定位}：实现真正的智能增强，让模型变得异常强大
+
+\textbf{核心能力}：
+
+\begin{enumerate}
+  \item \textbf{自主任务拆解}：将高层目标分解为可执行的子任务，识别依赖关系，评估风险，生成时间线
+  \item \textbf{自主思考与决策}：基于上下文和历史经验做出决策，不需要每步都询问用户
+  \item \textbf{工具编排与执行}：自动选择和调用合适的工具，处理工具失败和降级，并行执行多个工具
+  \item \textbf{自我反思与学习}：从执行结果中学习，提取经验和教训，优化未来行为
+  \item \textbf{代码生成与执行}：理解需求并生成可执行代码，在沙箱中安全执行
+  \item \textbf{多模态理解}：处理文本、图像、文件等多种输入
+\end{enumerate}
+
+\textbf{能力对比示例}：
+
+\begin{quote}
+\textbf{用户}：”帮我准备下周的产品发布”
+
+\textbf{传统 AI}：”好的，我可以帮你...”
+
+\textbf{OpenPilot AGI 智能体}：
+\begin{enumerate}
+  \item 分析目标 → 识别关键交付物
+  \item 拆解任务 → 生成 15 个子任务
+  \item 识别依赖 → 建立任务依赖图
+  \item 评估风险 → 标记 3 个高风险项
+  \item 生成时间线 → 每日推进计划
+  \item 识别可自动化 → 8 个任务可由 AI 完成
+  \item 开始执行 → 自动完成文档整理
+  \item 遇到阻塞 → 自动通知并建议替代方案
+  \item 持续跟踪 → 每日更新进度
+  \item 任务完成 → 生成复盘报告
+\end{enumerate}
+\end{quote}
+
+\textbf{商业价值}：
+\begin{itemize}
+  \item 自动化 50-70\% 的重复性任务
+  \item 减少人工确认次数 70\%
+  \item 提升任务完成速度 3-5 倍
+  \item 降低错误率 80\%
+\end{itemize}
+
+\textbf{预计时间}：4-6 个月
+
+\subsection{Phase 3: GUI 界面（用户体验层）}
+
+\textbf{定位}：降低使用门槛，扩大用户群
+
+\textbf{核心功能}：
+\begin{itemize}
+  \item 可视化任务管理（拖拽式编排）
+  \item 实时进度监控（图表化展示）
+  \item 交互式确认界面（更直观的决策）
+  \item 记忆与偏好管理（可视化编辑）
+  \item 工具配置界面（图形化配置）
+  \item 多窗口协作（并行任务管理）
+\end{itemize}
+
+\textbf{为什么需要 GUI}：
+\begin{itemize}
+  \item CLI 对非技术用户不友好
+  \item 复杂的任务关系需要可视化
+  \item 实时监控需要图形界面
+  \item 降低学习成本
+\end{itemize}
+
+\textbf{商业价值}：
+\begin{itemize}
+  \item 扩大用户群至非技术人员
+  \item 提升用户留存率 2-3 倍
+  \item 支持团队协作场景
+  \item 企业级部署的基础
+\end{itemize}
+
+\textbf{预计时间}：3-4 个月
+
+\section{技术架构}
+
+\subsection{总体架构}
+
+\begin{verbatim}
+User Goal
+   |
+Goal Understanding
+   |
+Planner / Task Decomposer
+   |
+Memory Retrieval
+   |
+Tool Selector
+   |
+Executor
+   |-- API Tools
+   |-- Local LLM
+   |-- Browser Agent
+   |-- GUI Agent
+   `-- File System
+   |
+Result Evaluator
+   |
+Reflection & Memory Update
+   |
+Final Output
+\end{verbatim}
+
+\subsection{核心模块设计}
+
+\subsubsection{目标理解模块}
+
+负责理解用户输入的目标，判断任务类型、优先级、风险等级和所需资源。该模块输出结构化任务卡，包括任务目标、约束条件、所需工具、风险标签和预期交付物。
+
+\subsubsection{自主规划模块}
+
+将目标拆解为可执行步骤，并支持动态重规划。如果搜索失败、登录状态失效、文件不可读或工具调用超时，系统可以尝试替代路径，并将失败原因记录到任务记忆中。
+
+\subsubsection{记忆模块}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\textwidth}{p{3cm} X}
+    \toprule
+    \textbf{记忆类型} & \textbf{作用} \\
+    \midrule
+    短期记忆 & 保存当前任务上下文、已执行步骤、临时观察和中间结果 \\
+    长期记忆 & 保存用户偏好、长期目标、常用信息和稳定约束 \\
+    任务记忆 & 保存过去任务的计划、执行过程、结果、失败原因和用户反馈 \\
+    技能记忆 & 保存可复用流程、脚本、提示词、工具组合和操作模板 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{记忆模块分层}
+  \label{tab:memory}
+\end{table}
+
+记忆不仅用于回忆信息，也参与假设生成和策略选择。例如，系统发现用户过去更喜欢表格化输出，则新任务默认优先生成表格；如果上次网页自动化失败原因是登录状态过期，则这次先检查登录状态。
+
+\subsubsection{自我实验与反思模块}
+
+系统在执行任务时可以提出多个策略，并通过小规模实验选择更优方案。例如，对同一搜索任务尝试多组关键词，对总结任务比较不同结构，对重复流程生成脚本并验证。任务完成后，系统生成内部复盘并更新策略库。
+
+\subsubsection{工具与 API 接入模块}
+
+系统采用插件式架构，可接入云端 LLM API、本地 LLM、搜索 API、文件系统、邮件、日历、文档工具、Python 执行环境、浏览器自动化、企业内部 API、数据库或向量数据库。
+
+\subsubsection{GUI Agent 模块}
+
+GUI Agent 是执行层，而不是决策核心。它负责截图理解、元素定位、鼠标点击、键盘输入、表单填写、文件上传下载、浏览器操作和错误弹窗识别。所有 GUI 操作均由规划模块授权，并由权限系统决定是否需要用户确认。
+
+\subsubsection{安全与权限模块}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\textwidth}{p{3cm} X X}
+    \toprule
+    \textbf{风险等级} & \textbf{处理方式} & \textbf{示例} \\
+    \midrule
+    低风险 & 自动执行并记录日志 & 搜索资料、读取授权目录、生成草稿 \\
+    中风险 & 执行前通知用户，可配置自动批准 & 批量下载、创建本地文件、调用付费模型额度 \\
+    高风险 & 必须用户确认 & 发送邮件、删除文件、修改日历、访问敏感账号 \\
+    禁止操作 & 默认拒绝或仅在沙盒中模拟 & 转账付款、修改系统设置、执行未知来源代码、批量修改生产数据 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{权限与风险分级}
+  \label{tab:risk}
+\end{table}
+
+\section{商业模式与竞争优势}
+
+\subsection{与传统 AI 助手的对比}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{p{2.8cm} X X}
+    \toprule
+    \textbf{维度} & \textbf{传统 AI 助手} & \textbf{OpenPilot} \\
+    \midrule
+    能力来源 & 完全依赖模型 & 模型 + 系统框架 \\
+    任务拆解 & 简单列举 & 系统化拆解 + 依赖分析 \\
+    记忆能力 & 无或有限 & 四层记忆系统 \\
+    学习能力 & 不学习 & 持续学习与优化 \\
+    执行能力 & 仅生成文本 & 真实工具执行 \\
+    安全性 & 无控制 & 完善的权限系统 \\
+    自主度 & 固定 & 置信度驱动的渐进式 \\
+    可解释性 & 黑盒 & 完整的决策日志 \\
+    成本 & 高（依赖大模型） & 低（可用小模型） \\
+    \bottomrule
+  \end{tabularx}
+  \caption{与传统 AI 助手的对比}
+  \label{tab:comparison}
+\end{table}
+
+\subsection{核心差异化}
+
+\begin{enumerate}
+  \item \textbf{不是工具，是框架} —— 让任何模型都能变强
+  \item \textbf{不是助手，是智能体} —— 具备自主思考和执行能力
+  \item \textbf{不是固定的，是进化的} —— 持续学习和优化
+  \item \textbf{不是黑盒，是透明的} —— 完整的决策日志和可解释性
+  \item \textbf{不是危险的，是可控的} —— 完善的安全和权限系统
+\end{enumerate}
+
+\subsection{商业模式}
+
+\begin{enumerate}
+  \item \textbf{开源 + 商业}
+  \begin{itemize}
+    \item 核心引擎开源（建立生态）
+    \item 企业版功能收费（团队协作、高级工具）
+    \item 云服务订阅（托管部署、数据同步）
+  \end{itemize}
+
+  \item \textbf{工具市场}
+  \begin{itemize}
+    \item 官方工具免费
+    \item 第三方工具分成
+    \item 企业定制工具
+  \end{itemize}
+
+  \item \textbf{咨询服务}
+  \begin{itemize}
+    \item 企业部署
+    \item 定制开发
+    \item 培训服务
+  \end{itemize}
+\end{enumerate}
+
+\subsection{竞争壁垒}
+
+本项目的竞争壁垒不是单一模型能力，而是由”个人数据记忆、任务执行经验、安全信任和工具生态”共同累积形成。
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{p{3cm} X X}
+    \toprule
+    \textbf{壁垒维度} & \textbf{形成机制} & \textbf{难以复制的原因} \\
+    \midrule
+    智能增强框架 & 系统化的任务拆解、记忆管理、自主决策和工具编排，让普通模型变得强大 & 需要完整的架构设计和长期优化，不是简单的提示词工程 \\
+    置信度驱动 & 基于历史成功率的渐进式自主度控制 & 需要大量真实执行数据和用户反馈积累 \\
+    四层记忆系统 & 短期、长期、任务、技能四层记忆的协同工作 & 记忆数据来自连续使用，无法通过公开语料获得 \\
+    持续学习 & 从每次执行中学习，不断优化决策质量 & 执行数据具有强场景性和私有性，长期积累形成专有优势 \\
+    安全信任 & 通过风险分级、授权确认、执行日志建立用户信任 & 信任需要长期稳定执行和透明记录积累 \\
+    工具生态 & 插件式工具系统，支持第三方扩展 & 生态建设需要时间，先发优势明显 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{竞争壁垒分析}
+  \label{tab:barriers-new}
+\end{table}
+
+\section{团队与执行计划}
+
+\subsection{核心团队}
+
+\begin{table}[htbp]
+  \centering
+  \begin{tabularx}{\textwidth}{p{4cm} X X}
+    \toprule
+    \textbf{角色} & \textbf{职责} & \textbf{能力要求} \\
+    \midrule
+    CEO/产品负责人 & 产品定位、融资、客户访谈、商业化推进 & AI 产品、B2B/B2C 增长、融资沟通 \\
+    CTO/架构负责人 & Agent 架构、模型路由、工具系统、安全边界 & LLM、系统架构、工程交付 \\
+    算法工程师 & 规划、记忆检索、反思评估、多模型协同 & NLP、RAG、Agent 评估 \\
+    全栈工程师 & 桌面端、后端服务、插件系统、数据存储 & Web/桌面开发、API 集成 \\
+    自动化工程师 & 浏览器自动化、GUI Agent、沙箱执行 & Playwright、UI Automation、测试 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{早期团队配置}
+  \label{tab:team}
+\end{table}
+
+注：正式融资材料应替换为真实创始团队背景、过往项目证明和核心成员分工。本计划书保留角色配置，用于说明项目落地所需能力结构。
+
+\subsection{阶段计划}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \begin{tabularx}{\textwidth}{p{3.6cm} Y Y p{2.4cm}}
+    \toprule
+    \textbf{阶段} & \textbf{目标} & \textbf{交付物} & \textbf{时间} \\
+    \midrule
+    第一阶段：原型验证 & 验证自主规划、工具调用、记忆更新是否可行 & 基础任务规划器、简单记忆模块、工具调用框架、执行日志、研究报告 Demo & 第 1 个月 \\
+    第二阶段：MVP 内测 & 让系统可以从历史任务中学习，并验证个人研究助理场景 & 长期记忆数据库、用户偏好学习、失败复盘、策略推荐、种子用户反馈 & 第 2--3 个月 \\
+    第三阶段：产品化 & 集成 GUI Agent、安全权限和插件体系 & 浏览器自动化、表单填写、文件上传下载、失败检测、确认机制、基础用户界面 & 第 4--6 个月 \\
+    第四阶段：规模化试点 & 验证团队、小企业和垂直工作流的付费转化 & 多任务队列、审计日志、团队权限、本地模型接入、插件注册系统 & 第 7--12 个月 \\
+    \bottomrule
+  \end{tabularx}
+  \caption{研发与商业化路线图}
+  \label{tab:roadmap}
+\end{table}
+
+\subsection{关键指标}
+
+\begin{itemize}
+  \item \textbf{任务完成率}：MVP 研究任务在人工确认后可稳定完成并生成可用报告。
+  \item \textbf{用户节省时间}：目标用户在资料整理、摘要和报告生成任务中明显减少重复劳动。
+  \item \textbf{记忆复用率}：系统能在后续任务中复用用户偏好、常用结构和失败经验。
+  \item \textbf{安全确认准确率}：高风险操作能被正确识别并触发用户确认。
+  \item \textbf{留存与付费}：种子用户愿意持续使用，并为高级工具、GUI Agent 或私有部署付费。
+\end{itemize}
+
+\section{风险与应对}
+
+\subsection{主要风险}
+
+\begin{enumerate}
+  \item \textbf{安全风险}：代理具备执行能力后，错误操作可能导致文件丢失、误发邮件或账号风险。
+  \item \textbf{可交付性风险}：如果早期追求“全能代理”，容易陷入范围过大、质量不可控的问题。
+  \item \textbf{模型不稳定风险}：LLM 可能幻觉、误判工具结果或生成不可执行计划。
+  \item \textbf{隐私风险}：长期记忆涉及用户工作内容、偏好和敏感信息，需要严格存储与授权机制。
+  \item \textbf{市场教育风险}：用户可能不愿立即授权 AI 操作电脑，需要通过透明日志和低风险场景建立信任。
+\end{enumerate}
+
+\subsection{改良策略}
+
+\begin{itemize}
+  \item MVP 聚焦个人研究与任务助理，不承诺全场景自动化；
+  \item 所有关键操作保留日志，用户可查看计划、工具调用、执行结果和记忆更新；
+  \item 低风险任务自动执行，中风险任务通知，高风险任务确认，危险任务禁止；
+  \item 支持沙盒执行、撤销或回滚机制，减少真实环境误操作；
+  \item 记忆写入需要可解释，用户可查看、编辑、删除和导出记忆；
+  \item 对市场数据和商业预测进行来源核验，融资材料中避免无依据承诺。
+\end{itemize}
+
+\section{融资用途}
+
+天使轮或种子轮融资主要用于以下方向：
+
+\begin{itemize}
+  \item \textbf{产品研发}：完成 Agent 核心引擎、记忆系统、工具插件和 GUI Agent 原型；
+  \item \textbf{安全体系}：建设权限分级、审计日志、沙箱执行和隐私控制；
+  \item \textbf{模型与基础设施}：支付云端模型 API、向量数据库、测试环境和本地模型适配成本；
+  \item \textbf{种子用户验证}：围绕研究、文档和工作流自动化场景开展内测；
+  \item \textbf{商业化试点}：与小团队、研究机构、专业服务用户探索付费转化。
+\end{itemize}
+
+\section{结论}
+
+AutoPilot Personal Agent 的机会不在于宣称“替用户做任何事情”，而在于把 Agent 的自主执行能力放入可信的授权、记忆和复盘框架中。它从个人研究与任务助理这一可验证场景切入，逐步扩展到跨工具工作流、GUI 操作和团队自动化。只要系统能够持续证明“更懂用户、更会执行、更可控制”，它就有机会从聊天工具之外开辟一个真正可长期使用的个人 AI 执行代理品类。
+
+\vfill
+\begin{center}
+  {\Large\bfseries 感谢阅读}\\[1cm]
+  {\normalsize
+    AutoPilot Personal Agent —— 在授权边界内持续进化的个人 AI 助理\\[0.3cm]
+    联系方式：yanning.25@intl.zju.edu.cn\\[0.3cm]
+  }
+\end{center}
+
+\newpage
+
+\end{document}

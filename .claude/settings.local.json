@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_task_log.py -v)",
+      "Bash(python3 -m pytest tests/test_task_log.py -v)",
+      "Bash(conda run *)",
+      "Bash(/usr/bin/python3 -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(/usr/bin/python3 *)",
+      "Bash(PYTHONPATH=src /usr/bin/python3 *)",
+      "Bash(python -m pytest tests/test_memory.py -v)",
+      "Bash(export PATH=\"$HOME/anaconda3/bin:$HOME/miniconda3/bin:$PATH\")",
+      "Bash(conda activate *)",
+      "Bash(sudo apt-get update -qq)",
+      "Bash(sudo apt-get install -y python3-pip python3-pytest)",
+      "Bash(conda env *)",
+      "Bash(conda install *)",
+      "Bash(python *)",
+      "Bash(conda info *)",
+      "Bash(pip install *)"
+    ]
+  }
+}
