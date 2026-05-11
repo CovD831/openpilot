@@ -18,7 +18,8 @@
       "Bash(conda info *)",
       "Bash(pip install *)",
       "Bash(python3 *)",
-      "Bash(chmod +x *)"
+      "Bash(chmod +x *)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")"
     ]
   }
 }

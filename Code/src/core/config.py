@@ -1,0 +1,52 @@
+﻿"""Configuration loading for OpenAI-compatible LLM providers."""
+
+from __future__ import annotations
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from core.exceptions import MissingAPIKeyError
+
+
+class LLMSettings(BaseSettings):
+    """Runtime settings for an OpenAI-compatible chat completion endpoint."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    provider: str = Field(default="openai-compatible", alias="OPENPILOT_LLM_PROVIDER")
+    base_url: str = Field(default="https://api.openai.com/v1", alias="OPENPILOT_LLM_BASE_URL")
+    api_key: str | None = Field(default=None, alias="OPENPILOT_LLM_API_KEY")
+    model: str = Field(default="gpt-4o-mini", alias="OPENPILOT_LLM_MODEL")
+    timeout_seconds: float = Field(default=60.0, alias="OPENPILOT_LLM_TIMEOUT_SECONDS")
+    temperature: float = Field(default=0.2, alias="OPENPILOT_LLM_TEMPERATURE")
+
+    def missing_fields(self) -> list[str]:
+        """Return required LLM settings that are blank or missing."""
+
+        missing: list[str] = []
+        if not self.base_url or not self.base_url.strip():
+            missing.append("OPENPILOT_LLM_BASE_URL")
+        if not self.api_key or not self.api_key.strip():
+            missing.append("OPENPILOT_LLM_API_KEY")
+        return missing
+
+    def is_ready(self) -> bool:
+        """Return whether settings are complete enough for real LLM calls."""
+
+        return not self.missing_fields()
+
+    def require_ready(self) -> None:
+        """Raise if settings are incomplete for a real provider request."""
+
+        missing = self.missing_fields()
+        if missing:
+            raise MissingAPIKeyError(
+                f"Missing LLM configuration: {', '.join(missing)}."
+            )
+
+

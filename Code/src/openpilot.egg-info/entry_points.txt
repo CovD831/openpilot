@@ -1,2 +1,2 @@
 [console_scripts]
-openpilot = openpilot.cli:main
+openpilot = ui.cli:main

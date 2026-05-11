@@ -360,5 +360,114 @@ Minimum deliverables:
 - Keep this file implementation-facing and concise.
 - Do not store secrets, API keys, private credentials, or personal user data in this file.
 
+## 8. Autopilot Tool Execution Updates
 
+Autopilot execution supports local document-summary workflows in addition to
+planning. A typical completion-report summary chain is:
 
+1. `directory_lister` lists matching files in a local directory.
+2. `multi_file_reader` reads the matched files and combines their text.
+3. `llm_summarizer` receives the combined text through `source_step_id` and
+   generates the summary.
+
+Built-in local tools:
+
+- `directory_lister`
+  - Capability: `file_read`
+  - Permission: `low`
+  - Inputs: `directory_path`, optional `pattern`, `recursive`, `max_files`
+  - Default report pattern: `*完成报告*.md`
+  - Output: `files`, `count`, `total_count`, `truncated`
+- `multi_file_reader`
+  - Capability: `file_read`
+  - Permission: `low`
+  - Inputs: `file_paths` or `directory_path` plus optional `pattern`
+  - Output: combined `content`, `files`, `count`, `truncated`
+
+Execution input chaining:
+
+- Tool selections may include `source_step_id`.
+- The workflow executor removes `source_step_id` before invoking a tool.
+- For `multi_file_reader`, previous `files` output becomes `file_paths`.
+- For `llm_summarizer`, previous `content` output becomes `text`.
+- For `file_writer`, previous textual output may become `content`, but only
+  when the plan explicitly selected a write step.
+
+Workflow execution logs now include `step_results` for each tool call:
+
+- `step_id`
+- `tool`
+- `status`
+- `success`
+- `error`
+- `input_keys`
+- `input_resolution`
+- `output_summary`
+- `output_preview`
+- `duration_seconds`
+
+Workflow execution logs also include:
+
+- `planned_steps`: the validated planner steps, including titles, descriptions,
+  expected output, dependencies, risk level, and confirmation flags.
+- `tool_selections`: the orchestration output for each step, including selected
+  tool, input keys, compact input preview, dependencies, `source_step_id`,
+  selection reason, confidence, and confirmation flag.
+
+Autopilot writes diagnostic events before the final workflow summary:
+
+- `workflow_plan_generated`
+- `tool_orchestration_planned`
+- `tool_execution_result`
+- `workflow_execution`
+
+Before invoking a built-in tool, the workflow executor validates required
+inputs. Missing required inputs produce a failed `ExecutionResult` with
+`error.type = "MissingRequiredInput"` instead of allowing a raw `KeyError`.
+For `llm_summarizer`, missing `text` records whether `source_step_id` was set,
+whether the source output was available, and whether the input chain was
+unresolved.
+
+Workflow success must reflect actual execution. Non-dry-run workflows are
+successful only when at least one tool ran, every execution result succeeded,
+and all available validation results passed.
+
+### Autopilot log routing and final-report behavior
+
+- Autopilot workflow diagnostics use the same log file as the interactive CLI:
+  `Code/logs/openpilot.jsonl`.
+- `Code/logs/workflow.jsonl` is no longer the primary Autopilot diagnostic log.
+- `openpilot run` clears the selected log file once at startup. The default
+  selected log is `Code/logs/openpilot.jsonl`; `--log-file` selects and clears a
+  different log file.
+- `/autopilot` and `/execute` receive the active CLI logger, so their
+  `workflow_plan_generated`, `tool_orchestration_planned`,
+  `tool_execution_result`, and `workflow_execution` events are written to
+  `openpilot.jsonl`.
+- Successful `llm_summarizer` output is not printed verbatim in the CLI. The CLI
+  shows step status and concise errors; bounded `output_preview` and
+  `output_summary` fields are written to the JSONL log for diagnostics.
+- Final report generation is an LLM summarization step unless the user explicitly
+  requests persistence with a concrete output file path or filename. In that
+  explicit-save case, `file_writer` receives content from the latest content
+  producing step through `source_step_id`.
+
+### LLM semantic analysis
+
+- Goal understanding and plan-step tool orchestration use LLM semantic analysis
+  instead of keyword-based positive classification.
+- `SemanticAnalyzer.analyze_goal(goal, constraints)` returns task type, risk,
+  resources, deliverables, intent, confidence, and reason as strict JSON.
+- `SemanticAnalyzer.analyze_plan_step(goal, step, available_tools)` returns the
+  operation type, capability, preferred tool, write/mutation flags, source kind,
+  confidence, and reason as strict JSON.
+- Deterministic code is still allowed for path extraction, glob matching, schema
+  validation, required-input checks, and safety blocking. It must not be used to
+  positively classify the user intent or step semantics.
+- Autopilot logs `semantic_goal_analysis`, `semantic_step_analysis`, and
+  `semantic_analysis_failed` events to `Code/logs/openpilot.jsonl`.
+- If an LLM summary tool returns empty text, the executor logs
+  `empty_output_retry`, retries once with a shorter payload, and then fails the
+  current step with `EmptyLLMOutput` if the retry is also empty.
+- Input-resolution diagnostics include `source_text_empty` so a present-but-empty
+  upstream output is distinguishable from a missing `source_step_id`.

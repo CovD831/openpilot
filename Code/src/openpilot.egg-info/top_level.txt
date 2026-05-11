@@ -1,1 +1,10 @@
-openpilot
+autonomy
+core
+execution
+memory
+models
+planning
+reporting
+tools
+ui
+validation
