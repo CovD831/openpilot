@@ -99,17 +99,23 @@ class TaskDecomposer:
             data={"description": original_task.description, "is_root": True}
         ))
 
+        # First pass: create all subtasks with temporary index-based dependencies
+        subtask_indices = []  # Store (subtask, original_dependencies_indices)
         for subtask_desc in decomposition["subtasks"]:
+            # Store raw dependencies (might be integers)
+            raw_deps = subtask_desc.get("dependencies", [])
+
             subtask = Task(
                 id=str(uuid.uuid4()),
                 description=subtask_desc["description"],
                 parent_id=original_task.id,
                 priority=TaskPriority(subtask_desc.get("priority", "medium")),
                 estimated_effort=subtask_desc.get("estimated_effort"),
-                dependencies=subtask_desc.get("dependencies", []),
+                dependencies=[],  # Will be filled in second pass
                 tags=subtask_desc.get("tags", [])
             )
             subtasks.append(subtask)
+            subtask_indices.append((subtask, raw_deps))
 
             # Add to graph
             task_graph.add_node(GraphNode(
@@ -129,10 +135,23 @@ class TaskDecomposer:
                 edge_type="has_subtask"
             ))
 
+        # Second pass: resolve dependencies from indices to task IDs
+        for subtask, raw_deps in subtask_indices:
+            resolved_deps = []
+            for dep in raw_deps:
+                if isinstance(dep, int):
+                    # Convert index to task ID
+                    if 0 <= dep < len(subtasks):
+                        resolved_deps.append(subtasks[dep].id)
+                elif isinstance(dep, str):
+                    # Already a task ID or description
+                    resolved_deps.append(dep)
+            subtask.dependencies = resolved_deps
+
         # Add dependency edges
         for subtask in subtasks:
             for dep_id in subtask.dependencies:
-                # Find dependency by description (simplified)
+                # Find dependency by ID
                 dep_task = next((t for t in subtasks if t.id == dep_id), None)
                 if dep_task:
                     task_graph.add_edge(GraphEdge(
@@ -339,7 +358,7 @@ Provide a JSON response with:
 Guidelines:
 - Create 2-7 subtasks
 - Each subtask should be independently executable
-- Identify dependencies between subtasks
+- Dependencies should be indices (0, 1, 2, etc.) of other subtasks in the list
 - Estimate effort (1.0 = 1 unit of work)
 - Keep descriptions clear and actionable"""
 

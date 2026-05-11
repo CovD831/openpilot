@@ -28,19 +28,13 @@ from execution.workflow_executor import WorkflowExecutor
 DEFAULT_OPENPILOT_LOG = Path(__file__).resolve().parents[2] / "logs" / "openpilot.jsonl"
 DEFAULT_TASK_LOG_DIR = Path(__file__).resolve().parents[2] / "data" / "task_logs"
 
-# 系统命令列表
-SYSTEM_COMMANDS = [
-    "/help",
-    "/config",
-    "/plan",
-    "/execute",
-    "/task",
-    "/report",
-    "/memory",
-    "/clear",
-    "/exit",
-    "/quit",
-]
+# Import command registry
+from ui.commands import get_all_command_names
+
+# Get system commands from registry
+def get_system_commands() -> list[str]:
+    """Get all system commands from the registry."""
+    return get_all_command_names()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -170,33 +164,9 @@ def _execute_workflow(
 
 
 def _run_openpilot(args, console: Console, llm_client: CompletionClient | None) -> int:
-    settings = LLMSettings()
-    ui = TerminalUI(console)
-    planner = TaskPlanner(llm_client or LLMClient(settings))
-    _clear_log_file(args.log_file)
-    logger = OpenPilotLogger(args.log_file)
-    enable_memory = not getattr(args, "ignore_memory", False)
-    session = OpenPilotSession(
-        planner,
-        logger,
-        constraints=args.constraint,
-        settings=settings,
-        ui=ui,
-        enable_memory=enable_memory,
-    )
-
-    if args.once:
-        ui.show_welcome(settings, logger.log_file)
-        ui.warn_missing_config(settings)
-
-        # 检查是否是系统命令
-        if args.once.startswith("/"):
-            return _handle_system_command(args.once, console, llm_client, logger=logger)
-
-        result = session.handle_goal(args.once, assume_defaults=True)
-        return 0 if result.ok else 2
-
-    return _interactive_loop(session, console, llm_client, logger=logger)
+    """Run OpenPilot with enhanced UI by default."""
+    from ui.enhanced_cli import run_enhanced_cli
+    return run_enhanced_cli(args, console, llm_client)
 
 
 def _clear_log_file(log_file: str | Path) -> None:
@@ -499,32 +469,10 @@ def _handle_system_command(
 
 def _show_help(console: Console) -> None:
     """显示帮助信息"""
-    help_text = """
-[bold cyan]OpenPilot System Commands[/bold cyan]
+    from ui.commands import get_command_registry
 
-[bold]Planning & Execution:[/bold]
-  /plan <goal>        Generate a task plan
-  /execute <goal>     Execute goal with full workflow (8-stage pipeline)
-  /autopilot <goal>   [bold green]AGI mode:[/bold green] Fully autonomous execution
-
-[bold]Task Management:[/bold]
-  /task               Show task commands help
-  /report             Show report commands help
-  /memory             Show memory system status
-
-[bold]System:[/bold]
-  /config             Check LLM configuration
-  /clear              Clear screen
-  /help               Show this help
-  /exit, /quit        Exit OpenPilot
-
-[bold]Tips:[/bold]
-  - Type '/' to see command suggestions
-  - Use arrow keys to navigate command history
-  - Press Tab for command completion
-  - Type any text without '/' for interactive planning
-"""
-    console.print(help_text)
+    registry = get_command_registry()
+    console.print(registry.format_help())
 
 
 def _show_task_help(console: Console) -> None:
@@ -607,33 +555,28 @@ def _autopilot_mode(
     logger: OpenPilotLogger | None = None,
 ) -> int:
     """
-    自动驾驶模式 - AGI 能力测试
+    自动驾驶模式 - 使用智能任务分解
 
-    完全自主执行，自动批准低风险和中风险操作，只在高风险时询问
+    使用 Task Decomposition Agent 动态分解任务并执行
     """
-    console.print("\n[bold green]🚀 Autopilot Mode Activated[/bold green]")
-    console.print("[dim]Autonomous execution with minimal human intervention[/dim]\n")
-
     try:
-        executor = WorkflowExecutor(
+        from execution.intelligent_autopilot import IntelligentAutopilot
+
+        autopilot = IntelligentAutopilot(
             llm_client=llm_client or LLMClient(),
             console=console,
-            dry_run=False,
-            auto_approve=True,  # 自动批准低风险操作
-            save_report=None,
+            auto_approve=True,
             logger=logger,
         )
-        result = executor.execute(goal, constraints=[])
 
-        if result["success"]:
-            console.print("\n[bold green]✓ Autopilot mission completed successfully[/bold green]")
-        else:
-            console.print("\n[bold red]✗ Autopilot mission failed[/bold red]")
+        result = autopilot.execute(goal)
 
         return 0 if result["success"] else 2
 
     except Exception as exc:
         console.print(f"[red]Autopilot failed:[/red] {exc}")
+        import traceback
+        traceback.print_exc()
         return 2
 
 

@@ -36,19 +36,16 @@ class TerminalUI:
                 from prompt_toolkit.completion import WordCompleter
                 from prompt_toolkit.history import FileHistory
                 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+                from ui.commands import get_all_command_names
 
-                # 系统命令列表
-                commands = [
-                    "/help", "/config", "/plan", "/execute", "/autopilot",
-                    "/task", "/report", "/memory", "/clear", "/exit", "/quit"
-                ]
+                # 从命令注册表获取所有命令
+                commands = get_all_command_names()
 
                 # 创建补全器（显示下拉菜单）
                 completer = WordCompleter(
                     commands,
                     ignore_case=True,
-                    sentence=True,
-                    match_middle=True,  # 允许中间匹配
+                    WORD=True,  # 只在单词边界补全
                 )
 
                 # 创建持久化历史记录文件
@@ -62,9 +59,9 @@ class TerminalUI:
                     completer=completer,
                     history=history,
                     enable_history_search=True,  # 启用 Ctrl+R 搜索
-                    auto_suggest=AutoSuggestFromHistory(),  # 自动建议
-                    complete_while_typing=True,  # 输入时显示补全
-                    complete_in_thread=True,  # 在后台线程中补全
+                    auto_suggest=AutoSuggestFromHistory(),  # 自动建议（灰色提示）
+                    complete_while_typing=False,  # 只在按 Tab 时显示补全
+                    vi_mode=False,  # 确保使用 Emacs 模式（支持上下键历史）
                 )
             except ImportError:
                 # 如果没有 prompt_toolkit，返回 None

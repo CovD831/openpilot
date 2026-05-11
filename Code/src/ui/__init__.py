@@ -1,6 +1,12 @@
-"""UI module."""
+"""UI module - User interface components."""
 
 from ui.terminal_ui import TerminalUI
-from ui.openpilot_session import OpenPilotSession
+from ui.enhanced_ui import EnhancedUI
+from ui.progress_tracker import ProgressTracker, OperationType
 
-__all__ = ['TerminalUI', 'OpenPilotSession']
+__all__ = [
+    'TerminalUI',
+    'EnhancedUI',
+    'ProgressTracker',
+    'OperationType',
+]

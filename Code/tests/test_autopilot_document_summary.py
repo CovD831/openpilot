@@ -7,23 +7,23 @@ from io import StringIO
 
 from rich.console import Console
 
-from openpilot.builtin_tools import (
+from tools.builtin_tools import (
     directory_lister_executor,
     multi_file_reader_executor,
     register_builtin_tools,
 )
-from openpilot.executor_models import ExecutionError, ExecutionResult, ExecutionStatus
-from openpilot.llm import LLMResponse
-from openpilot.openpilot_log import OpenPilotLogger
-from openpilot.planner_models import ExecutionPlan, PlanStep, TaskCard
-from openpilot.result_validator import ResultValidator
-from openpilot.semantic_analyzer import SemanticAnalyzer
-from openpilot.tool_orchestration_models import OrchestrationContext, SelectionReason, ToolOrchestrationPlan, ToolSelection
-from openpilot.tool_orchestrator import ToolOrchestrator
-from openpilot.tool_registry import ToolRegistry
-from openpilot.validation_models import ValidationRule, ValidationSeverity, ValidationType
-from openpilot.workflow_executor import WorkflowExecutor
-from openpilot.cli import _clear_log_file
+from models.executor_models import ExecutionError, ExecutionResult, ExecutionStatus
+from core.llm import LLMResponse
+from core.openpilot_log import OpenPilotLogger
+from models.planner_models import ExecutionPlan, PlanStep, TaskCard
+from execution.result_validator import ResultValidator
+from execution.semantic_analyzer import SemanticAnalyzer
+from models.tool_orchestration_models import OrchestrationContext, SelectionReason, ToolOrchestrationPlan, ToolSelection
+from tools.tool_orchestrator import ToolOrchestrator
+from tools.tool_registry import ToolRegistry
+from models.validation_models import ValidationRule, ValidationSeverity, ValidationType
+from execution.workflow_executor import WorkflowExecutor
+from ui.cli import _clear_log_file
 
 
 class DummyLLMClient:

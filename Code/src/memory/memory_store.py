@@ -24,6 +24,12 @@ class MemoryStore:
 
         # One file per memory type
         self.files = {
+            # Claude Code memory types
+            MemoryType.USER: self.data_dir / "user.jsonl",
+            MemoryType.FEEDBACK: self.data_dir / "feedback.jsonl",
+            MemoryType.PROJECT: self.data_dir / "project.jsonl",
+            MemoryType.REFERENCE: self.data_dir / "reference.jsonl",
+            # Legacy types for backward compatibility
             MemoryType.SHORT_TERM: self.data_dir / "short_term.jsonl",
             MemoryType.LONG_TERM: self.data_dir / "long_term.jsonl",
             MemoryType.TASK: self.data_dir / "task.jsonl",

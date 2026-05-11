@@ -88,8 +88,8 @@ class LLMClient:
         # Check cache first
         if use_cache and self._cache is not None:
             cache_key = self._make_cache_key(request)
-            cached = self._cache.get(cache_key)
-            if cached is not None:
+            status, cached = self._cache.get(cache_key)
+            if status in ('hit', 'stale'):
                 return cached
 
         self.settings.require_ready()
