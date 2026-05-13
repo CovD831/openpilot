@@ -76,7 +76,6 @@ def code_reviewer_executor(params: dict[str, Any]) -> dict[str, Any]:
     """
     from execution.code_reviewer import CodeReviewer
     from models.code_models import CodeLanguage, GeneratedCode
-    from core.llm import LLMClient
     import uuid
 
     code = params["code"]
@@ -95,9 +94,7 @@ def code_reviewer_executor(params: dict[str, Any]) -> dict[str, Any]:
     language = language_map[language_str]
 
     try:
-        from core.config import LLMSettings
-        settings = LLMSettings()
-        reviewer = CodeReviewer(LLMClient(settings))
+        reviewer = CodeReviewer()
 
         # Create GeneratedCode object
         generated_code = GeneratedCode(
@@ -116,10 +113,18 @@ def code_reviewer_executor(params: dict[str, Any]) -> dict[str, Any]:
         result = reviewer.review_code(generated_code)
 
         return {
-            "review": result.review,
+            "review": (
+                "Approved"
+                if result.approved
+                else "Review found issues"
+            ),
             "issues": [issue.dict() if hasattr(issue, 'dict') else str(issue) for issue in result.dangerous_operations],
-            "suggestions": result.suggestions,
-            "approved": result.approved
+            "suggestions": result.recommendations,
+            "approved": result.approved,
+            "syntax_errors": result.syntax_errors,
+            "warnings": result.warnings,
+            "quality_score": result.quality_score,
+            "complexity_score": result.complexity_score,
         }
     except Exception as e:
         raise Exception(f"Code review failed: {e}") from e

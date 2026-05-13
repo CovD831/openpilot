@@ -87,6 +87,8 @@ class TaskDecomposer:
 
         # Analyze task and generate decomposition
         decomposition = self._generate_decomposition(original_task, context)
+        if self._is_simple_code_artifact(task_description):
+            decomposition["subtasks"] = decomposition.get("subtasks", [])[:3]
 
         # Create subtasks
         subtasks = []
@@ -372,6 +374,9 @@ Provide a JSON response with:
 
 Guidelines:
 - Create 2-7 subtasks
+- For simple code artifact tasks that create one script, game, or small app in
+  a named file/directory, create 1-3 subtasks and prefer one implementation
+  task plus one validation task.
 - Each subtask should be independently executable
 - Dependencies should be indices (0, 1, 2, etc.) of other subtasks in the list
 - Estimate effort (1.0 = 1 unit of work)
@@ -434,6 +439,12 @@ Guidelines:
                 }
             ]
         }
+
+    def _is_simple_code_artifact(self, task_description: str) -> bool:
+        text = task_description.lower()
+        has_path = "'" in task_description or '"' in task_description or "/" in task_description
+        code_keywords = ("snake", "贪吃蛇", "game", "小游戏", "script", "脚本", "程序", "app")
+        return has_path and any(keyword in text for keyword in code_keywords)
 
     def _generate_graph_summary(self, graph: Graph, tasks: list[Task]) -> str:
         """Generate summary of task graph.

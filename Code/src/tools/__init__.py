@@ -16,6 +16,7 @@ from tools.llm_summarizer import LLM_SUMMARIZER_DEFINITION, llm_summarizer_execu
 from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
 from tools.code_reviewer import CODE_REVIEWER_DEFINITION, code_reviewer_executor
 from tools.code_executor import CODE_EXECUTOR_DEFINITION, code_executor_executor
+from tools.readme_tool import README_TOOL_DEFINITION, readme_tool_executor
 from tools.builtin_tools import register_builtin_tools
 
 __all__ = [
@@ -49,5 +50,7 @@ __all__ = [
     'code_reviewer_executor',
     'CODE_EXECUTOR_DEFINITION',
     'code_executor_executor',
+    'README_TOOL_DEFINITION',
+    'readme_tool_executor',
     'register_builtin_tools',
 ]

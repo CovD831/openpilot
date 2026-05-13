@@ -10,6 +10,7 @@ from tools.llm_summarizer import LLM_SUMMARIZER_DEFINITION, llm_summarizer_execu
 from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
 from tools.code_reviewer import CODE_REVIEWER_DEFINITION, code_reviewer_executor
 from tools.code_executor import CODE_EXECUTOR_DEFINITION, code_executor_executor
+from tools.readme_tool import README_TOOL_DEFINITION, readme_tool_executor
 
 
 __all__ = [
@@ -37,6 +38,9 @@ __all__ = [
     # Code Executor
     "CODE_EXECUTOR_DEFINITION",
     "code_executor_executor",
+    # README Tool
+    "README_TOOL_DEFINITION",
+    "readme_tool_executor",
     # Registration
     "register_builtin_tools",
 ]
@@ -57,3 +61,4 @@ def register_builtin_tools(registry) -> None:
     registry.register(CODE_GENERATOR_DEFINITION, code_generator_executor)
     registry.register(CODE_REVIEWER_DEFINITION, code_reviewer_executor)
     registry.register(CODE_EXECUTOR_DEFINITION, code_executor_executor)
+    registry.register(README_TOOL_DEFINITION, readme_tool_executor)

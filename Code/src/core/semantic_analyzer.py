@@ -115,13 +115,14 @@ code_execution, shell_execution, email, calendar, database, network.
 
 Allowed preferred_tool values:
 directory_lister, multi_file_reader, llm_summarizer, file_writer,
-code_generator, code_reviewer, code_executor,
+code_generator, code_reviewer, code_executor, readme_tool,
 unsupported_file_mutation.
 
 Use these operation_type values when appropriate:
 list_completion_reports, read_reports, summarize, generate_final_report,
 write_output_file, move_files, archive_files, rename_files,
 generate_code, review_code, execute_code,
+generate_readme,
 unsupported_file_mutation, other.
 
 Code Generation Policy:
@@ -141,7 +142,12 @@ Code Generation Policy:
   * operation_type: "execute_code"
   * preferred_tool: "code_executor"
 - For code generation workflows, the typical chain is:
-  generate_code → (optional: review_code) → file_writer
+  generate_code → (optional: review_code) → file_writer → readme_tool
+- If the step describes creating usage instructions or README documentation for
+  a generated project, classify as:
+  * capability: "file_write"
+  * operation_type: "generate_readme"
+  * preferred_tool: "readme_tool"
 
 Important policy:
 - If the step wants to move, rename, archive, or reorganize original files and

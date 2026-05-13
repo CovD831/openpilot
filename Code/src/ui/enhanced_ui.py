@@ -27,8 +27,24 @@ class EnhancedUI:
         self.console = console or Console()
         self.live: Optional[Live] = None
         self.current_layout: Optional[Layout] = None
+        self._main_content: Any | None = None
         self.activity_log: list[tuple[str, str, datetime]] = []
+        self.active_operations: list[Any] = []
         self.max_log_lines = 10
+        self.max_active_trace_lines = 8
+        self.task_graph_state: dict[str, Any] = {
+            "goal": "",
+            "stages": [],
+            "stage_statuses": {},
+            "current_stage": "",
+            "tasks": [],
+            "current_task_id": None,
+        }
+        self.current_task_state: dict[str, Any] = {
+            "title": "Waiting",
+            "details": "",
+            "status": "idle",
+        }
 
     def show_banner(self):
         """Display OpenPilot banner."""
@@ -100,18 +116,76 @@ class EnhancedUI:
 
     def create_activity_panel(self) -> Panel:
         """Create activity log panel showing recent actions."""
-        if not self.activity_log:
+        return self.create_current_task_panel(title="[bold]Current Task Details[/bold]")
+
+    def create_current_task_panel(self, title: str = "[bold]Current Task Details[/bold]", extra_content: Any | None = None) -> Panel:
+        """Create the live current-task panel with active operations and recent history."""
+        active_rows = []
+
+        if self.current_task_state:
+            task_title = self.current_task_state.get("title") or "Waiting"
+            task_status = self.current_task_state.get("status") or "idle"
+            task_details = self.current_task_state.get("details") or ""
+            header = Text()
+            header.append(f"{task_title}", style="bold white")
+            header.append(f" · {task_status}", style="dim")
+            active_rows.append(header)
+            if task_details:
+                for detail_line in str(task_details).splitlines()[:4]:
+                    active_rows.append(Text(f"    {detail_line}", style="dim"))
+
+        for op in self.active_operations:
+            elapsed = (datetime.now() - op.start_time).total_seconds()
+            op_type = op.type.value if hasattr(op.type, "value") else str(op.type)
+            if op_type == "llm":
+                style = "magenta"
+            elif op_type == "tool":
+                style = "cyan"
+            else:
+                style = "yellow"
+
+            line = Text()
+            line.append(f"[{op.start_time.strftime('%H:%M:%S')}] ", style="dim")
+            line.append(f"{op.spinner_frame or '⠋'} ", style=style)
+            line.append(f"{op.name} ", style=style)
+            line.append(f"running {elapsed:.1f}s", style="dim")
+            if op.phase:
+                line.append(f" · {op.phase}", style="dim")
+            active_rows.append(line)
+
+            display_lines = op.display_lines or []
+            if display_lines:
+                for trace_line in display_lines[-self.max_active_trace_lines:]:
+                    active_rows.append(Text(f"    {trace_line}", style="dim"))
+            if op.response_preview:
+                active_rows.append(
+                    Text(f"    Response preview: {op.response_preview}", style="dim")
+                )
+            if op.tokens_or_chars:
+                active_rows.append(
+                    Text(f"    Progress: {op.tokens_or_chars} chars", style="dim")
+                )
+
+        if extra_content is not None:
+            if active_rows:
+                active_rows.append(Text("-" * 28, style="dim"))
+            active_rows.append(extra_content)
+
+        log_rows = []
+        if active_rows and self.activity_log:
+            log_rows.append(Text("-" * 28, style="dim"))
+
+        if not self.activity_log and not active_rows:
             content = Text("No recent activity", style="dim")
         else:
-            lines = []
             for action_type, message, timestamp in self.activity_log[-self.max_log_lines:]:
                 time_str = timestamp.strftime("%H:%M:%S")
 
                 if action_type == "tool":
-                    icon = "🔧"
+                    icon = ">"
                     style = "cyan"
                 elif action_type == "llm":
-                    icon = "🤔"
+                    icon = "..."
                     style = "magenta"
                 elif action_type == "success":
                     icon = "✓"
@@ -127,17 +201,123 @@ class EnhancedUI:
                 line.append(f"[{time_str}] ", style="dim")
                 line.append(f"{icon} ", style=style)
                 line.append(message, style=style)
-                lines.append(line)
+                log_rows.append(line)
 
-            content = Group(*lines)
+            remaining = max(0, self.max_log_lines - len(active_rows))
+            visible_logs = log_rows[-remaining:] if remaining else []
+            content = Group(*(active_rows + visible_logs))
 
         return Panel(
             content,
-            title="[bold]📋 Activity Log[/bold]",
+            title=title,
             border_style="yellow",
             box=ROUNDED,
             height=self.max_log_lines + 4,
         )
+
+    def set_task_graph_state(
+        self,
+        *,
+        goal: str | None = None,
+        stages: list[str] | None = None,
+        stage_statuses: dict[str, str] | None = None,
+        current_stage: str | None = None,
+        tasks: list[dict[str, Any]] | None = None,
+        current_task_id: str | None = None,
+    ) -> None:
+        """Update the persistent task graph area."""
+        if goal is not None:
+            self.task_graph_state["goal"] = goal
+        if stages is not None:
+            self.task_graph_state["stages"] = stages
+        if stage_statuses is not None:
+            self.task_graph_state["stage_statuses"] = stage_statuses
+        if current_stage is not None:
+            self.task_graph_state["current_stage"] = current_stage
+        if tasks is not None:
+            self.task_graph_state["tasks"] = tasks
+        if current_task_id is not None:
+            self.task_graph_state["current_task_id"] = current_task_id
+        self._refresh_main_content()
+
+    def set_current_task_state(
+        self,
+        *,
+        title: str | None = None,
+        details: str | None = None,
+        status: str | None = None,
+    ) -> None:
+        """Update the persistent current task summary."""
+        if title is not None:
+            self.current_task_state["title"] = title
+        if details is not None:
+            self.current_task_state["details"] = details
+        if status is not None:
+            self.current_task_state["status"] = status
+        self._refresh_main_content()
+
+    def create_task_graph_state_panel(self) -> Panel:
+        """Render the persistent task graph or phase graph."""
+        goal = self.task_graph_state.get("goal") or "OpenPilot task"
+        tasks = self.task_graph_state.get("tasks") or []
+        current_task_id = self.task_graph_state.get("current_task_id")
+
+        if tasks:
+            tree = Tree(f"[bold]{goal}[/bold]", guide_style="dim")
+            for index, task in enumerate(tasks, 1):
+                status = task.get("status", "pending")
+                style, icon = self._status_style_icon(status, active=task.get("id") == current_task_id)
+                description = task.get("description", "Untitled task")
+                effort = task.get("effort")
+                suffix = f" [dim]({effort})[/dim]" if effort else ""
+                tree.add(f"{icon} [{style}]{index}. {description}[/{style}]{suffix}")
+        else:
+            stages = self.task_graph_state.get("stages") or [
+                "Semantic Analysis",
+                "Memory Retrieval",
+                "Task Decomposition",
+                "Execution",
+                "Result Assembly",
+            ]
+            statuses = self.task_graph_state.get("stage_statuses") or {}
+            current_stage = self.task_graph_state.get("current_stage")
+            tree = Tree(f"[bold]{goal}[/bold]", guide_style="dim")
+            for stage in stages:
+                status = statuses.get(stage, "pending")
+                if stage == current_stage and status not in {"completed", "failed"}:
+                    status = "running"
+                style, icon = self._status_style_icon(status, active=stage == current_stage)
+                tree.add(f"{icon} [{style}]{stage}[/{style}] [dim]{status}[/dim]")
+
+        return Panel(
+            tree,
+            title="[bold]Task Graph[/bold]",
+            border_style="cyan",
+            box=ROUNDED,
+            height=12,
+        )
+
+    def create_progress_dashboard(self, extra_content: Any | None = None) -> Layout:
+        """Create the fixed two-region autopilot dashboard."""
+        layout = Layout()
+        layout.split_column(
+            Layout(self.create_task_graph_state_panel(), name="task_graph", size=12),
+            Layout(
+                self.create_current_task_panel(extra_content=extra_content),
+                name="current_task",
+            ),
+        )
+        return layout
+
+    def _status_style_icon(self, status: str, active: bool = False) -> tuple[str, str]:
+        status = (status or "pending").lower()
+        if status in {"completed", "success"}:
+            return "green", "✓"
+        if status in {"failed", "error"}:
+            return "red", "✗"
+        if status in {"running", "in_progress"} or active:
+            return "yellow", "⠋"
+        return "dim", "•"
 
     def log_activity(self, action_type: str, message: str):
         """Add an activity to the log."""
@@ -145,6 +325,12 @@ class EnhancedUI:
         # Keep only recent entries
         if len(self.activity_log) > 100:
             self.activity_log = self.activity_log[-100:]
+        self._refresh_main_content()
+
+    def set_active_operations(self, operations: list[Any]) -> None:
+        """Update active operations displayed in the activity panel."""
+        self.active_operations = operations
+        self._refresh_main_content()
 
     @contextmanager
     def live_session(self, title: str = "OpenPilot Session"):
@@ -181,11 +367,22 @@ class EnhancedUI:
             finally:
                 self.live = None
                 self.current_layout = None
+                self._main_content = None
 
     def update_main_content(self, content):
         """Update the main content area."""
+        self._main_content = content
+        self._refresh_main_content()
+
+    def _refresh_main_content(self):
+        """Refresh the remembered main content with current activity."""
         if self.current_layout:
-            self.current_layout["main"].update(content)
+            self.current_layout["main"].update(
+                self._compose_main_content(self._main_content)
+            )
+
+    def _compose_main_content(self, content):
+        return self.create_progress_dashboard(extra_content=content)
 
     def show_progress_with_activity(
         self,
@@ -221,63 +418,21 @@ class EnhancedUI:
     def show_tool_execution(self, tool_name: str, params: dict[str, Any]):
         """Display tool execution in progress."""
         self.log_activity("tool", f"Calling {tool_name}")
-
-        # Create tool info panel
-        tool_info = Table.grid(padding=(0, 2))
-        tool_info.add_column(style="bold cyan")
-        tool_info.add_column(style="white")
-
-        tool_info.add_row("Tool:", tool_name)
+        params_preview = []
         for key, value in params.items():
             value_str = str(value)
-            if len(value_str) > 50:
-                value_str = value_str[:47] + "..."
-            tool_info.add_row(f"{key}:", value_str)
-
-        panel = Panel(
-            tool_info,
-            title="[bold]🔧 Tool Execution[/bold]",
-            border_style="cyan",
-            box=ROUNDED,
+            if len(value_str) > 80:
+                value_str = value_str[:77] + "..."
+            params_preview.append(f"{key}: {value_str}")
+        self.set_current_task_state(
+            title=f"Tool: {tool_name}",
+            details="\n".join(params_preview),
+            status="running",
         )
-
-        if self.current_layout:
-            content = Layout()
-            content.split_column(
-                Layout(panel, size=len(params) + 6),
-                Layout(self.create_activity_panel()),
-            )
-            self.update_main_content(content)
 
     def show_llm_thinking(self, prompt_preview: str, model: str = "gpt-4"):
         """Display LLM thinking process."""
         self.log_activity("llm", f"Thinking with {model}")
-
-        # Truncate prompt for display
-        if len(prompt_preview) > 200:
-            prompt_preview = prompt_preview[:197] + "..."
-
-        thinking_panel = Panel(
-            Group(
-                Text(f"Model: {model}", style="bold magenta"),
-                Text(""),
-                Text("Prompt:", style="dim"),
-                Text(prompt_preview, style="white"),
-                Text(""),
-                Text("⏳ Waiting for response...", style="yellow"),
-            ),
-            title="[bold]🤔 LLM Thinking[/bold]",
-            border_style="magenta",
-            box=ROUNDED,
-        )
-
-        if self.current_layout:
-            content = Layout()
-            content.split_column(
-                Layout(thinking_panel, size=12),
-                Layout(self.create_activity_panel()),
-            )
-            self.update_main_content(content)
 
     def create_executing_panel(self, task_description: str) -> Panel:
         """Create an executing panel with spinner animation."""

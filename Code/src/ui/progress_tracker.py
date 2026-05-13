@@ -34,10 +34,24 @@ class Operation:
     end_time: Optional[datetime] = None
     success: Optional[bool] = None
     error: Optional[str] = None
+    phase: str = "Starting"
+    display_lines: list[str] | None = None
+    spinner_frame: str = ""
+    spinner_index: int = 0
+    prompt_preview: str = ""
+    response_preview: str = ""
+    tokens_or_chars: int = 0
+
+    @property
+    def started_at(self) -> datetime:
+        """Alias for callers that prefer the newer field name."""
+        return self.start_time
 
 
 class ProgressTracker:
     """Track and display real-time progress of operations."""
+
+    SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
     def __init__(self, ui):
         """Initialize progress tracker with UI instance."""
@@ -68,24 +82,37 @@ class ProgressTracker:
             with self.lock:
                 # Update UI with current operations
                 active_ops = [op for op in self.operations.values() if op.end_time is None]
-                if active_ops:
-                    # UI will be updated by the operations themselves
-                    pass
-            time.sleep(0.1)
+                for op in active_ops:
+                    op.spinner_index = (op.spinner_index + 1) % len(self.SPINNER_FRAMES)
+                    op.spinner_frame = self.SPINNER_FRAMES[op.spinner_index]
+            self.ui.set_active_operations(active_ops)
+            time.sleep(0.5)
 
     @contextmanager
     def track_tool_call(self, tool_name: str, params: dict[str, Any]):
         """Context manager to track a tool call."""
-        op_id = self._start_operation(OperationType.TOOL_CALL, tool_name, params)
+        op_id = self._start_operation(
+            OperationType.TOOL_CALL,
+            tool_name,
+            params,
+            phase="Running tool",
+        )
+        self.append_operation_line(op_id, "Preparing tool call")
+        for key, value in params.items():
+            self.append_operation_line(op_id, f"{key}: {value}")
 
         # Show tool execution in UI
-        self.ui.show_tool_execution(tool_name, params)
+        if hasattr(self.ui, "show_tool_execution"):
+            self.ui.show_tool_execution(tool_name, params)
 
         try:
             yield op_id
+            self.update_operation_phase(op_id, "Completed")
             self._end_operation(op_id, success=True)
             self.ui.log_activity("tool", f"✓ {tool_name} completed")
         except Exception as e:
+            self.update_operation_phase(op_id, "Failed")
+            self.append_operation_line(op_id, f"Error: {str(e)}")
             self._end_operation(op_id, success=False, error=str(e))
             self.ui.log_activity("error", f"✗ {tool_name} failed: {str(e)}")
             raise
@@ -96,17 +123,32 @@ class ProgressTracker:
         op_id = self._start_operation(
             OperationType.LLM_CALL,
             f"LLM: {model}",
-            {"model": model, "prompt_preview": prompt_preview}
+            {"model": model, "prompt_preview": prompt_preview},
+            phase="Preparing request",
         )
+        self.append_operation_line(op_id, "Preparing request")
+        if prompt_preview:
+            self.append_operation_line(op_id, f"Prompt preview: {prompt_preview}")
+        self.append_operation_line(op_id, "Waiting for model response")
 
         # Show LLM thinking in UI
-        self.ui.show_llm_thinking(prompt_preview, model)
+        if hasattr(self.ui, "set_current_task_state"):
+            self.ui.set_current_task_state(
+                title=f"LLM: {model}",
+                details=prompt_preview,
+                status="waiting for model",
+            )
+        if hasattr(self.ui, "show_llm_thinking"):
+            self.ui.show_llm_thinking(prompt_preview, model)
 
         try:
             yield op_id
+            self.update_operation_phase(op_id, "Completed")
             self._end_operation(op_id, success=True)
             self.ui.log_activity("llm", f"✓ {model} responded")
         except Exception as e:
+            self.update_operation_phase(op_id, "Failed")
+            self.append_operation_line(op_id, f"Error: {str(e)}")
             self._end_operation(op_id, success=False, error=str(e))
             self.ui.log_activity("error", f"✗ {model} failed: {str(e)}")
             raise
@@ -117,17 +159,36 @@ class ProgressTracker:
         op_id = self._start_operation(
             OperationType.TASK_EXECUTION,
             task_name,
-            details or {}
+            details or {},
+            phase="Running task",
         )
 
         self.ui.log_activity("task", f"Starting: {task_name}")
+        if hasattr(self.ui, "set_current_task_state"):
+            detail_text = "\n".join(f"{key}: {value}" for key, value in (details or {}).items())
+            self.ui.set_current_task_state(
+                title=task_name,
+                details=detail_text,
+                status="running",
+            )
 
         try:
             yield op_id
             self._end_operation(op_id, success=True)
+            if hasattr(self.ui, "set_current_task_state"):
+                self.ui.set_current_task_state(
+                    title=task_name,
+                    status="completed",
+                )
             self.ui.log_activity("success", f"✓ {task_name} completed")
         except Exception as e:
             self._end_operation(op_id, success=False, error=str(e))
+            if hasattr(self.ui, "set_current_task_state"):
+                self.ui.set_current_task_state(
+                    title=task_name,
+                    details=str(e),
+                    status="failed",
+                )
             self.ui.log_activity("error", f"✗ {task_name} failed: {str(e)}")
             raise
 
@@ -135,7 +196,8 @@ class ProgressTracker:
         self,
         op_type: OperationType,
         name: str,
-        details: dict[str, Any]
+        details: dict[str, Any],
+        phase: str = "Starting",
     ) -> str:
         """Start tracking an operation."""
         with self.lock:
@@ -147,11 +209,50 @@ class ProgressTracker:
                 type=op_type,
                 name=name,
                 details=details,
-                start_time=datetime.now()
+                start_time=datetime.now(),
+                phase=phase,
+                display_lines=[],
+                spinner_frame=self.SPINNER_FRAMES[0],
+                prompt_preview=str(details.get("prompt_preview", "")),
             )
 
             self.operations[op_id] = operation
             return op_id
+
+    def append_operation_line(self, op_id: str, text: str) -> None:
+        """Append a public transient trace line to an active operation."""
+        with self.lock:
+            op = self.operations.get(op_id)
+            if not op:
+                return
+
+            lines = op.display_lines or []
+            lines.append(text)
+            max_lines = getattr(self.ui, "max_active_trace_lines", 8)
+            op.display_lines = lines[-max_lines:]
+
+    def update_operation_phase(self, op_id: str, phase: str) -> None:
+        """Update the public phase label for an active operation."""
+        with self.lock:
+            op = self.operations.get(op_id)
+            if op:
+                op.phase = phase
+
+    def update_operation_progress(
+        self,
+        op_id: str,
+        preview: str = "",
+        count: int | None = None,
+    ) -> None:
+        """Update public response progress for an active operation."""
+        with self.lock:
+            op = self.operations.get(op_id)
+            if not op:
+                return
+            if preview:
+                op.response_preview = preview
+            if count is not None:
+                op.tokens_or_chars = count
 
     def _end_operation(
         self,

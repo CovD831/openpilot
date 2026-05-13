@@ -97,7 +97,9 @@ def _run_once_mode(
             console=ui.console,
             auto_approve=True,
             logger=logger,
-            use_enhanced_ui=True
+            use_enhanced_ui=True,
+            enhanced_ui=ui,
+            tracker=tracker,
         )
 
         # Execute with live session
@@ -112,8 +114,12 @@ def _run_once_mode(
             import time
             time.sleep(1)
 
-        ui.show_success("Goal completed successfully!")
-        return 0
+        if result.get("success"):
+            ui.show_success("Goal completed successfully!")
+            return 0
+
+        ui.show_error("Execution failed", result.get("error") or "Autopilot reported failure")
+        return 2
 
     except Exception as e:
         ui.show_error("Execution failed", str(e))
@@ -210,7 +216,7 @@ def _run_interactive_mode(
 
                 # Handle goal execution
                 if not user_input.startswith("/"):
-                    _execute_goal_interactive(user_input, ui, tracker, planner)
+                    _execute_goal_interactive(user_input, ui, tracker, llm_client, logger)
                 else:
                     ui.console.print(f"[yellow]Unknown command: {user_input}[/yellow]")
                     ui.console.print("[dim]Type /help for available commands[/dim]")
@@ -231,9 +237,20 @@ def _execute_goal_interactive(
     goal: str,
     ui: EnhancedUI,
     tracker: ProgressTracker,
-    planner: TaskPlanner
+    llm_client,
+    logger,
 ):
     """Execute a goal in interactive mode."""
+    return _execute_autopilot(goal, ui, tracker, llm_client, logger)
+
+
+def _execute_goal_interactive_legacy(
+    goal: str,
+    ui: EnhancedUI,
+    tracker: ProgressTracker,
+    planner: TaskPlanner
+):
+    """Legacy plan-only simulation path kept for explicit tests."""
     ui.console.print()
 
     try:
@@ -316,7 +333,9 @@ def _execute_autopilot(
             console=ui.console,
             auto_approve=True,
             logger=logger,
-            use_enhanced_ui=True
+            use_enhanced_ui=True,
+            enhanced_ui=ui,
+            tracker=tracker,
         )
 
         # Execute with live session
@@ -332,9 +351,13 @@ def _execute_autopilot(
             import time
             time.sleep(1)
 
+        if result.get("success"):
+            ui.show_success("Goal completed!")
+        else:
+            ui.show_error("Autopilot execution failed", result.get("error") or "Autopilot reported failure")
+
     except Exception as e:
         ui.console.print()
         ui.show_error("Autopilot execution failed", str(e))
         import traceback
         traceback.print_exc()
-

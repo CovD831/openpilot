@@ -109,9 +109,13 @@ def code_generator_executor(params: dict[str, Any]) -> dict[str, Any]:
     language = language_map[language_str]
 
     try:
-        from core.config import LLMSettings
-        settings = LLMSettings()
-        generator = CodeGenerator(LLMClient(settings))
+        llm_client = params.get("_llm_client")
+        if llm_client is None:
+            from core.config import LLMSettings
+            settings = LLMSettings()
+            llm_client = LLMClient(settings)
+
+        generator = CodeGenerator(llm_client)
 
         # Create request
         request = CodeGenerationRequest(

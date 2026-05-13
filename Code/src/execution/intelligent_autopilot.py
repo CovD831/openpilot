@@ -7,6 +7,9 @@ Replaces the rigid 8-stage workflow with dynamic task decomposition and executio
 from __future__ import annotations
 
 import json
+import ast
+import re
+import shlex
 import sys
 import uuid
 from datetime import datetime
@@ -55,6 +58,8 @@ class IntelligentAutopilot:
         logger: OpenPilotLogger | None = None,
         log_file: str | Path | None = None,
         use_enhanced_ui: bool = False,
+        enhanced_ui: Any | None = None,
+        tracker: Any | None = None,
     ):
         """Initialize intelligent autopilot.
 
@@ -65,6 +70,8 @@ class IntelligentAutopilot:
             logger: Logger instance
             log_file: Log file path
             use_enhanced_ui: Use enhanced UI with progress tracking
+            enhanced_ui: Existing enhanced UI instance to update
+            tracker: Existing progress tracker to reuse
         """
         self.console = console or Console()
         self.auto_approve = auto_approve
@@ -75,14 +82,21 @@ class IntelligentAutopilot:
             from ui.enhanced_ui import EnhancedUI
             from ui.progress_tracker import ProgressTracker
             from core.instrumented_llm import InstrumentedLLMClient
-            from tools.instrumented_executor import InstrumentedToolExecutor
 
-            self.enhanced_ui = EnhancedUI(self.console)
-            self.tracker = ProgressTracker(self.enhanced_ui)
-            self.llm_client = InstrumentedLLMClient(llm_client.settings, self.tracker)
+            self.enhanced_ui = enhanced_ui or EnhancedUI(self.console)
+            self.tracker = tracker or ProgressTracker(self.enhanced_ui)
+            self._owns_tracker = tracker is None
+            if isinstance(llm_client, InstrumentedLLMClient):
+                llm_client.tracker = self.tracker
+                self.llm_client = llm_client
+            elif hasattr(llm_client, "settings"):
+                self.llm_client = InstrumentedLLMClient(llm_client.settings, self.tracker)
+            else:
+                self.llm_client = llm_client
         else:
             self.enhanced_ui = None
             self.tracker = None
+            self._owns_tracker = False
             self.llm_client = llm_client
 
         # Initialize components
@@ -95,6 +109,7 @@ class IntelligentAutopilot:
         # Register built-in tools
         from tools.builtin_tools import register_builtin_tools
         register_builtin_tools(self.tool_registry)
+        self._register_contextual_tools()
 
         # Use instrumented executor if enhanced UI is enabled
         if use_enhanced_ui:
@@ -125,6 +140,23 @@ class IntelligentAutopilot:
 
         # Register task executor
         self.orchestrator.set_task_executor(self._execute_task)
+
+    def _register_contextual_tools(self) -> None:
+        """Register tool wrappers that can reuse this autopilot's runtime context."""
+        from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
+
+        def execute_code_generator(params: dict[str, Any]) -> dict[str, Any]:
+            return code_generator_executor({**params, "_llm_client": self.llm_client})
+
+        self.tool_registry.register(
+            CODE_GENERATOR_DEFINITION,
+            execute_code_generator,
+            allow_override=True,
+        )
+
+    def _stop_tracking_if_owned(self) -> None:
+        if self.tracker and self._owns_tracker:
+            self.tracker.stop_tracking()
 
     def execute(self, goal: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         """Execute goal using intelligent task decomposition.
@@ -158,34 +190,657 @@ class IntelligentAutopilot:
         else:
             return self._execute_standard(goal, context)
 
+    def _try_simple_code_artifact_fast_path(self, goal: str, semantic: Any) -> dict[str, Any] | None:
+        """Generate simple single-file code artifacts without multi-step decomposition."""
+        target_file = self._simple_code_artifact_target(goal, semantic)
+        if target_file is None:
+            return None
+
+        if self.enhanced_ui:
+            self.enhanced_ui.set_task_graph_state(
+                goal=goal,
+                tasks=[
+                    {"id": "fast_code_generator", "description": "Generate Python code", "status": "running"},
+                    {"id": "fast_file_writer", "description": f"Write {target_file.name}", "status": "pending"},
+                    {"id": "fast_readme_tool", "description": "Generate README.md", "status": "pending"},
+                ],
+                current_task_id="fast_code_generator",
+            )
+            self.enhanced_ui.set_current_task_state(
+                title="Fast path code generation",
+                details=f"Target: {target_file}",
+                status="running",
+            )
+            self.enhanced_ui.update_main_content(
+                self.enhanced_ui.create_status_panel(
+                    "Task Decomposition",
+                    "Simple code artifact detected. Using 1-step fast path."
+                )
+            )
+            self.enhanced_ui.log_activity("task", "Task Decomposition: 1 fast-path code task")
+        else:
+            self.console.print("[cyan]Fast path:[/cyan] generating a single code artifact")
+
+        task = Task(
+            id=str(uuid.uuid4()),
+            description=f"Generate complete code artifact at {target_file}",
+            priority=TaskPriority.HIGH,
+        )
+        started = datetime.now()
+        tool_results: list[dict[str, Any]] = []
+
+        code_prompt = (
+            f"Create a complete, runnable single-file Python program for this user request: {goal}\n"
+            f"Write the final artifact for: {target_file}\n"
+            "Prefer Python standard library modules when practical. If this is a game, include controls, "
+            "score display, restart or exit behavior, collision/game-over handling, and clear inline comments. "
+            "Return only the Python source code."
+        )
+
+        code_result = self._execute_fast_tool(
+            task=task,
+            step_id="fast_code_generator",
+            tool_name="code_generator",
+            input_params={
+                "task_description": code_prompt,
+                "language": "python",
+                "context": f"Output file: {target_file}",
+            },
+        )
+        tool_results.append(code_result)
+        if self.enhanced_ui:
+            self.enhanced_ui.set_task_graph_state(
+                tasks=[
+                    {
+                        "id": "fast_code_generator",
+                        "description": "Generate Python code",
+                        "status": "completed" if code_result["success"] else "failed",
+                    },
+                    {"id": "fast_file_writer", "description": f"Write {target_file.name}", "status": "running"},
+                    {"id": "fast_readme_tool", "description": "Generate README.md", "status": "pending"},
+                ],
+                current_task_id="fast_file_writer",
+            )
+
+        code = ""
+        if code_result["success"] and isinstance(code_result["result"], dict):
+            code = code_result["result"].get("code", "")
+
+        syntax_error = None
+        if code:
+            try:
+                ast.parse(code)
+            except SyntaxError as exc:
+                syntax_error = f"Syntax error on line {exc.lineno}: {exc.msg}"
+
+        if code and syntax_error is None:
+            write_result = self._execute_fast_tool(
+                task=task,
+                step_id="fast_file_writer",
+                tool_name="file_writer",
+                input_params={
+                    "file_path": str(target_file),
+                    "content": code,
+                    "encoding": "utf-8",
+                    "create_dirs": True,
+                    "overwrite": True,
+                },
+            )
+            tool_results.append(write_result)
+            if self.enhanced_ui:
+                self.enhanced_ui.set_task_graph_state(
+                    tasks=[
+                        {"id": "fast_code_generator", "description": "Generate Python code", "status": "completed"},
+                        {
+                            "id": "fast_file_writer",
+                            "description": f"Write {target_file.name}",
+                            "status": "completed" if write_result["success"] else "failed",
+                        },
+                        {"id": "fast_readme_tool", "description": "Generate README.md", "status": "running"},
+                    ],
+                    current_task_id="fast_readme_tool",
+                )
+            if write_result["success"]:
+                readme_result = self._execute_fast_tool(
+                    task=task,
+                    step_id="fast_readme_tool",
+                    tool_name="readme_tool",
+                    input_params={
+                        "project_path": str(target_file.parent),
+                        "project_summary": goal,
+                        "written_files": [str(target_file)],
+                        "entry_files": [str(target_file)],
+                        "run_command": f"python {shlex.quote(target_file.name)}",
+                        "overwrite": True,
+                    },
+                )
+                tool_results.append(readme_result)
+                if self.enhanced_ui:
+                    self.enhanced_ui.set_task_graph_state(
+                        tasks=[
+                            {"id": "fast_code_generator", "description": "Generate Python code", "status": "completed"},
+                            {"id": "fast_file_writer", "description": f"Write {target_file.name}", "status": "completed"},
+                            {
+                                "id": "fast_readme_tool",
+                                "description": "Generate README.md",
+                                "status": "completed" if readme_result["success"] else "failed",
+                            },
+                        ],
+                        current_task_id="fast_readme_tool",
+                    )
+        elif syntax_error:
+            tool_results.append({
+                "tool": "syntax_validation",
+                "params": {"file_path": str(target_file)},
+                "result": None,
+                "success": False,
+                "error": syntax_error,
+            })
+
+        primary_results = [result for result in tool_results if result["tool"] != "readme_tool"]
+        success = all(result["success"] for result in primary_results)
+        duration = (datetime.now() - started).total_seconds()
+        error_msg = None
+        if not success:
+            errors = [r["error"] for r in primary_results if not r["success"]]
+            error_msg = "; ".join(error for error in errors if error) or "Fast-path code generation failed"
+        readme_result = next((r for r in tool_results if r["tool"] == "readme_tool"), None)
+        readme_error = readme_result["error"] if readme_result and not readme_result["success"] else None
+
+        if self.enhanced_ui:
+            code_status = "completed" if code_result["success"] else "failed"
+            file_result = next((r for r in tool_results if r["tool"] == "file_writer"), None)
+            file_status = (
+                "completed"
+                if file_result and file_result["success"]
+                else "failed"
+                if file_result
+                else "pending"
+            )
+            readme_status = (
+                "completed"
+                if readme_result and readme_result["success"]
+                else "failed"
+                if readme_result
+                else "pending"
+            )
+            self.enhanced_ui.set_task_graph_state(
+                tasks=[
+                    {"id": "fast_code_generator", "description": "Generate Python code", "status": code_status},
+                    {"id": "fast_file_writer", "description": f"Write {target_file.name}", "status": file_status},
+                    {"id": "fast_readme_tool", "description": "Generate README.md", "status": readme_status},
+                ],
+                current_task_id="fast_readme_tool" if readme_result else "fast_file_writer",
+            )
+
+        task_result = TaskExecutionResult(
+            task_id=task.id,
+            status=TaskStatus.COMPLETED if success else TaskStatus.FAILED,
+            result={
+                "task_id": task.id,
+                "description": task.description,
+                "status": "completed" if success else "failed",
+                "tool_calls": tool_results,
+                "all_tools_succeeded": success,
+                "final_output": tool_results[-1]["result"] if tool_results else None,
+            },
+            error=error_msg,
+            duration=duration,
+            metadata={"fast_path": True, "target_file": str(target_file)},
+        )
+
+        self.stats["success"] = success
+        self.stats["tasks_completed"] = 1 if success else 0
+        self.stats["tasks_failed"] = 0 if success else 1
+        self.stats["end_time"] = datetime.now()
+        self._stop_tracking_if_owned()
+
+        if self.enhanced_ui:
+            fast_details = (
+                f"Wrote {target_file}"
+                if success
+                else f"Fast-path execution failed: {error_msg}"
+            )
+            if success and readme_result and readme_result["success"] and isinstance(readme_result["result"], dict):
+                fast_details += f"\nREADME: {readme_result['result']['file_path']}"
+            elif success and readme_error:
+                fast_details += f"\nREADME generation failed: {readme_error}"
+            self.enhanced_ui.update_main_content(
+                self.enhanced_ui.create_status_panel(
+                    "Success" if success else "Failed",
+                    fast_details,
+                )
+            )
+
+        self.logger.log_event(
+            "fast_path_completed",
+            {
+                "goal": goal,
+                "target_file": str(target_file),
+                "success": success,
+                "error": error_msg,
+                "readme_error": readme_error,
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+
+        return {
+            "success": success,
+            "goal": goal,
+            "semantic_analysis": semantic,
+            "fast_path": True,
+            "target_file": str(target_file),
+            "results": [task_result],
+            "stats": self.stats,
+            "error": error_msg,
+            "readme": readme_result,
+        }
+
+    def _simple_code_artifact_target(self, goal: str, semantic: Any) -> Path | None:
+        path_match = re.search(r"['\"](?P<path>/[^'\"]+)['\"]", goal)
+        if not path_match:
+            return None
+
+        goal_lower = goal.lower()
+        code_keywords = ("snake", "贪吃蛇", "game", "小游戏", "脚本", "script", "程序", "app")
+        if not any(keyword in goal_lower for keyword in code_keywords):
+            return None
+
+        task_type = getattr(getattr(semantic, "task_type", None), "value", getattr(semantic, "task_type", ""))
+        if task_type and task_type not in {"coding", "file_workflow", "automation", "unknown"}:
+            return None
+
+        requested_path = Path(path_match.group("path")).expanduser()
+        if requested_path.suffix == ".py":
+            return requested_path
+        return requested_path / "main.py"
+
+    def _execute_fast_tool(
+        self,
+        task: Task,
+        step_id: str,
+        tool_name: str,
+        input_params: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.enhanced_ui:
+            display_params = dict(input_params)
+            if "content" in display_params:
+                display_params["content"] = f"<{len(str(display_params['content']))} chars>"
+            param_lines = "\n".join(f"{key}: {value}" for key, value in display_params.items())
+            self.enhanced_ui.set_current_task_state(
+                title=f"Tool: {tool_name}",
+                details=f"Task: {task.description}\nStep: {step_id}\n{param_lines}",
+                status="running",
+            )
+
+        selection = ToolSelection(
+            step_id=step_id,
+            tool_name=tool_name,
+            reason="capability_match",
+            confidence=0.95,
+            input_params=input_params,
+            requires_confirmation=False,
+            fallback_tools=[],
+            depends_on=[],
+            timeout_override=None,
+        )
+
+        self.logger.log_event(
+            "tool_execution_start",
+            {
+                "task_id": task.id,
+                "tool": tool_name,
+                "params": self._sanitize_tool_params(input_params),
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+
+        exec_result = self.tool_executor.execute_single(selection, context=None)
+        if self.enhanced_ui:
+            status = "completed" if exec_result.success else "failed"
+            detail = "Tool returned successfully"
+            if not exec_result.success and exec_result.error:
+                detail = exec_result.error.error_message
+            self.enhanced_ui.set_current_task_state(
+                title=f"Tool: {tool_name}",
+                details=detail,
+                status=status,
+            )
+        result = {
+            "tool": tool_name,
+            "params": self._sanitize_tool_params(input_params),
+            "result": exec_result.output,
+            "success": exec_result.success,
+            "error": exec_result.error.error_message if exec_result.error else None,
+        }
+        self.logger.log_event(
+            "tool_executed",
+            {
+                "task_id": task.id,
+                "tool": tool_name,
+                "success": exec_result.success,
+                "error": result["error"],
+                "output": self._summarize_tool_output(exec_result.output),
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        return result
+
+    def _finalize_project_readme(
+        self,
+        goal: str,
+        results: list[TaskExecutionResult],
+    ) -> dict[str, Any] | None:
+        """Generate README.md once after successful project/file creation."""
+        if self._results_include_tool(results, "readme_tool"):
+            return None
+
+        written_files = self._collect_written_files(results)
+        if not written_files:
+            return None
+
+        project_path = self._infer_project_path_from_files(goal, written_files)
+        if project_path is None:
+            return None
+
+        task = Task(
+            id=str(uuid.uuid4()),
+            description=f"Generate README.md for {project_path}",
+            priority=TaskPriority.MEDIUM,
+        )
+        readme_result = self._execute_fast_tool(
+            task=task,
+            step_id="final_readme_tool",
+            tool_name="readme_tool",
+            input_params={
+                "project_path": str(project_path),
+                "project_summary": goal,
+                "written_files": written_files,
+                "entry_files": written_files,
+                "overwrite": True,
+            },
+        )
+
+        if self.enhanced_ui:
+            if readme_result["success"]:
+                output = readme_result.get("result") if isinstance(readme_result.get("result"), dict) else {}
+                self.enhanced_ui.log_activity("success", f"README generated: {output.get('file_path', 'README.md')}")
+            else:
+                self.enhanced_ui.log_activity("error", f"README generation failed: {readme_result.get('error')}")
+        elif readme_result["success"]:
+            output = readme_result.get("result") if isinstance(readme_result.get("result"), dict) else {}
+            self.console.print(f"[green]README generated:[/green] {output.get('file_path', project_path / 'README.md')}")
+        else:
+            self.console.print(f"[yellow]README generation failed:[/yellow] {readme_result.get('error')}")
+
+        self.logger.log_event(
+            "readme_finalized",
+            {
+                "goal": goal,
+                "project_path": str(project_path),
+                "written_files": written_files,
+                "success": readme_result["success"],
+                "error": readme_result.get("error"),
+                "output": self._summarize_tool_output(readme_result.get("result")),
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        return readme_result
+
+    def _results_include_tool(self, results: list[TaskExecutionResult], tool_name: str) -> bool:
+        for result in results:
+            task_result = result.result if isinstance(result.result, dict) else {}
+            for tool_call in task_result.get("tool_calls", []):
+                if tool_call.get("tool") == tool_name:
+                    return True
+        return False
+
+    def _collect_written_files(self, results: list[TaskExecutionResult]) -> list[str]:
+        files: list[str] = []
+        seen: set[str] = set()
+        for result in results:
+            task_result = result.result if isinstance(result.result, dict) else {}
+            for tool_call in task_result.get("tool_calls", []):
+                if tool_call.get("tool") != "file_writer" or not tool_call.get("success"):
+                    continue
+                output = tool_call.get("result")
+                path = output.get("file_path") if isinstance(output, dict) else None
+                if not path:
+                    path = tool_call.get("params", {}).get("file_path")
+                if path and path not in seen:
+                    files.append(path)
+                    seen.add(path)
+        return files
+
+    def _infer_project_path_from_files(self, goal: str, written_files: list[str]) -> Path | None:
+        goal_path = self._extract_goal_path(goal)
+        if goal_path:
+            path = Path(goal_path).expanduser()
+            if path.suffix:
+                return path.parent
+            return path
+
+        if not written_files:
+            return None
+        first_file = Path(written_files[0]).expanduser()
+        if first_file.suffix:
+            return first_file.parent
+        return first_file
+
+    def _extract_goal_path(self, goal: str) -> str | None:
+        path_match = re.search(r"['\"](?P<path>/[^'\"]+)['\"]", goal)
+        return path_match.group("path") if path_match else None
+
+    def _sanitize_tool_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        sanitized: dict[str, Any] = {}
+        for key, value in params.items():
+            if key.startswith("_"):
+                continue
+            if key in {"content", "code"} and isinstance(value, str):
+                sanitized[key] = f"<{len(value)} chars>"
+                sanitized[f"{key}_length"] = len(value)
+                sanitized[f"{key}_preview"] = value[:200]
+            else:
+                sanitized[key] = value
+        return sanitized
+
+    def _summarize_tool_output(self, output: Any) -> dict[str, Any]:
+        if not isinstance(output, dict):
+            return {"output_type": type(output).__name__} if output is not None else {}
+
+        summary = output.copy()
+        if "code" in summary and isinstance(summary["code"], str):
+            summary["code_length"] = len(summary["code"])
+            summary["code_preview"] = summary["code"][:200]
+            summary.pop("code", None)
+        if "content" in summary and isinstance(summary["content"], str):
+            summary["content_length"] = len(summary["content"])
+            summary["content_preview"] = summary["content"][:200]
+            summary.pop("content", None)
+        return summary
+
+    def _resolve_chained_inputs(
+        self,
+        tool_name: str,
+        input_params: dict[str, Any],
+        last_output: Any,
+        last_code_output: Any,
+    ) -> dict[str, Any]:
+        params = {
+            key: self._replace_output_placeholders(value, last_output, last_code_output)
+            for key, value in input_params.items()
+        }
+
+        preferred_output = last_code_output or last_output
+        content = self._extract_generated_content(preferred_output)
+
+        if tool_name == "file_writer" and "content" not in params and content is not None:
+            params["content"] = content
+        elif tool_name in {"code_executor", "code_reviewer"} and "code" not in params and content is not None:
+            params["code"] = content
+            if isinstance(preferred_output, dict) and "language" in preferred_output and "language" not in params:
+                params["language"] = preferred_output["language"]
+
+        return params
+
+    def _replace_output_placeholders(
+        self,
+        value: Any,
+        last_output: Any,
+        last_code_output: Any,
+    ) -> Any:
+        if isinstance(value, dict):
+            return {
+                key: self._replace_output_placeholders(child, last_output, last_code_output)
+                for key, child in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                self._replace_output_placeholders(child, last_output, last_code_output)
+                for child in value
+            ]
+        if not isinstance(value, str) or "{{" not in value:
+            return value
+
+        code_content = self._extract_generated_content(last_code_output)
+        previous_content = self._extract_generated_content(last_output)
+        replacements = {
+            "{{code_generator.output}}": code_content,
+            "{{code_generator.code}}": code_content,
+            "{{previous.output}}": previous_content,
+            "{{previous.code}}": previous_content,
+            "{{last_output}}": previous_content,
+            "{{code}}": code_content,
+        }
+
+        for placeholder, replacement in replacements.items():
+            if placeholder not in value or replacement is None:
+                continue
+            if value.strip() == placeholder:
+                return replacement
+            value = value.replace(placeholder, replacement)
+        return value
+
+    def _extract_generated_content(self, output: Any) -> str | None:
+        if output is None:
+            return None
+        if isinstance(output, str):
+            return output
+        if isinstance(output, dict):
+            for key in ("code", "content", "text"):
+                value = output.get(key)
+                if isinstance(value, str):
+                    return value
+        return None
+
     def _execute_with_enhanced_ui_v2(self, goal, context):
         self.tracker.start_tracking()
+        stages = [
+            "Semantic Analysis",
+            "Memory Retrieval",
+            "Task Decomposition",
+            "Execution",
+            "Result Assembly",
+        ]
+        stage_statuses = {stage: "pending" for stage in stages}
+        self.enhanced_ui.set_task_graph_state(
+            goal=goal,
+            stages=stages,
+            stage_statuses=stage_statuses,
+            current_stage="Semantic Analysis",
+            tasks=[],
+        )
+        self.enhanced_ui.set_current_task_state(
+            title="Semantic Analysis",
+            details=f"Goal: {goal[:120]}",
+            status="running",
+        )
 
         try:
             # Step 1: Semantic analysis
-            self.enhanced_ui.update_main_content(
-                self.enhanced_ui.create_status_panel("Analyzing", "Performing semantic analysis...")
+            stage_statuses["Semantic Analysis"] = "running"
+            self.enhanced_ui.set_task_graph_state(
+                stage_statuses=stage_statuses,
+                current_stage="Semantic Analysis",
             )
 
             with self.tracker.track_task("Semantic Analysis", {"goal": goal}):
                 semantic = self.semantic_analyzer.analyze_goal(goal)
 
+            stage_statuses["Semantic Analysis"] = "completed"
+            self.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
             self.enhanced_ui.log_activity("success", f"Analysis complete: {semantic.task_type.value}")
+            self.enhanced_ui.set_current_task_state(
+                title="Semantic Analysis",
+                details=(
+                    f"Task Type: {semantic.task_type.value}\n"
+                    f"Risk Level: {semantic.risk_level.value}\n"
+                    f"Required Resources: {len(semantic.required_resources)}"
+                ),
+                status="completed",
+            )
+
+            import time
+            time.sleep(1.5)
 
             # Step 2: Retrieve memories
+            stage_statuses["Memory Retrieval"] = "running"
+            self.enhanced_ui.set_task_graph_state(
+                stage_statuses=stage_statuses,
+                current_stage="Memory Retrieval",
+            )
+            self.enhanced_ui.set_current_task_state(
+                title="Memory Retrieval",
+                details="Searching for relevant past experiences",
+                status="running",
+            )
+
             with self.tracker.track_task("Memory Retrieval", {"query": goal}):
                 memories = self.memory_store.query(goal, limit=5)
 
+            stage_statuses["Memory Retrieval"] = "completed"
+            self.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
             if memories.memories:
                 self.enhanced_ui.log_activity("success", f"Found {len(memories.memories)} relevant memories")
+                memory_info = f"Found {len(memories.memories)} relevant memories:\n\n"
+                for i, mem in enumerate(memories.memories[:3], 1):
+                    memory_info += f"{i}. [{mem.memory_type.value}] {mem.content[:60]}...\n"
+                self.enhanced_ui.set_current_task_state(
+                    title="Memory Retrieval",
+                    details=memory_info,
+                    status="completed",
+                )
+                time.sleep(1.5)
+            else:
+                self.enhanced_ui.log_activity("info", "No relevant memories found")
+                self.enhanced_ui.set_current_task_state(
+                    title="Memory Retrieval",
+                    details="No relevant memories found",
+                    status="completed",
+                )
 
             context["semantic_analysis"] = semantic.model_dump()
             context["memories"] = [m.model_dump() for m in memories.memories]
             context["goal"] = goal
 
+            fast_result = self._try_simple_code_artifact_fast_path(goal, semantic)
+            if fast_result is not None:
+                return fast_result
+
             # Step 3: Task decomposition
-            self.enhanced_ui.update_main_content(
-                self.enhanced_ui.create_status_panel("Decomposing", "Breaking down task into subtasks...")
+            stage_statuses["Task Decomposition"] = "running"
+            self.enhanced_ui.set_task_graph_state(
+                stage_statuses=stage_statuses,
+                current_stage="Task Decomposition",
+            )
+            self.enhanced_ui.set_current_task_state(
+                title="Task Decomposition",
+                details="Breaking down task into executable subtasks",
+                status="running",
             )
 
             with self.tracker.track_task("Task Decomposition", {"goal": goal}):
@@ -194,29 +849,71 @@ class IntelligentAutopilot:
                     context=context
                 )
 
+            stage_statuses["Task Decomposition"] = "completed"
+            self.enhanced_ui.set_task_graph_state(
+                stage_statuses=stage_statuses,
+                tasks=self._dashboard_task_items(decomposition.subtasks),
+            )
             self.enhanced_ui.log_activity("success", f"Created {len(decomposition.subtasks)} subtasks")
 
-            # Show task tree in UI
-            task_tree_panel = self.enhanced_ui.create_task_tree_panel(decomposition)
-            self.enhanced_ui.update_main_content(task_tree_panel)
+            # Show task breakdown details
+            breakdown_info = f"Created {len(decomposition.subtasks)} subtasks:\n\n"
+            for i, subtask in enumerate(decomposition.subtasks[:5], 1):
+                breakdown_info += f"{i}. {subtask.description[:70]}...\n"
+            if len(decomposition.subtasks) > 5:
+                breakdown_info += f"\n... and {len(decomposition.subtasks) - 5} more tasks"
+
+            self.enhanced_ui.set_current_task_state(
+                title="Task Decomposition",
+                details=breakdown_info,
+                status="completed",
+            )
+            time.sleep(2.0)
 
             # Give user time to see the task tree
             import time
             time.sleep(3.0)  # Allow users to read the task breakdown
 
             # Step 4: Execute tasks
-            self.enhanced_ui.update_main_content(
-                self.enhanced_ui.create_status_panel("Executing", f"Running {len(decomposition.subtasks)} tasks...")
+            stage_statuses["Execution"] = "running"
+            self.enhanced_ui.set_task_graph_state(
+                stage_statuses=stage_statuses,
+                current_stage="Execution",
+                tasks=self._dashboard_task_items(decomposition.subtasks),
+            )
+            self.enhanced_ui.set_current_task_state(
+                title="Execution",
+                details=f"Running {len(decomposition.subtasks)} tasks",
+                status="running",
             )
 
             results = self._execute_tasks(decomposition.subtasks, goal)
+            all_tasks_completed = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
+            stage_statuses["Execution"] = "completed" if all_tasks_completed else "failed"
+            self.enhanced_ui.set_task_graph_state(
+                stage_statuses=stage_statuses,
+                tasks=self._dashboard_task_items(decomposition.subtasks),
+            )
+            readme_result = self._finalize_project_readme(goal, results) if all_tasks_completed else None
 
             # Step 5: Assemble results
+            stage_statuses["Result Assembly"] = "running"
+            self.enhanced_ui.set_task_graph_state(
+                stage_statuses=stage_statuses,
+                current_stage="Result Assembly",
+            )
+            self.enhanced_ui.set_current_task_state(
+                title="Result Assembly",
+                details="Assembling final result",
+                status="running",
+            )
             with self.tracker.track_task("Result Assembly", {}):
                 final_result = self.task_decomposer.assemble_results(
                     decomposition.original_task,
                     decomposition.subtasks
                 )
+            stage_statuses["Result Assembly"] = "completed"
+            self.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
 
             success = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
             self.stats["success"] = success
@@ -224,22 +921,26 @@ class IntelligentAutopilot:
             self.stats["tasks_failed"] = len([t for t in decomposition.subtasks if t.status == TaskStatus.FAILED])
             self.stats["end_time"] = datetime.now()
 
-            self.tracker.stop_tracking()
+            self._stop_tracking_if_owned()
 
             # Update main content with final status (don't print new panels)
             if success:
-                self.enhanced_ui.update_main_content(
-                    self.enhanced_ui.create_status_panel(
-                        "Success",
-                        f"Goal completed successfully!\n\nCompleted {self.stats['tasks_completed']} tasks"
-                    )
+                success_details = f"Goal completed successfully!\n\nCompleted {self.stats['tasks_completed']} tasks"
+                if readme_result:
+                    if readme_result["success"] and isinstance(readme_result.get("result"), dict):
+                        success_details += f"\nREADME: {readme_result['result'].get('file_path')}"
+                    elif readme_result.get("error"):
+                        success_details += f"\nREADME generation failed: {readme_result['error']}"
+                self.enhanced_ui.set_current_task_state(
+                    title="Success",
+                    details=success_details,
+                    status="completed",
                 )
             else:
-                self.enhanced_ui.update_main_content(
-                    self.enhanced_ui.create_status_panel(
-                        "Failed",
-                        f"Goal execution failed\n\nCompleted: {self.stats['tasks_completed']}, Failed: {self.stats['tasks_failed']}"
-                    )
+                self.enhanced_ui.set_current_task_state(
+                    title="Failed",
+                    details=f"Goal execution failed\n\nCompleted: {self.stats['tasks_completed']}, Failed: {self.stats['tasks_failed']}",
+                    status="failed",
                 )
 
             return {
@@ -248,13 +949,16 @@ class IntelligentAutopilot:
                 "semantic_analysis": semantic,
                 "decomposition": decomposition,
                 "results": results,
+                "readme": readme_result,
                 "stats": self.stats,
             }
 
         except Exception as e:
             self.tracker.stop_tracking()
-            self.enhanced_ui.update_main_content(
-                self.enhanced_ui.create_status_panel("Error", f"Execution failed: {str(e)}")
+            self.enhanced_ui.set_current_task_state(
+                title="Error",
+                details=f"Execution failed: {str(e)}",
+                status="failed",
             )
             raise
 
@@ -288,6 +992,10 @@ class IntelligentAutopilot:
             context["memories"] = [m.model_dump() for m in memories.memories]
             context["goal"] = goal
 
+            fast_result = self._try_simple_code_artifact_fast_path(goal, semantic)
+            if fast_result is not None:
+                return fast_result
+
             # Step 3: Decompose task
             self.console.print("[bold cyan]🔍 Decomposing task...[/bold cyan]")
             decomposition = self.task_decomposer.decompose(
@@ -320,6 +1028,8 @@ class IntelligentAutopilot:
             # Step 4: Execute tasks
             self.console.print("[bold cyan]⚡ Executing tasks...[/bold cyan]")
             results = self._execute_tasks(decomposition.subtasks, goal)
+            all_tasks_completed = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
+            readme_result = self._finalize_project_readme(goal, results) if all_tasks_completed else None
 
             # Step 5: Assemble results
             self.console.print()
@@ -345,6 +1055,7 @@ class IntelligentAutopilot:
                 "semantic_analysis": semantic,
                 "decomposition": decomposition,
                 "results": results,
+                "readme": readme_result,
                 "final_result": final_result,
                 "stats": self.stats,
             }
@@ -397,6 +1108,25 @@ class IntelligentAutopilot:
         else:
             return self._execute_tasks_standard(tasks, execution_order, goal)
 
+    def _dashboard_task_items(
+        self,
+        tasks: list[Task],
+        running_task_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Convert task models into UI dashboard rows."""
+        items = []
+        for task in tasks:
+            status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            if running_task_id and task.id == running_task_id and status == "pending":
+                status = "running"
+            items.append({
+                "id": task.id,
+                "description": task.description,
+                "status": status,
+                "effort": f"{task.estimated_effort:.1f}u" if task.estimated_effort else "",
+            })
+        return items
+
     def _execute_tasks_enhanced_ui(self, tasks: list[Task], execution_order: list[str], goal: str) -> list[TaskExecutionResult]:
         """Execute tasks with enhanced UI (updates layout instead of printing)."""
         results = []
@@ -436,14 +1166,25 @@ class IntelligentAutopilot:
                 turn_id=1,
             )
 
-            # Update UI with current task and spinner
+            # Update dashboard with current task
             completed_count = len([r for r in results if r.status == TaskStatus.COMPLETED])
             failed_count = len([r for r in results if r.status == TaskStatus.FAILED])
-            status_detail = f"Task {i}/{len(tasks)}: {task.description}\n\n"
-            status_detail += f"Progress: {completed_count} completed, {failed_count} failed"
 
-            self.enhanced_ui.update_main_content(
-                self.enhanced_ui.create_executing_panel(status_detail)
+            status_detail = (
+                f"{task.description}\n\n"
+                f"Completed: {completed_count}\n"
+                f"Failed: {failed_count}\n"
+                f"Remaining: {len(tasks) - i}"
+            )
+
+            self.enhanced_ui.set_task_graph_state(
+                tasks=self._dashboard_task_items(tasks, running_task_id=task.id),
+                current_task_id=task.id,
+            )
+            self.enhanced_ui.set_current_task_state(
+                title=f"Task {i}/{len(tasks)}",
+                details=status_detail,
+                status="running",
             )
 
             # Execute task
@@ -477,9 +1218,27 @@ class IntelligentAutopilot:
                 # Update task status - this is critical for assemble_results to work
                 if result.status == TaskStatus.COMPLETED:
                     task.mark_completed(result.result)
+                    self.enhanced_ui.set_task_graph_state(
+                        tasks=self._dashboard_task_items(tasks),
+                        current_task_id=task.id,
+                    )
+                    self.enhanced_ui.set_current_task_state(
+                        title=f"Task {i}/{len(tasks)}",
+                        details=task.description,
+                        status="completed",
+                    )
                     self.enhanced_ui.log_activity("success", f"✓ Task {i}: {task.description[:50]}... ({result.duration:.1f}s)")
                 else:
                     task.mark_failed(result.error or "Unknown error")
+                    self.enhanced_ui.set_task_graph_state(
+                        tasks=self._dashboard_task_items(tasks),
+                        current_task_id=task.id,
+                    )
+                    self.enhanced_ui.set_current_task_state(
+                        title=f"Task {i}/{len(tasks)}",
+                        details=result.error or "Unknown error",
+                        status="failed",
+                    )
                     self.enhanced_ui.log_activity("error", f"✗ Task {i} failed: {result.error}")
                     self.logger.log_event(
                         "task_execution_failed",
@@ -543,6 +1302,15 @@ class IntelligentAutopilot:
                 )
                 results.append(result)
                 task.mark_failed(error_msg)
+                self.enhanced_ui.set_task_graph_state(
+                    tasks=self._dashboard_task_items(tasks),
+                    current_task_id=task.id,
+                )
+                self.enhanced_ui.set_current_task_state(
+                    title=f"Task {i}/{len(tasks)}",
+                    details=error_msg,
+                    status="failed",
+                )
 
         # Log final summary
         completed = len([r for r in results if r.status == TaskStatus.COMPLETED])
@@ -709,6 +1477,7 @@ Output ONLY valid JSON in this format:
 
 Important:
 - For code generation tasks, use code_generator to generate code, then file_writer to save it
+- For completed project/code deliveries, use readme_tool after file_writer to create README.md with run instructions
 - Provide actual values for all parameters, do not use null or placeholders
 - If you need to pass output from one tool to another, generate the content directly in the first tool
 """
@@ -729,11 +1498,13 @@ Important:
             )
 
             llm_response = self.llm_client.complete(llm_request)
-            response = llm_response.content
-
             # Parse response
             try:
-                plan_data = json.loads(response)
+                plan_data = (
+                    llm_response.parsed_json
+                    if isinstance(llm_response.parsed_json, dict)
+                    else json.loads(llm_response.content)
+                )
                 tool_calls = plan_data.get("tool_calls", [])
             except json.JSONDecodeError as e:
                 raise ValueError(f"Failed to parse LLM response as JSON: {e}")
@@ -744,44 +1515,47 @@ Important:
             # Execute tools sequentially
             tool_results = []
             last_output = None
+            last_code_output = None
 
             for i, tool_call in enumerate(tool_calls):
                 tool_name = tool_call.get("tool_name")
-                input_params = tool_call.get("input_params", {})
+                input_params = dict(tool_call.get("input_params", {}))
                 reason_text = tool_call.get("reason", "")
+                input_params = self._resolve_chained_inputs(
+                    tool_name,
+                    input_params,
+                    last_output,
+                    last_code_output,
+                )
 
-                # Update UI to show current tool execution
+                # Update UI to show current tool execution with more details
                 if self.enhanced_ui:
-                    tool_status = f"Executing tool {i+1}/{len(tool_calls)}: {tool_name}\n"
+                    tool_status = f"Task: {task.description[:80]}\n"
+                    tool_status += f"Tool Execution: {i+1}/{len(tool_calls)}\n"
+                    tool_status += f"Tool: {tool_name}\n"
+
                     if tool_name == "code_generator":
-                        tool_status += f"Generating code for: {input_params.get('task_description', '')[:60]}..."
+                        task_desc = input_params.get('task_description', '')
+                        tool_status += f"Action: Generating code\n"
+                        tool_status += f"Request: {task_desc[:120]}\n"
+                        tool_status += f"Language: {input_params.get('language', 'unknown')}"
                     elif tool_name == "file_writer":
-                        tool_status += f"Writing to: {input_params.get('file_path', 'unknown')}"
+                        file_path = input_params.get('file_path', 'unknown')
+                        content_len = len(input_params.get('content', ''))
+                        tool_status += f"Action: Writing file\n"
+                        tool_status += f"Path: {file_path}\n"
+                        tool_status += f"Size: {content_len} characters"
                     elif tool_name == "code_executor":
-                        tool_status += f"Executing {input_params.get('language', 'code')}..."
+                        tool_status += f"Action: Executing code\n"
+                        tool_status += f"Language: {input_params.get('language', 'unknown')}"
+                    else:
+                        tool_status += f"Action: {reason_text[:120]}"
 
-                    self.enhanced_ui.update_main_content(
-                        self.enhanced_ui.create_executing_panel(tool_status)
+                    self.enhanced_ui.set_current_task_state(
+                        title=f"Tool {i+1}/{len(tool_calls)}: {tool_name}",
+                        details=tool_status,
+                        status="running",
                     )
-
-                # Auto-inject previous output for chained tools
-                if i > 0 and last_output is not None:
-                    # file_writer needs content from code_generator
-                    if tool_name == "file_writer" and "content" not in input_params:
-                        if isinstance(last_output, dict) and "code" in last_output:
-                            input_params["content"] = last_output["code"]
-                            self.console.print(f"[yellow]Auto-injecting code ({len(last_output['code'])} chars) into file_writer[/yellow]")
-                        elif isinstance(last_output, dict) and "content" in last_output:
-                            input_params["content"] = last_output["content"]
-                        elif isinstance(last_output, str):
-                            input_params["content"] = last_output
-
-                    # code_executor needs code from code_generator
-                    elif tool_name == "code_executor" and "code" not in input_params:
-                        if isinstance(last_output, dict) and "code" in last_output:
-                            input_params["code"] = last_output["code"]
-                            if "language" in last_output and "language" not in input_params:
-                                input_params["language"] = last_output["language"]
 
                 # Map free-form reason to enum value
                 reason_enum = self._map_reason_to_enum(reason_text)
@@ -800,12 +1574,8 @@ Important:
                 )
 
                 # Log tool execution start with detailed params
-                log_params = input_params.copy()
-                if tool_name == "file_writer" and "content" in log_params:
-                    content_len = len(log_params["content"]) if log_params["content"] else 0
-                    log_params["content_length"] = content_len
-                    log_params["content_preview"] = log_params["content"][:200] if log_params["content"] else ""
-                elif tool_name == "code_generator":
+                log_params = self._sanitize_tool_params(input_params)
+                if tool_name == "code_generator":
                     log_params["task_description_length"] = len(log_params.get("task_description", ""))
 
                 self.logger.log_event(
@@ -824,6 +1594,32 @@ Important:
                     selection,
                     context=None
                 )
+
+                # Show result briefly in UI
+                if self.enhanced_ui:
+                    result_status = f"Tool: {tool_name}\n"
+                    if exec_result.success:
+                        result_status += "Status: Success\n"
+                        if tool_name == "file_writer" and exec_result.output:
+                            result_status += "File written successfully"
+                        elif tool_name == "code_generator" and exec_result.output:
+                            if isinstance(exec_result.output, dict):
+                                code_len = len(exec_result.output.get("code", ""))
+                                result_status += f"Generated {code_len} characters of code"
+                    else:
+                        result_status += "Status: Failed\n"
+                        if exec_result.error:
+                            result_status += f"Error: {exec_result.error.error_message[:160]}"
+
+                    self.enhanced_ui.set_current_task_state(
+                        title=f"Tool result: {tool_name}",
+                        details=result_status,
+                        status="completed" if exec_result.success else "failed",
+                    )
+
+                    # Brief pause to show result
+                    import time
+                    time.sleep(0.5)
 
                 # Log detailed output
                 log_output = {}
@@ -863,6 +1659,8 @@ Important:
                 )
 
                 last_output = exec_result.output
+                if tool_name == "code_generator" and exec_result.success:
+                    last_code_output = exec_result.output
 
             # Determine overall success
             all_succeeded = all(t["success"] for t in tool_results)

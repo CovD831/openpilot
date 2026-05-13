@@ -30,3 +30,34 @@ class InstrumentedToolExecutor(ToolExecutor):
                 return super().execute(tool, executor_func, params, timeout)
         else:
             return super().execute(tool, executor_func, params, timeout)
+
+    def execute_single(self, tool_selection, context=None):
+        """Execute a selected tool with progress tracking."""
+        if self.tracker:
+            with self.tracker.track_tool_call(
+                tool_selection.tool_name,
+                self._display_params(tool_selection.input_params),
+            ) as op_id:
+                self.tracker.update_operation_phase(op_id, "Executing")
+                result = super().execute_single(tool_selection, context)
+                if result.success:
+                    self.tracker.update_operation_phase(op_id, "Completed")
+                    self.tracker.append_operation_line(op_id, "Tool returned successfully")
+                else:
+                    self.tracker.update_operation_phase(op_id, "Failed")
+                    if result.error:
+                        self.tracker.append_operation_line(op_id, result.error.error_message)
+                return result
+        return super().execute_single(tool_selection, context)
+
+    def _display_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Trim large/sensitive values before showing them in the UI."""
+        display = {}
+        for key, value in params.items():
+            if key.startswith("_"):
+                continue
+            if key in {"content", "code"} and isinstance(value, str):
+                display[key] = f"<{len(value)} chars>"
+            else:
+                display[key] = value
+        return display
