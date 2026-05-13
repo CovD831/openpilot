@@ -24,6 +24,8 @@ from rich import box
 
 from agents.task_decomposer import TaskDecomposer
 from agents.orchestrator import AgentOrchestrator
+from agents.project_evaluator import ProjectEvaluatorAgent
+from agents.iterative_improvement import IterativeImprovementController
 from core.llm import LLMClient
 from core.semantic_analyzer import SemanticAnalyzer
 from memory.memory_store import MemoryStore
@@ -36,6 +38,7 @@ from models.task_models import (
     TaskExecutionContext,
     TaskExecutionResult
 )
+from models.evaluation_models import EvaluationResult, IterationResult
 from models.tool_orchestration_models import (
     OrchestrationContext,
     ToolSelection,
@@ -60,6 +63,9 @@ class IntelligentAutopilot:
         use_enhanced_ui: bool = False,
         enhanced_ui: Any | None = None,
         tracker: Any | None = None,
+        enable_iterative_improvement: bool = True,
+        max_improvement_iterations: int = 2,
+        satisfaction_threshold: float = 0.85,
     ):
         """Initialize intelligent autopilot.
 
@@ -72,10 +78,16 @@ class IntelligentAutopilot:
             use_enhanced_ui: Use enhanced UI with progress tracking
             enhanced_ui: Existing enhanced UI instance to update
             tracker: Existing progress tracker to reuse
+            enable_iterative_improvement: Run evaluation and bounded improvement loops for project outputs
+            max_improvement_iterations: Maximum improvement rounds after initial project completion
+            satisfaction_threshold: Score threshold required to stop iterative improvement
         """
         self.console = console or Console()
         self.auto_approve = auto_approve
         self.use_enhanced_ui = use_enhanced_ui
+        self.enable_iterative_improvement = enable_iterative_improvement
+        self.max_improvement_iterations = max_improvement_iterations
+        self.satisfaction_threshold = satisfaction_threshold
 
         # Initialize UI components
         if use_enhanced_ui:
@@ -101,6 +113,15 @@ class IntelligentAutopilot:
 
         # Initialize components
         self.task_decomposer = TaskDecomposer(self.llm_client)
+        self.project_evaluator = ProjectEvaluatorAgent(
+            self.llm_client,
+            satisfaction_threshold=self.satisfaction_threshold,
+        )
+        self.iterative_improvement = IterativeImprovementController(
+            self.project_evaluator,
+            satisfaction_threshold=self.satisfaction_threshold,
+            max_iterations=self.max_improvement_iterations,
+        )
         self.orchestrator = AgentOrchestrator(max_concurrent_tasks=3)
         self.semantic_analyzer = SemanticAnalyzer(self.llm_client)
         self.memory_store = MemoryStore()
@@ -346,6 +367,19 @@ class IntelligentAutopilot:
             error_msg = "; ".join(error for error in errors if error) or "Fast-path code generation failed"
         readme_result = next((r for r in tool_results if r["tool"] == "readme_tool"), None)
         readme_error = readme_result["error"] if readme_result and not readme_result["success"] else None
+        improvement_result = None
+        if success:
+            improvement_result = self._run_iterative_improvement(
+                goal=goal,
+                project_path=target_file.parent,
+                written_files=[str(target_file)],
+                run_command=f"python {shlex.quote(target_file.name)}",
+                readme_path=(
+                    readme_result.get("result", {}).get("file_path")
+                    if readme_result and isinstance(readme_result.get("result"), dict)
+                    else target_file.parent / "README.md"
+                ),
+            )
 
         if self.enhanced_ui:
             code_status = "completed" if code_result["success"] else "failed"
@@ -364,8 +398,8 @@ class IntelligentAutopilot:
                 if readme_result
                 else "pending"
             )
-            self.enhanced_ui.set_task_graph_state(
-                tasks=[
+            self._append_dashboard_tasks(
+                [
                     {"id": "fast_code_generator", "description": "Generate Python code", "status": code_status},
                     {"id": "fast_file_writer", "description": f"Write {target_file.name}", "status": file_status},
                     {"id": "fast_readme_tool", "description": "Generate README.md", "status": readme_status},
@@ -405,6 +439,9 @@ class IntelligentAutopilot:
                 fast_details += f"\nREADME: {readme_result['result']['file_path']}"
             elif success and readme_error:
                 fast_details += f"\nREADME generation failed: {readme_error}"
+            if success and improvement_result and improvement_result.get("evaluation"):
+                evaluation = improvement_result["evaluation"]
+                fast_details += f"\nSatisfaction: {evaluation.satisfaction_score:.2f}"
             self.enhanced_ui.update_main_content(
                 self.enhanced_ui.create_status_panel(
                     "Success" if success else "Failed",
@@ -435,6 +472,8 @@ class IntelligentAutopilot:
             "stats": self.stats,
             "error": error_msg,
             "readme": readme_result,
+            "evaluation": improvement_result.get("evaluation") if improvement_result else None,
+            "iterations": improvement_result.get("iterations", []) if improvement_result else [],
         }
 
     def _simple_code_artifact_target(self, goal: str, semantic: Any) -> Path | None:
@@ -591,6 +630,320 @@ class IntelligentAutopilot:
         )
         return readme_result
 
+    def _run_iterative_improvement(
+        self,
+        *,
+        goal: str,
+        project_path: str | Path,
+        written_files: list[str],
+        run_command: str = "",
+        readme_path: str | Path | None = None,
+    ) -> dict[str, Any] | None:
+        """Run the project-level evaluation and bounded improvement loop."""
+        if not self.enable_iterative_improvement or not written_files:
+            return None
+
+        project_path = Path(project_path).expanduser()
+        readme_path = Path(readme_path).expanduser() if readme_path else project_path / "README.md"
+
+        if self.enhanced_ui:
+            self._append_dashboard_tasks([
+                {"id": "evaluation", "description": "Evaluate project quality", "status": "running"},
+                {"id": "iteration_1", "description": "Improvement iteration 1", "status": "pending"},
+                {"id": "iteration_2", "description": "Improvement iteration 2", "status": "pending"},
+            ], current_task_id="evaluation")
+            self.enhanced_ui.set_current_task_state(
+                title="Evaluation",
+                details="Evaluating project satisfaction and improvement opportunities",
+                status="running",
+            )
+
+        def on_progress(event: str, payload: dict[str, Any]) -> None:
+            self._handle_iteration_progress(event, payload)
+
+        def apply_improvement(
+            iteration: int,
+            evaluation: EvaluationResult,
+            actions: list[str],
+        ) -> IterationResult:
+            return self._apply_project_improvement(
+                goal=goal,
+                project_path=project_path,
+                written_files=written_files,
+                run_command=run_command,
+                readme_path=readme_path,
+                iteration=iteration,
+                evaluation=evaluation,
+                actions=actions,
+            )
+
+        result = self.iterative_improvement.run(
+            goal=goal,
+            project_path=project_path,
+            written_files=written_files,
+            run_command=run_command,
+            readme_path=readme_path,
+            apply_improvement=apply_improvement,
+            on_progress=on_progress,
+        )
+
+        evaluation = result["evaluation"]
+        if self.enhanced_ui:
+            self._set_dashboard_task_status("evaluation", "completed" if evaluation else "failed")
+            self.enhanced_ui.set_current_task_state(
+                title="Evaluation complete",
+                details=(
+                    f"Satisfaction: {evaluation.satisfaction_score:.2f}\n"
+                    f"Approved: {evaluation.approved}\n"
+                    f"Issues: {len(evaluation.issues)}"
+                ),
+                status="completed" if evaluation.approved else "needs improvement",
+            )
+
+        self.logger.log_event(
+            "project_iterative_improvement",
+            {
+                "goal": goal,
+                "project_path": str(project_path),
+                "written_files": written_files,
+                "evaluation": evaluation.model_dump(),
+                "iterations": [item.model_dump() for item in result["iterations"]],
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        return result
+
+    def _apply_project_improvement(
+        self,
+        *,
+        goal: str,
+        project_path: Path,
+        written_files: list[str],
+        run_command: str,
+        readme_path: Path,
+        iteration: int,
+        evaluation: EvaluationResult,
+        actions: list[str],
+    ) -> IterationResult:
+        """Apply one safe project improvement round."""
+        target_file = self._select_iteration_target_file(written_files, actions)
+        if target_file is None:
+            return IterationResult(
+                iteration=iteration,
+                before_score=evaluation.satisfaction_score,
+                applied_actions=actions,
+                changed_files=[],
+                success=False,
+                error="No safe target file could be selected for automatic improvement.",
+            )
+
+        try:
+            current_code = target_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            return IterationResult(
+                iteration=iteration,
+                before_score=evaluation.satisfaction_score,
+                applied_actions=actions,
+                changed_files=[],
+                success=False,
+                error=f"Failed to read {target_file}: {exc}",
+            )
+
+        task = Task(
+            id=str(uuid.uuid4()),
+            description=f"Improve project iteration {iteration}",
+            priority=TaskPriority.HIGH,
+        )
+        if self.enhanced_ui:
+            self._set_dashboard_task_status("evaluation", "completed")
+            self._set_dashboard_task_status(f"iteration_{iteration}", "running")
+            self.enhanced_ui.set_current_task_state(
+                title=f"Iteration {iteration}",
+                details="\n".join(actions),
+                status="running",
+            )
+
+        improvement_prompt = (
+            f"Improve this Python project for the original user goal: {goal}\n"
+            f"Target file: {target_file}\n"
+            f"Current satisfaction score: {evaluation.satisfaction_score:.2f}\n"
+            f"Issues: {evaluation.issues}\n"
+            f"Recommended actions: {actions}\n\n"
+            "Return a complete replacement for the target Python file only. "
+            "Preserve a runnable entry point and avoid unrelated rewrites.\n\n"
+            f"Current code:\n{current_code}"
+        )
+        code_result = self._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_code_generator",
+            tool_name="code_generator",
+            input_params={
+                "task_description": improvement_prompt,
+                "language": "python",
+                "context": f"Improve {target_file}",
+            },
+        )
+        if not code_result["success"] or not isinstance(code_result.get("result"), dict):
+            return IterationResult(
+                iteration=iteration,
+                before_score=evaluation.satisfaction_score,
+                applied_actions=actions,
+                changed_files=[],
+                success=False,
+                error=code_result.get("error") or "Code generation failed.",
+            )
+
+        improved_code = code_result["result"].get("code", "")
+        try:
+            ast.parse(improved_code)
+        except SyntaxError as exc:
+            return IterationResult(
+                iteration=iteration,
+                before_score=evaluation.satisfaction_score,
+                applied_actions=actions,
+                changed_files=[],
+                success=False,
+                error=f"Generated improvement has syntax error on line {exc.lineno}: {exc.msg}",
+            )
+
+        write_result = self._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_file_writer",
+            tool_name="file_writer",
+            input_params={
+                "file_path": str(target_file),
+                "content": improved_code,
+                "encoding": "utf-8",
+                "create_dirs": True,
+                "overwrite": True,
+            },
+        )
+        if not write_result["success"]:
+            return IterationResult(
+                iteration=iteration,
+                before_score=evaluation.satisfaction_score,
+                applied_actions=actions,
+                changed_files=[],
+                success=False,
+                error=write_result.get("error") or "Failed to write improved code.",
+            )
+
+        review_result = self._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_code_reviewer",
+            tool_name="code_reviewer",
+            input_params={
+                "code": improved_code,
+                "language": "python",
+            },
+        )
+        readme_result = self._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_readme_tool",
+            tool_name="readme_tool",
+            input_params={
+                "project_path": str(project_path),
+                "project_summary": f"{goal}\n\nRecent Improvements:\n- " + "\n- ".join(actions),
+                "written_files": written_files,
+                "entry_files": [str(target_file)],
+                "run_command": run_command,
+                "overwrite": True,
+            },
+        )
+
+        success = review_result["success"] and readme_result["success"]
+        if self.enhanced_ui:
+            self._set_dashboard_task_status(f"iteration_{iteration}", "completed" if success else "failed")
+        return IterationResult(
+            iteration=iteration,
+            before_score=evaluation.satisfaction_score,
+            applied_actions=actions,
+            changed_files=[str(target_file)],
+            success=success,
+            error=None if success else (review_result.get("error") or readme_result.get("error")),
+        )
+
+    def _select_iteration_target_file(self, written_files: list[str], actions: list[str]) -> Path | None:
+        candidates = [Path(path).expanduser() for path in written_files if str(path).endswith(".py")]
+        existing = [path for path in candidates if path.exists()]
+        if len(existing) == 1:
+            return existing[0]
+        action_text = " ".join(actions)
+        for path in existing:
+            if path.name in action_text or str(path) in action_text:
+                return path
+        return None
+
+    def _handle_iteration_progress(self, event: str, payload: dict[str, Any]) -> None:
+        if not self.enhanced_ui:
+            return
+        if event == "evaluation":
+            evaluation = payload["evaluation"]
+            self.enhanced_ui.set_current_task_state(
+                title="Evaluation",
+                details=(
+                    f"Satisfaction: {evaluation.satisfaction_score:.2f}\n"
+                    f"Approved: {evaluation.approved}\n"
+                    f"Summary: {evaluation.summary}"
+                ),
+                status="completed" if evaluation.approved else "needs improvement",
+            )
+        elif event == "iteration_started":
+            iteration = payload["iteration"]
+            self._set_dashboard_task_status(f"iteration_{iteration}", "running")
+            self.enhanced_ui.set_current_task_state(
+                title=f"Iteration {iteration}",
+                details="\n".join(payload.get("actions", [])),
+                status="running",
+            )
+        elif event == "iteration_completed":
+            iteration = payload["iteration"]
+            evaluation = payload["evaluation"]
+            self._set_dashboard_task_status(f"iteration_{iteration}", "completed")
+            self.enhanced_ui.set_current_task_state(
+                title=f"Iteration {iteration} complete",
+                details=f"Satisfaction: {evaluation.satisfaction_score:.2f}",
+                status="completed" if evaluation.approved else "needs improvement",
+            )
+        elif event == "iteration_failed":
+            iteration = payload["iteration"]
+            result = payload["result"]
+            self._set_dashboard_task_status(f"iteration_{iteration}", "failed")
+            self.enhanced_ui.set_current_task_state(
+                title=f"Iteration {iteration} failed",
+                details=result.error or "Unknown improvement failure",
+                status="failed",
+            )
+
+    def _append_dashboard_tasks(self, new_tasks: list[dict[str, Any]], current_task_id: str | None = None) -> None:
+        if not self.enhanced_ui:
+            return
+        existing = list(self.enhanced_ui.task_graph_state.get("tasks") or [])
+        by_id = {task.get("id"): task for task in existing}
+        for task in new_tasks:
+            by_id[task.get("id")] = task
+        merged = []
+        seen = set()
+        for task in existing + new_tasks:
+            task_id = task.get("id")
+            if task_id in seen:
+                continue
+            merged.append(by_id[task_id])
+            seen.add(task_id)
+        self.enhanced_ui.set_task_graph_state(tasks=merged, current_task_id=current_task_id)
+
+    def _set_dashboard_task_status(self, task_id: str, status: str) -> None:
+        if not self.enhanced_ui:
+            return
+        tasks = []
+        for task in self.enhanced_ui.task_graph_state.get("tasks") or []:
+            updated = dict(task)
+            if updated.get("id") == task_id:
+                updated["status"] = status
+            tasks.append(updated)
+        self.enhanced_ui.set_task_graph_state(tasks=tasks, current_task_id=task_id)
+
     def _results_include_tool(self, results: list[TaskExecutionResult], tool_name: str) -> bool:
         for result in results:
             task_result = result.result if isinstance(result.result, dict) else {}
@@ -744,6 +1097,9 @@ class IntelligentAutopilot:
             "Memory Retrieval",
             "Task Decomposition",
             "Execution",
+            "Evaluation",
+            "Iteration 1",
+            "Iteration 2",
             "Result Assembly",
         ]
         stage_statuses = {stage: "pending" for stage in stages}
@@ -895,6 +1251,22 @@ class IntelligentAutopilot:
                 tasks=self._dashboard_task_items(decomposition.subtasks),
             )
             readme_result = self._finalize_project_readme(goal, results) if all_tasks_completed else None
+            written_files = self._collect_written_files(results)
+            project_path = self._infer_project_path_from_files(goal, written_files) if written_files else None
+            improvement_result = (
+                self._run_iterative_improvement(
+                    goal=goal,
+                    project_path=project_path,
+                    written_files=written_files,
+                    readme_path=(
+                        readme_result.get("result", {}).get("file_path")
+                        if readme_result and isinstance(readme_result.get("result"), dict)
+                        else None
+                    ),
+                )
+                if all_tasks_completed and project_path and written_files
+                else None
+            )
 
             # Step 5: Assemble results
             stage_statuses["Result Assembly"] = "running"
@@ -931,6 +1303,8 @@ class IntelligentAutopilot:
                         success_details += f"\nREADME: {readme_result['result'].get('file_path')}"
                     elif readme_result.get("error"):
                         success_details += f"\nREADME generation failed: {readme_result['error']}"
+                if improvement_result and improvement_result.get("evaluation"):
+                    success_details += f"\nSatisfaction: {improvement_result['evaluation'].satisfaction_score:.2f}"
                 self.enhanced_ui.set_current_task_state(
                     title="Success",
                     details=success_details,
@@ -950,6 +1324,8 @@ class IntelligentAutopilot:
                 "decomposition": decomposition,
                 "results": results,
                 "readme": readme_result,
+                "evaluation": improvement_result.get("evaluation") if improvement_result else None,
+                "iterations": improvement_result.get("iterations", []) if improvement_result else [],
                 "stats": self.stats,
             }
 
@@ -1030,6 +1406,22 @@ class IntelligentAutopilot:
             results = self._execute_tasks(decomposition.subtasks, goal)
             all_tasks_completed = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
             readme_result = self._finalize_project_readme(goal, results) if all_tasks_completed else None
+            written_files = self._collect_written_files(results)
+            project_path = self._infer_project_path_from_files(goal, written_files) if written_files else None
+            improvement_result = (
+                self._run_iterative_improvement(
+                    goal=goal,
+                    project_path=project_path,
+                    written_files=written_files,
+                    readme_path=(
+                        readme_result.get("result", {}).get("file_path")
+                        if readme_result and isinstance(readme_result.get("result"), dict)
+                        else None
+                    ),
+                )
+                if all_tasks_completed and project_path and written_files
+                else None
+            )
 
             # Step 5: Assemble results
             self.console.print()
@@ -1056,6 +1448,8 @@ class IntelligentAutopilot:
                 "decomposition": decomposition,
                 "results": results,
                 "readme": readme_result,
+                "evaluation": improvement_result.get("evaluation") if improvement_result else None,
+                "iterations": improvement_result.get("iterations", []) if improvement_result else [],
                 "final_result": final_result,
                 "stats": self.stats,
             }

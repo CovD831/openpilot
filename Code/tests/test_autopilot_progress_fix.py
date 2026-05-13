@@ -6,10 +6,13 @@ from rich.console import Console
 from rich.layout import Layout
 from rich.panel import Panel
 
+from agents.iterative_improvement import IterativeImprovementController
+from agents.project_evaluator import ProjectEvaluatorAgent
 from agents.task_decomposer import TaskDecomposer
 from core.instrumented_llm import InstrumentedLLMClient
 from core.llm import LLMClient, LLMResponse
 from execution.intelligent_autopilot import IntelligentAutopilot
+from models.evaluation_models import EvaluationResult, IterationResult
 from models.task_models import TaskExecutionResult, TaskStatus
 from tools.builtin_tools import register_builtin_tools
 from tools.code_reviewer import code_reviewer_executor
@@ -66,6 +69,96 @@ class FakeRequest:
 class FakeMessage:
     def __init__(self, content: str):
         self.content = content
+
+
+class IteratingProjectLLM:
+    def __init__(self):
+        self.evaluation_calls = 0
+        self.code_calls = 0
+
+    def complete(self, request, max_retries=3, use_cache=True):
+        prompt = request.messages[0].content if request.messages else ""
+        if request.response_format == "json_object" and "Project Evaluator Agent" in prompt:
+            self.evaluation_calls += 1
+            payload = (
+                {
+                    "approved": False,
+                    "satisfaction_score": 0.55,
+                    "summary": "The first version is too minimal.",
+                    "issues": ["No controls or scoring were detected."],
+                    "improvement_opportunities": ["Add controls and score display."],
+                    "recommended_actions": ["Add game loop, controls, scoring, food, and game-over handling."],
+                    "next_iteration_goal": "Improve the snake game with controls and scoring.",
+                }
+                if self.evaluation_calls == 1
+                else {
+                    "approved": True,
+                    "satisfaction_score": 0.92,
+                    "summary": "The project now satisfies the game requirements.",
+                    "issues": [],
+                    "improvement_opportunities": [],
+                    "recommended_actions": [],
+                    "next_iteration_goal": None,
+                }
+            )
+            return LLMResponse(
+                content=json.dumps(payload),
+                parsed_json=payload,
+                model="fake",
+                provider="fake",
+            )
+        if request.response_format == "json_object":
+            payload = {
+                "task_type": "coding",
+                "risk_level": "medium",
+                "required_resources": ["llm", "local_file", "code_execution"],
+                "expected_deliverables": ["python file"],
+                "intent": "create a snake game",
+                "confidence": 0.95,
+                "reason": "The goal asks to create a game file.",
+            }
+            return LLMResponse(
+                content=json.dumps(payload),
+                parsed_json=payload,
+                model="fake",
+                provider="fake",
+            )
+
+        self.code_calls += 1
+        if self.code_calls == 1:
+            code = "print('snake game ready')\n"
+        else:
+            code = """score = 0
+snake = [(5, 5)]
+food = (7, 7)
+game_over = False
+
+def handle_key(key):
+    return key in {"up", "down", "left", "right"}
+
+def collision(head):
+    return head in snake[1:]
+
+def main():
+    global score, game_over
+    direction = "right"
+    while not game_over:
+        handle_key(direction)
+        score += 1
+        if collision(snake[0]):
+            game_over = True
+        print(f"Score: {score} Food: {food}")
+        break
+
+if __name__ == "__main__":
+    main()
+"""
+        return LLMResponse(
+            content=f"```python\n{code}```",
+            parsed_json=None,
+            model="fake",
+            provider="fake",
+        )
 
 
 def test_autopilot_reuses_enhanced_ui_and_tracker():
@@ -359,6 +452,120 @@ def test_builtin_registry_includes_readme_tool():
     assert registry.get("readme_tool") is not None
 
 
+def test_project_evaluator_approves_complete_snake_project(tmp_path):
+    main_file = tmp_path / "main.py"
+    main_file.write_text(
+        """
+score = 0
+snake = [(5, 5)]
+food = (8, 8)
+game_over = False
+
+def handle_key(key):
+    return key in {"up", "down", "left", "right"}
+
+def collision(head):
+    return head in snake[1:]
+
+def main():
+    global score, game_over
+    while not game_over:
+        handle_key("right")
+        score += 1
+        if collision(snake[0]):
+            game_over = True
+        print(f"Score: {score} Food: {food}")
+        break
+
+if __name__ == "__main__":
+    main()
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "README.md").write_text("## Run\n\n```bash\npython main.py\n```\n", encoding="utf-8")
+
+    result = ProjectEvaluatorAgent(satisfaction_threshold=0.85).evaluate_project(
+        goal="做一个贪吃蛇小游戏",
+        project_path=tmp_path,
+        written_files=[str(main_file)],
+        run_command="python main.py",
+    )
+
+    assert result.approved is True
+    assert result.satisfaction_score >= 0.85
+
+
+def test_project_evaluator_flags_missing_run_instructions_and_placeholders(tmp_path):
+    main_file = tmp_path / "main.py"
+    main_file.write_text("{{code_generator.output}}\n", encoding="utf-8")
+
+    result = ProjectEvaluatorAgent(satisfaction_threshold=0.85).evaluate_project(
+        goal="做一个贪吃蛇小游戏",
+        project_path=tmp_path,
+        written_files=[str(main_file)],
+    )
+
+    assert result.approved is False
+    assert result.satisfaction_score < 0.85
+    assert any("placeholder" in issue.lower() for issue in result.issues)
+    assert any("run" in issue.lower() for issue in result.issues)
+
+
+def test_iteration_controller_stops_when_evaluation_is_approved(tmp_path):
+    class ApprovedEvaluator:
+        def evaluate_project(self, **kwargs):
+            return EvaluationResult(
+                approved=True,
+                satisfaction_score=0.91,
+                summary="Approved",
+            )
+
+    controller = IterativeImprovementController(ApprovedEvaluator(), max_iterations=2)
+    calls = []
+
+    result = controller.run(
+        goal="demo",
+        project_path=tmp_path,
+        written_files=[],
+        apply_improvement=lambda iteration, evaluation, actions: calls.append(iteration),
+    )
+
+    assert result["approved"] is True
+    assert result["iterations"] == []
+    assert calls == []
+
+
+def test_iteration_controller_stops_at_two_rounds(tmp_path):
+    class LowEvaluator:
+        def evaluate_project(self, **kwargs):
+            return EvaluationResult(
+                approved=False,
+                satisfaction_score=0.4,
+                summary="Needs work",
+                recommended_actions=["Improve controls", "Improve scoring"],
+            )
+
+    controller = IterativeImprovementController(LowEvaluator(), max_iterations=2)
+
+    def apply(iteration, evaluation, actions):
+        return IterationResult(
+            iteration=iteration,
+            before_score=evaluation.satisfaction_score,
+            applied_actions=actions,
+            changed_files=[str(tmp_path / "main.py")],
+            success=True,
+        )
+
+    result = controller.run(
+        goal="demo",
+        project_path=tmp_path,
+        written_files=[str(tmp_path / "main.py")],
+        apply_improvement=apply,
+    )
+
+    assert len(result["iterations"]) == 2
+
+
 def test_fast_path_writes_non_placeholder_python_file(tmp_path):
     ui = EnhancedUI(Console(file=StringIO()))
     tracker = ProgressTracker(ui)
@@ -394,6 +601,35 @@ def test_fast_path_writes_non_placeholder_python_file(tmp_path):
     assert graph_tasks["fast_code_generator"] == "completed"
     assert graph_tasks["fast_file_writer"] == "completed"
     assert graph_tasks["fast_readme_tool"] == "completed"
+
+
+def test_fast_path_runs_iterative_project_improvement(tmp_path):
+    ui = EnhancedUI(Console(file=StringIO()))
+    tracker = ProgressTracker(ui)
+    autopilot = IntelligentAutopilot(
+        llm_client=IteratingProjectLLM(),
+        console=ui.console,
+        use_enhanced_ui=True,
+        enhanced_ui=ui,
+        tracker=tracker,
+    )
+
+    goal = f"在'{tmp_path}'中做一个贪吃蛇"
+    try:
+        result = autopilot.execute(goal)
+    finally:
+        tracker.stop_tracking()
+
+    output = (tmp_path / "main.py").read_text(encoding="utf-8")
+    assert result["success"] is True
+    assert result["evaluation"].approved is True
+    assert result["evaluation"].satisfaction_score >= 0.85
+    assert len(result["iterations"]) == 1
+    assert "Score:" in output
+    assert "collision" in output
+    graph_tasks = {task["id"]: task["status"] for task in ui.task_graph_state["tasks"]}
+    assert graph_tasks["evaluation"] == "completed"
+    assert graph_tasks["iteration_1"] == "completed"
 
 
 def test_generic_readme_finalizer_uses_file_writer_outputs(tmp_path):
