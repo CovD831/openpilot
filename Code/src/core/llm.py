@@ -116,6 +116,13 @@ class LLMClient:
             try:
                 response = client.chat.completions.create(**payload)
             except APITimeoutError as exc:
+                # Retry on timeout (max 2 retries)
+                if attempt < 2:  # Will retry up to 2 times (total 3 attempts)
+                    import time
+                    wait_time = 5 * (attempt + 1)  # 5s, 10s
+                    print(f"⚠️  Request timed out, retrying in {wait_time}s... (attempt {attempt + 1}/2)")
+                    time.sleep(wait_time)
+                    continue
                 raise LLMTimeoutError(str(exc)) from exc
             except OpenAIError as exc:
                 error_type = classify_error(exc)

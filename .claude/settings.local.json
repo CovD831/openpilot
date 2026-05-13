@@ -19,7 +19,14 @@
       "Bash(pip install *)",
       "Bash(python3 *)",
       "Bash(chmod +x *)",
-      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")"
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(openpilot autopilot *)",
+      "Bash(openpilot openpilot *)",
+      "Bash(openpilot *)",
+      "Bash(pkill -f \"tail -f.*b0p8eypbl\")",
+      "Bash(grep -v \"^\\\\[ 在此处添加你的重构建议 \\\\]$\" /Users/yanning/Projects/openpilot/CODE_STRUCTURE_REFACTOR.md)",
+      "Bash(grep -v \"^--$\")",
+      "Bash(grep -v \"^\\\\`\\\\`\\\\`$\")"
     ]
   }
 }

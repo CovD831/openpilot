@@ -40,6 +40,15 @@ class WorkflowStage:
     LOGGING = "logging"
 
 
+class StageConfig:
+    """Stage configuration for flexible pipeline"""
+    def __init__(self, name: str, handler: callable, display_name: str, icon: str = ""):
+        self.name = name
+        self.handler = handler
+        self.display_name = display_name
+        self.icon = icon
+
+
 class WorkflowExecutor:
     """工作流执行器"""
 
@@ -101,6 +110,23 @@ class WorkflowExecutor:
         self._last_plan: ExecutionPlan | None = None
         self._last_orchestration_plan = None
 
+        # Configure pipeline stages
+        self._pipeline = self._build_default_pipeline()
+        self.stats["total_stages"] = len(self._pipeline)
+
+    def _build_default_pipeline(self) -> list[StageConfig]:
+        """Build the default 8-stage pipeline"""
+        return [
+            StageConfig("goal_understanding", self._stage_goal_understanding, "理解目标", "📖"),
+            StageConfig("memory_retrieval", self._stage_memory_retrieval, "检索记忆", "🧠"),
+            StageConfig("plan_generation", self._stage_plan_generation, "生成计划", "📋"),
+            StageConfig("tool_orchestration", self._stage_tool_orchestration, "编排工具", "🔧"),
+            StageConfig("execution", self._stage_execution, "执行步骤", "⚡"),
+            StageConfig("validation", self._stage_validation, "验证结果", "✅"),
+            StageConfig("reflection", self._stage_reflection, "生成反思", "💭"),
+            StageConfig("logging", self._stage_logging, "写入日志", "📝"),
+        ]
+
     def execute(self, goal: str, constraints: Optional[list[str]] = None) -> dict:
         """
         执行完整的工作流
@@ -121,44 +147,58 @@ class WorkflowExecutor:
             # 显示开始面板
             self._show_start_panel(goal)
 
-            # 阶段1: 目标理解
-            task_card = self._stage_1_goal_understanding(goal, constraints)
+            # Execute pipeline stages dynamically
+            context = {
+                "goal": goal,
+                "constraints": constraints,
+                "task_card": None,
+                "memories": [],
+                "plan": None,
+                "orchestration_plan": None,
+                "execution_results": [],
+                "validation_results": [],
+                "reflections": [],
+            }
 
-            # 阶段2: 记忆检索
-            memories = self._stage_2_memory_retrieval(task_card)
-
-            # 阶段3: 计划生成
-            plan = self._stage_3_plan_generation(goal, constraints, memories)
-
-            # 阶段4: 工具编排
-            orchestration_plan = self._stage_4_tool_orchestration(plan)
-
-            # 阶段5: 执行步骤
-            execution_results = self._stage_5_execution(orchestration_plan)
-
-            # 阶段6: 验证结果
-            validation_results = self._stage_6_validation(execution_results)
-
-            # 阶段7: 生成反思
-            reflections = self._stage_7_reflection(execution_results, validation_results)
-
-            # 阶段8: 写入日志
-            self._stage_8_logging(task_card, plan, execution_results, validation_results, reflections)
+            for i, stage in enumerate(self._pipeline, 1):
+                stage_result = self._execute_stage(stage, i, context)
+                # Update context with stage results
+                if stage.name == "goal_understanding":
+                    context["task_card"] = stage_result
+                elif stage.name == "memory_retrieval":
+                    context["memories"] = stage_result
+                elif stage.name == "plan_generation":
+                    context["plan"] = stage_result
+                elif stage.name == "tool_orchestration":
+                    context["orchestration_plan"] = stage_result
+                elif stage.name == "execution":
+                    context["execution_results"] = stage_result
+                elif stage.name == "validation":
+                    context["validation_results"] = stage_result
+                elif stage.name == "reflection":
+                    context["reflections"] = stage_result
 
             # 显示完成摘要
-            self._show_completion_summary(task_card, execution_results, validation_results)
+            self._show_completion_summary(
+                context["task_card"],
+                context["execution_results"],
+                context["validation_results"]
+            )
 
-            final_success = self._workflow_success(execution_results, validation_results)
+            final_success = self._workflow_success(
+                context["execution_results"],
+                context["validation_results"]
+            )
             self.stats["success"] = final_success
             self.stats["end_time"] = datetime.now()
 
             return {
                 "success": final_success,
-                "task_card": task_card,
-                "plan": plan,
-                "execution_results": execution_results,
-                "validation_results": validation_results,
-                "reflections": reflections,
+                "task_card": context["task_card"],
+                "plan": context["plan"],
+                "execution_results": context["execution_results"],
+                "validation_results": context["validation_results"],
+                "reflections": context["reflections"],
                 "stats": self.stats,
             }
 
@@ -167,6 +207,10 @@ class WorkflowExecutor:
             self.stats["success"] = False
             self.stats["end_time"] = datetime.now()
             raise
+
+    def _execute_stage(self, stage: StageConfig, stage_num: int, context: dict) -> Any:
+        """Execute a single pipeline stage"""
+        return stage.handler(stage_num, context)
 
     def _show_start_panel(self, goal: str):
         """显示开始面板"""
@@ -180,9 +224,13 @@ class WorkflowExecutor:
         self.console.print(panel)
         self.console.print()
 
-    def _stage_1_goal_understanding(self, goal: str, constraints: Optional[list[str]] = None) -> TaskCard:
-        """阶段1: 目标理解"""
-        with self.console.status("[bold cyan][1/8] 📖 理解目标...[/bold cyan]"):
+    def _stage_goal_understanding(self, stage_num: int, context: dict) -> TaskCard:
+        """阶段: 目标理解"""
+        goal = context["goal"]
+        constraints = context["constraints"]
+        total = len(self._pipeline)
+
+        with self.console.status(f"[bold cyan][{stage_num}/{total}] 📖 理解目标...[/bold cyan]"):
             # 创建初始任务卡片
             try:
                 semantic = self.semantic_analyzer.analyze_goal(goal, constraints)
@@ -220,7 +268,7 @@ class WorkflowExecutor:
             self.stats["stages_completed"] += 1
 
         # 显示结果
-        self.console.print("[bold green]✓[/bold green] [1/8] 目标理解完成")
+        self.console.print(f"[bold green]✓[/bold green] [{stage_num}/{len(self._pipeline)}] 目标理解完成")
         self.console.print(f"  • 任务类型: [cyan]{task_card.task_type.value}[/cyan]")
         self.console.print(f"  • 风险等级: [{'red' if task_card.risk_level.value == 'high' else 'yellow' if task_card.risk_level.value == 'medium' else 'green'}]{task_card.risk_level.value}[/]")
         self.console.print(f"  • 所需资源: {len(task_card.required_resources)}个")
@@ -228,15 +276,18 @@ class WorkflowExecutor:
 
         return task_card
 
-    def _stage_2_memory_retrieval(self, task_card: TaskCard) -> list:
-        """阶段2: 记忆检索"""
-        with self.console.status("[bold cyan][2/8] 🧠 检索记忆...[/bold cyan]"):
+    def _stage_memory_retrieval(self, stage_num: int, context: dict) -> list:
+        """阶段: 记忆检索"""
+        task_card = context["task_card"]
+        total = len(self._pipeline)
+
+        with self.console.status(f"[bold cyan][{stage_num}/{total}] 🧠 检索记忆...[/bold cyan]"):
             # 检索相关记忆
             memories = self.memory_store.query(task_card.goal, limit=5)
             self.stats["stages_completed"] += 1
 
         # 显示结果
-        self.console.print("[bold green]✓[/bold green] [2/8] 记忆检索完成")
+        self.console.print(f"[bold green]✓[/bold green] [{stage_num}/{len(self._pipeline)}] 记忆检索完成")
         if memories.memories:
             self.console.print(f"  • 找到 {len(memories.memories)} 条相关记忆")
             for mem in memories.memories[:3]:
@@ -247,11 +298,14 @@ class WorkflowExecutor:
 
         return memories.memories
 
-    def _stage_3_plan_generation(
-        self, goal: str, constraints: list[str], memories: list
-    ) -> ExecutionPlan:
-        """阶段3: 计划生成"""
-        with self.console.status("[bold cyan][3/8] 📋 生成计划...[/bold cyan]"):
+    def _stage_plan_generation(self, stage_num: int, context: dict) -> ExecutionPlan:
+        """阶段: 计划生成"""
+        goal = context["goal"]
+        constraints = context["constraints"]
+        memories = context["memories"]
+        total = len(self._pipeline)
+
+        with self.console.status(f"[bold cyan][{stage_num}/{total}] 📋 生成计划...[/bold cyan]"):
             # 生成执行计划
             plan = self.planner.plan(goal, constraints=constraints)
             self._last_plan = plan
@@ -270,7 +324,7 @@ class WorkflowExecutor:
             self.stats["stages_completed"] += 1
 
         # 显示结果
-        self.console.print("[bold green]✓[/bold green] [3/8] 计划生成完成")
+        self.console.print(f"[bold green]✓[/bold green] [{stage_num}/{len(self._pipeline)}] 计划生成完成")
         self.console.print(f"  • 执行步骤: {len(plan.steps)}个")
         for i, step in enumerate(plan.steps[:5], 1):
             self.console.print(f"    {i}. {step.title}")
@@ -280,9 +334,12 @@ class WorkflowExecutor:
 
         return plan
 
-    def _stage_4_tool_orchestration(self, plan: ExecutionPlan):
-        """阶段4: 工具编排"""
-        with self.console.status("[bold cyan][4/8] 🔧 编排工具...[/bold cyan]"):
+    def _stage_tool_orchestration(self, stage_num: int, context: dict):
+        """阶段: 工具编排"""
+        plan = context["plan"]
+        total = len(self._pipeline)
+
+        with self.console.status(f"[bold cyan][{stage_num}/{total}] 🔧 编排工具...[/bold cyan]"):
             # 创建编排上下文
             from models.tool_orchestration_models import OrchestrationContext
 
@@ -336,7 +393,7 @@ class WorkflowExecutor:
             self.stats["stages_completed"] += 1
 
         # 显示结果
-        self.console.print("[bold green]✓[/bold green] [4/8] 工具编排完成")
+        self.console.print(f"[bold green]✓[/bold green] [{stage_num}/{len(self._pipeline)}] 工具编排完成")
         self.console.print(f"  • 工具调用: {len(orchestration_plan.tool_selections)}个")
 
         # 显示推荐和警告
@@ -351,15 +408,18 @@ class WorkflowExecutor:
 
         return orchestration_plan
 
-    def _stage_5_execution(self, orchestration_plan):
-        """阶段5: 执行步骤"""
+    def _stage_execution(self, stage_num: int, context: dict):
+        """阶段: 执行步骤"""
+        orchestration_plan = context["orchestration_plan"]
+        total = len(self._pipeline)
+
         if self.dry_run:
-            self.console.print("[bold yellow]⊘[/bold yellow] [5/8] 执行步骤（跳过 - 仅规划模式）")
+            self.console.print(f"[bold yellow]⊘[/bold yellow] [{stage_num}/{total}] 执行步骤（跳过 - 仅规划模式）")
             self.console.print()
             self.stats["stages_completed"] += 1
             return []
 
-        self.console.print("[bold cyan][5/8] ⚡ 执行步骤...[/bold cyan]")
+        self.console.print(f"[bold cyan][{stage_num}/{total}] ⚡ 执行步骤...[/bold cyan]")
 
         execution_results = []
         step_outputs: dict[str, Any] = {}
@@ -424,15 +484,18 @@ class WorkflowExecutor:
 
         return execution_results
 
-    def _stage_6_validation(self, execution_results):
-        """阶段6: 验证结果"""
+    def _stage_validation(self, stage_num: int, context: dict):
+        """阶段: 验证结果"""
+        execution_results = context["execution_results"]
+        total = len(self._pipeline)
+
         if self.dry_run:
-            self.console.print("[bold yellow]⊘[/bold yellow] [6/8] 验证结果（跳过 - 仅规划模式）")
+            self.console.print(f"[bold yellow]⊘[/bold yellow] [{stage_num}/{total}] 验证结果（跳过 - 仅规划模式）")
             self.console.print()
             self.stats["stages_completed"] += 1
             return []
 
-        with self.console.status("[bold cyan][6/8] ✅ 验证结果...[/bold cyan]"):
+        with self.console.status(f"[bold cyan][{stage_num}/{total}] ✅ 验证结果...[/bold cyan]"):
             validation_results = []
             for result in execution_results:
                 validation = self.validator.validate_execution_result(result)
@@ -441,7 +504,7 @@ class WorkflowExecutor:
             self.stats["stages_completed"] += 1
 
         # 显示结果
-        self.console.print("[bold green]✓[/bold green] [6/8] 结果验证完成")
+        self.console.print(f"[bold green]✓[/bold green] [{stage_num}/{len(self._pipeline)}] 结果验证完成")
         passed = sum(1 for v in validation_results if v.passed)
         self.console.print(f"  • 验证通过: {passed}/{len(validation_results)}")
 
@@ -462,15 +525,19 @@ class WorkflowExecutor:
 
         return validation_results
 
-    def _stage_7_reflection(self, execution_results, validation_results):
-        """阶段7: 生成反思"""
+    def _stage_reflection(self, stage_num: int, context: dict):
+        """阶段: 生成反思"""
+        execution_results = context["execution_results"]
+        validation_results = context["validation_results"]
+        total = len(self._pipeline)
+
         if self.dry_run:
-            self.console.print("[bold yellow]⊘[/bold yellow] [7/8] 生成反思（跳过 - 仅规划模式）")
+            self.console.print(f"[bold yellow]⊘[/bold yellow] [{stage_num}/{total}] 生成反思（跳过 - 仅规划模式）")
             self.console.print()
             self.stats["stages_completed"] += 1
             return []
 
-        with self.console.status("[bold cyan][7/8] 💭 生成反思...[/bold cyan]"):
+        with self.console.status(f"[bold cyan][{stage_num}/{total}] 💭 生成反思...[/bold cyan]"):
             reflections = []
             for i, result in enumerate(execution_results):
                 validation = validation_results[i] if i < len(validation_results) else None
@@ -502,7 +569,7 @@ class WorkflowExecutor:
             self.stats["stages_completed"] += 1
 
         # 显示结果
-        self.console.print("[bold green]✓[/bold green] [7/8] 反思生成完成")
+        self.console.print(f"[bold green]✓[/bold green] [{stage_num}/{len(self._pipeline)}] 反思生成完成")
         success_count = sum(1 for r in reflections if r.reflection_type.value == "success")
         self.console.print(f"  • 成功反思: {success_count}/{len(reflections)}")
         if reflections:
@@ -513,9 +580,16 @@ class WorkflowExecutor:
 
         return reflections
 
-    def _stage_8_logging(self, task_card, plan, execution_results, validation_results, reflections):
-        """阶段8: 写入日志"""
-        with self.console.status("[bold cyan][8/8] 📝 写入日志...[/bold cyan]"):
+    def _stage_logging(self, stage_num: int, context: dict):
+        """阶段: 写入日志"""
+        task_card = context["task_card"]
+        plan = context["plan"]
+        execution_results = context["execution_results"]
+        validation_results = context["validation_results"]
+        reflections = context["reflections"]
+        total = len(self._pipeline)
+
+        with self.console.status(f"[bold cyan][{stage_num}/{total}] 📝 写入日志...[/bold cyan]"):
             # 记录执行日志
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
@@ -543,7 +617,7 @@ class WorkflowExecutor:
             self.stats["stages_completed"] += 1
 
         # 显示结果
-        self.console.print("[bold green]✓[/bold green] [8/8] 日志写入完成")
+        self.console.print(f"[bold green]✓[/bold green] [{stage_num}/{len(self._pipeline)}] 日志写入完成")
         self.console.print()
 
     def _planned_steps_payload(self, plan: ExecutionPlan) -> list[dict[str, Any]]:
@@ -1017,6 +1091,6 @@ class WorkflowExecutor:
             passed = sum(1 for v in validation_results if v.passed)
             report += f"- **验证通过**: {passed}/{len(validation_results)}\n"
 
-        report += f"\n---\n\n*报告生成时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}*\n"
+        report += f"\n---\n\n*报告生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n"
 
         return report

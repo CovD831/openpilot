@@ -262,7 +262,22 @@ class TaskDecomposer:
         # Check if all subtasks are completed
         if not all(t.status == TaskStatus.COMPLETED for t in subtasks):
             incomplete = [t for t in subtasks if t.status != TaskStatus.COMPLETED]
-            raise ValueError(f"Cannot assemble: {len(incomplete)} subtasks incomplete")
+
+            # Build detailed error message
+            error_details = []
+            for task in incomplete:
+                error_info = f"\n  - Task ID: {task.id}"
+                error_info += f"\n    Description: {task.description}"
+                error_info += f"\n    Status: {task.status.value}"
+                if task.error:
+                    error_info += f"\n    Error: {task.error}"
+                if task.result:
+                    error_info += f"\n    Result: {str(task.result)[:200]}"
+                error_details.append(error_info)
+
+            error_msg = f"Cannot assemble: {len(incomplete)} subtasks incomplete"
+            error_msg += "\n\nIncomplete tasks:" + "".join(error_details)
+            raise ValueError(error_msg)
 
         # Collect results
         results = {

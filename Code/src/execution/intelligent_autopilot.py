@@ -437,10 +437,13 @@ class IntelligentAutopilot:
             )
 
             # Update UI with current task and spinner
+            completed_count = len([r for r in results if r.status == TaskStatus.COMPLETED])
+            failed_count = len([r for r in results if r.status == TaskStatus.FAILED])
+            status_detail = f"Task {i}/{len(tasks)}: {task.description}\n\n"
+            status_detail += f"Progress: {completed_count} completed, {failed_count} failed"
+
             self.enhanced_ui.update_main_content(
-                self.enhanced_ui.create_executing_panel(
-                    f"Task {i}/{len(tasks)}: {task.description}"
-                )
+                self.enhanced_ui.create_executing_panel(status_detail)
             )
 
             # Execute task
@@ -747,6 +750,39 @@ Important:
                 input_params = tool_call.get("input_params", {})
                 reason_text = tool_call.get("reason", "")
 
+                # Update UI to show current tool execution
+                if self.enhanced_ui:
+                    tool_status = f"Executing tool {i+1}/{len(tool_calls)}: {tool_name}\n"
+                    if tool_name == "code_generator":
+                        tool_status += f"Generating code for: {input_params.get('task_description', '')[:60]}..."
+                    elif tool_name == "file_writer":
+                        tool_status += f"Writing to: {input_params.get('file_path', 'unknown')}"
+                    elif tool_name == "code_executor":
+                        tool_status += f"Executing {input_params.get('language', 'code')}..."
+
+                    self.enhanced_ui.update_main_content(
+                        self.enhanced_ui.create_executing_panel(tool_status)
+                    )
+
+                # Auto-inject previous output for chained tools
+                if i > 0 and last_output is not None:
+                    # file_writer needs content from code_generator
+                    if tool_name == "file_writer" and "content" not in input_params:
+                        if isinstance(last_output, dict) and "code" in last_output:
+                            input_params["content"] = last_output["code"]
+                            self.console.print(f"[yellow]Auto-injecting code ({len(last_output['code'])} chars) into file_writer[/yellow]")
+                        elif isinstance(last_output, dict) and "content" in last_output:
+                            input_params["content"] = last_output["content"]
+                        elif isinstance(last_output, str):
+                            input_params["content"] = last_output
+
+                    # code_executor needs code from code_generator
+                    elif tool_name == "code_executor" and "code" not in input_params:
+                        if isinstance(last_output, dict) and "code" in last_output:
+                            input_params["code"] = last_output["code"]
+                            if "language" in last_output and "language" not in input_params:
+                                input_params["language"] = last_output["language"]
+
                 # Map free-form reason to enum value
                 reason_enum = self._map_reason_to_enum(reason_text)
 
@@ -763,11 +799,44 @@ Important:
                     timeout_override=None
                 )
 
+                # Log tool execution start with detailed params
+                log_params = input_params.copy()
+                if tool_name == "file_writer" and "content" in log_params:
+                    content_len = len(log_params["content"]) if log_params["content"] else 0
+                    log_params["content_length"] = content_len
+                    log_params["content_preview"] = log_params["content"][:200] if log_params["content"] else ""
+                elif tool_name == "code_generator":
+                    log_params["task_description_length"] = len(log_params.get("task_description", ""))
+
+                self.logger.log_event(
+                    "tool_execution_start",
+                    {
+                        "task_id": task.id,
+                        "tool": tool_name,
+                        "params": log_params
+                    },
+                    session_id=self.session_id or "unknown",
+                    turn_id=1,
+                )
+
                 # Execute tool
                 exec_result = self.tool_executor.execute_single(
                     selection,
                     context=None
                 )
+
+                # Log detailed output
+                log_output = {}
+                if exec_result.output:
+                    if isinstance(exec_result.output, dict):
+                        log_output = exec_result.output.copy()
+                        if "code" in log_output:
+                            log_output["code_length"] = len(log_output["code"])
+                            log_output["code_preview"] = log_output["code"][:200]
+                        if "content" in log_output:
+                            log_output["content_length"] = len(log_output["content"])
+                    else:
+                        log_output = {"output_type": type(exec_result.output).__name__}
 
                 # Track result
                 tool_results.append({
@@ -778,14 +847,16 @@ Important:
                     "error": exec_result.error.error_message if exec_result.error else None
                 })
 
-                # Log execution
+                # Log execution with detailed output
                 self.logger.log_event(
                     "tool_executed",
                     {
                         "task_id": task.id,
                         "tool": tool_name,
                         "success": exec_result.success,
-                        "error": exec_result.error.error_message if exec_result.error else None
+                        "error": exec_result.error.error_message if exec_result.error else None,
+                        "output": log_output,
+                        "execution_time_ms": exec_result.execution_time_ms if hasattr(exec_result, 'execution_time_ms') else None
                     },
                     session_id=self.session_id or "unknown",
                     turn_id=1,
@@ -807,11 +878,20 @@ Important:
 
             duration = (datetime.now() - start_time).total_seconds()
 
+            # Build detailed error message if any tools failed
+            error_msg = None
+            if not all_succeeded:
+                failed_tools = [t for t in tool_results if not t["success"]]
+                error_parts = [f"{len(failed_tools)} tool(s) failed:"]
+                for ft in failed_tools:
+                    error_parts.append(f"\n  - {ft['tool']}: {ft['error']}")
+                error_msg = "".join(error_parts)
+
             result = TaskExecutionResult(
                 task_id=task.id,
                 status=TaskStatus.COMPLETED if all_succeeded else TaskStatus.FAILED,
                 result=output,
-                error=None if all_succeeded else "Some tools failed to execute",
+                error=error_msg,
                 duration=duration,
                 metadata={
                     "start_time": start_time.isoformat(),

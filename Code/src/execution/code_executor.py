@@ -50,6 +50,7 @@ class CodeExecutor:
         generated_code: GeneratedCode,
         input_data: Optional[dict[str, Any]] = None,
         timeout: Optional[int] = None,
+        env: Optional[str] = None,
     ) -> CodeExecutionResult:
         """
         执行代码
@@ -58,6 +59,7 @@ class CodeExecutor:
             generated_code: 生成的代码
             input_data: 输入数据
             timeout: 超时时间（秒）
+            env: 虚拟环境名称（如 conda 环境名），None 表示使用当前环境
 
         Returns:
             CodeExecutionResult: 执行结果
@@ -70,11 +72,11 @@ class CodeExecutor:
         try:
             if generated_code.language == CodeLanguage.PYTHON:
                 result = self._execute_python(
-                    generated_code.code, input_data, timeout, execution_id
+                    generated_code.code, input_data, timeout, execution_id, env
                 )
             elif generated_code.language in (CodeLanguage.SHELL, CodeLanguage.BASH):
                 result = self._execute_shell(
-                    generated_code.code, input_data, timeout, execution_id
+                    generated_code.code, input_data, timeout, execution_id, env
                 )
             else:
                 raise ValueError(f"不支持的语言: {generated_code.language}")
@@ -104,10 +106,24 @@ class CodeExecutor:
         input_data: Optional[dict[str, Any]],
         timeout: int,
         execution_id: str,
+        env: Optional[str] = None,
     ) -> CodeExecutionResult:
-        """执行 Python 代码"""
+        """执行 Python 代码
+
+        Args:
+            code: Python 代码
+            input_data: 输入数据
+            timeout: 超时时间
+            execution_id: 执行ID
+            env: 虚拟环境名称（如 conda 环境名），None 表示使用当前环境
+        """
         start_time = time.time()
 
+        # 如果指定了虚拟环境，使用 subprocess 在该环境中执行
+        if env:
+            return self._execute_python_in_env(code, input_data, timeout, execution_id, env)
+
+        # 否则在当前环境中直接执行
         # 准备执行环境
         stdout_capture = io.StringIO()
         stderr_capture = io.StringIO()
@@ -192,14 +208,116 @@ class CodeExecutor:
             sandbox_used=self.enable_sandbox,
         )
 
+    def _execute_python_in_env(
+        self,
+        code: str,
+        input_data: Optional[dict[str, Any]],
+        timeout: int,
+        execution_id: str,
+        env: str,
+    ) -> CodeExecutionResult:
+        """在指定的虚拟环境中执行 Python 代码
+
+        Args:
+            code: Python 代码
+            input_data: 输入数据
+            timeout: 超时时间
+            execution_id: 执行ID
+            env: 虚拟环境名称（如 conda 环境名）
+        """
+        start_time = time.time()
+
+        # 创建临时 Python 脚本文件
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False
+        ) as script_file:
+            script_file.write(code)
+            script_path = script_file.name
+
+        try:
+            # 构建在虚拟环境中执行的命令
+            # 假设使用 conda，可以扩展支持其他虚拟环境管理器
+            cmd = ["conda", "run", "-n", env, "python", script_path]
+
+            # 准备环境变量
+            exec_env = os.environ.copy()
+            if input_data:
+                for key, value in input_data.items():
+                    exec_env[key] = str(value)
+
+            # 执行脚本
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=exec_env,
+            )
+
+            execution_time_ms = int((time.time() - start_time) * 1000)
+
+            return CodeExecutionResult(
+                execution_id=execution_id,
+                code_id="unknown",
+                success=result.returncode == 0,
+                exit_code=result.returncode,
+                stdout=result.stdout,
+                stderr=result.stderr,
+                execution_time_ms=execution_time_ms,
+                sandbox_used=self.enable_sandbox,
+            )
+
+        except subprocess.TimeoutExpired:
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            return CodeExecutionResult(
+                execution_id=execution_id,
+                code_id="unknown",
+                success=False,
+                exit_code=124,
+                error_type="TimeoutError",
+                error_message=f"执行超时（{timeout}秒）",
+                execution_time_ms=execution_time_ms,
+                sandbox_used=self.enable_sandbox,
+            )
+
+        except Exception as e:
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            return CodeExecutionResult(
+                execution_id=execution_id,
+                code_id="unknown",
+                success=False,
+                exit_code=1,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                traceback=traceback.format_exc(),
+                execution_time_ms=execution_time_ms,
+                sandbox_used=self.enable_sandbox,
+            )
+
+        finally:
+            # 清理临时文件
+            try:
+                Path(script_path).unlink()
+            except Exception:
+                pass
+
     def _execute_shell(
         self,
         code: str,
         input_data: Optional[dict[str, Any]],
         timeout: int,
         execution_id: str,
+        env: Optional[str] = None,
     ) -> CodeExecutionResult:
-        """执行 Shell 代码"""
+        """执行 Shell 代码
+
+        Args:
+            code: Shell 代码
+            input_data: 输入数据
+            timeout: 超时时间
+            execution_id: 执行ID
+            env: 虚拟环境名称（如 conda 环境名），None 表示使用当前环境
+        """
         start_time = time.time()
 
         # 创建临时脚本文件
@@ -217,18 +335,26 @@ class CodeExecutor:
             os.chmod(script_path, 0o755)
 
             # 准备环境变量
-            env = os.environ.copy()
+            exec_env = os.environ.copy()
             if input_data:
                 for key, value in input_data.items():
-                    env[key] = str(value)
+                    exec_env[key] = str(value)
+
+            # 构建执行命令
+            if env:
+                # 如果指定了虚拟环境，在该环境中执行
+                cmd = ["conda", "run", "-n", env, "/bin/bash", script_path]
+            else:
+                # 否则直接执行
+                cmd = ["/bin/bash", script_path]
 
             # 执行脚本
             result = subprocess.run(
-                ["/bin/bash", script_path],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
-                env=env,
+                env=exec_env,
             )
 
             execution_time_ms = int((time.time() - start_time) * 1000)
@@ -283,6 +409,7 @@ class CodeExecutor:
         generated_code: GeneratedCode,
         input_data: Optional[dict[str, Any]] = None,
         max_retries: int = 2,
+        env: Optional[str] = None,
     ) -> CodeExecutionResult:
         """
         执行代码（带重试）
@@ -291,6 +418,7 @@ class CodeExecutor:
             generated_code: 生成的代码
             input_data: 输入数据
             max_retries: 最大重试次数
+            env: 虚拟环境名称（如 conda 环境名），None 表示使用当前环境
 
         Returns:
             CodeExecutionResult: 执行结果
@@ -298,7 +426,7 @@ class CodeExecutor:
         last_result = None
 
         for attempt in range(max_retries + 1):
-            result = self.execute(generated_code, input_data)
+            result = self.execute(generated_code, input_data, env=env)
 
             if result.success:
                 return result

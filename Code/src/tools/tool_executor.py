@@ -137,10 +137,20 @@ class ToolExecutor:
             error_category = classify_error(e)
             error_context = extract_error_context(e)
 
+            # Convert traceback list to string if present
+            traceback_data = error_context.get('traceback')
+            if traceback_data and isinstance(traceback_data, list):
+                stack_trace_str = '\n'.join([
+                    f"  File \"{frame['file']}\", line {frame['line']}, in {frame['function']}"
+                    for frame in traceback_data
+                ])
+            else:
+                stack_trace_str = str(traceback_data) if traceback_data else None
+
             error = ExecutionError(
                 error_type=error_context.get('type', type(e).__name__),
                 error_message=error_context.get('message', str(e)),
-                stack_trace=error_context.get('traceback'),
+                stack_trace=stack_trace_str,
                 recoverable=is_retryable_error(e),
                 retry_recommended=is_retryable_error(e)
             )

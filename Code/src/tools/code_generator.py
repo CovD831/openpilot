@@ -53,7 +53,7 @@ CODE_GENERATOR_DEFINITION = ToolDefinition(
             "functions": {"type": "array", "description": "List of function names"}
         }
     ),
-    timeout_seconds=120,
+    timeout_seconds=300,
     max_retries=2,
     failure_modes=[
         ToolFailureMode(

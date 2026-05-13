@@ -83,45 +83,42 @@ def _run_once_mode(
     settings: LLMSettings
 ) -> int:
     """Run a single goal and exit."""
+    from execution.intelligent_autopilot import IntelligentAutopilot
+    from core.llm import LLMClient
+
     ui.console.print()
     ui.console.print(f"[bold cyan]Goal:[/bold cyan] {goal}")
     ui.console.print()
 
     try:
-        with ui.live_session("OpenPilot - Executing Goal"):
-            tracker.start_tracking()
+        # Create autopilot with enhanced UI support
+        autopilot = IntelligentAutopilot(
+            llm_client=LLMClient(settings),
+            console=ui.console,
+            auto_approve=True,
+            logger=logger,
+            use_enhanced_ui=True
+        )
 
-            # Show initial status
+        # Execute with live session
+        with ui.live_session(f"Executing: {goal[:50]}..."):
             ui.update_main_content(
-                ui.create_status_panel("Planning", f"Analyzing goal: {goal}")
+                ui.create_status_panel("Autopilot Mode", "Intelligent task decomposition and execution...")
             )
 
-            # Plan the goal
-            with tracker.track_task("Planning", {"goal": goal}):
-                plan = planner.plan(goal)
+            result = autopilot.execute(goal)
 
-            # Show plan
-            ui.log_activity("success", f"Created plan with {len(plan.steps)} steps")
-
-            # Execute plan (simplified for now)
-            ui.update_main_content(
-                ui.create_status_panel("Executing", f"Running {len(plan.steps)} steps")
-            )
-
-            for i, step in enumerate(plan.steps, 1):
-                with tracker.track_task(f"Step {i}: {step.title}", {"step": step.title}):
-                    # Simulate step execution
-                    import time
-                    time.sleep(0.5)
-
-            tracker.stop_tracking()
+            # Small delay to let user see final status
+            import time
+            time.sleep(1)
 
         ui.show_success("Goal completed successfully!")
         return 0
 
     except Exception as e:
-        tracker.stop_tracking()
         ui.show_error("Execution failed", str(e))
+        import traceback
+        traceback.print_exc()
         return 2
 
 

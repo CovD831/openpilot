@@ -50,8 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     plan_parser.add_argument("--constraint", action="append", default=[], help="Planning constraint")
     plan_parser.add_argument("--json", action="store_true", help="Print raw JSON")
 
-    # Execute command with Phase 2 workflow
-    execute_parser = subparsers.add_parser("execute", help="Execute goal with Phase 2 workflow (8-stage pipeline)")
+    # Execute command with Phase 2 workflow (legacy)
+    execute_parser = subparsers.add_parser(
+        "execute",
+        help="[LEGACY] Execute goal with Phase 2 workflow. Consider using 'openpilot run --once' instead"
+    )
     execute_parser.add_argument("goal", help="High-level user goal")
     execute_parser.add_argument("--constraint", action="append", default=[], help="Planning constraint")
     execute_parser.add_argument("--dry-run", action="store_true", help="Plan only, do not execute")
@@ -144,7 +147,12 @@ def main(argv: Sequence[str] | None = None, llm_client: CompletionClient | None 
 def _execute_workflow(
     args, console: Console, err_console: Console, llm_client: CompletionClient | None
 ) -> int:
-    """Execute goal using Phase 2 workflow."""
+    """Execute goal using Phase 2 workflow (legacy)."""
+    # Show deprecation notice
+    console.print("[yellow]⚠️  Note: 'openpilot execute' uses the legacy workflow system.[/yellow]")
+    console.print("[yellow]   Consider using 'openpilot run --once <goal>' for the modern autopilot mode.[/yellow]")
+    console.print()
+
     try:
         executor = WorkflowExecutor(
             llm_client=llm_client or LLMClient(),
@@ -531,7 +539,12 @@ def _execute_from_command(
     llm_client: CompletionClient | None,
     logger: OpenPilotLogger | None = None,
 ) -> int:
-    """从命令执行工作流"""
+    """从命令执行工作流 (legacy)"""
+    # Show deprecation notice
+    console.print("[yellow]⚠️  Note: '/execute' uses the legacy workflow system.[/yellow]")
+    console.print("[yellow]   Consider using '/autopilot <goal>' for the modern autopilot mode.[/yellow]")
+    console.print()
+
     try:
         executor = WorkflowExecutor(
             llm_client=llm_client or LLMClient(),

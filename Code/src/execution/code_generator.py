@@ -155,10 +155,36 @@ class CodeGenerator:
 
     def _call_llm(self, prompt: str) -> str:
         """调用 LLM"""
-        # 这里应该调用实际的 LLM API
-        # 例如: self.llm_client.generate(prompt)
-        # 为了演示，这里返回模拟响应
-        return self._simulate_llm_response(prompt)
+        try:
+            # 调用实际的 LLM API
+            if hasattr(self.llm_client, 'complete'):
+                # LLMClient 使用 complete 方法，需要 LLMRequest 对象
+                from core.llm import LLMRequest, LLMMessage
+                request = LLMRequest(
+                    messages=[LLMMessage(role="user", content=prompt)],
+                    response_format="text",
+                    temperature=0.7
+                )
+                response = self.llm_client.complete(request)
+                return response.content
+            elif hasattr(self.llm_client, 'generate'):
+                response = self.llm_client.generate(prompt)
+            elif hasattr(self.llm_client, 'chat'):
+                response = self.llm_client.chat([{"role": "user", "content": prompt}])
+            else:
+                # 如果 LLM 客户端没有标准方法，尝试直接调用
+                response = self.llm_client(prompt)
+
+            # 确保返回字符串
+            if isinstance(response, dict):
+                response = response.get('content') or response.get('text') or str(response)
+            elif not isinstance(response, str):
+                response = str(response)
+
+            return response
+        except Exception as e:
+            print(f"[WARNING] LLM call failed: {e}, falling back to simulation")
+            return self._simulate_llm_response(prompt)
 
     def _simulate_llm_response(self, prompt: str) -> str:
         """模拟 LLM 响应（用于测试）"""
