@@ -41,6 +41,7 @@ class Operation:
     prompt_preview: str = ""
     response_preview: str = ""
     tokens_or_chars: int = 0
+    token_usage_text: str = ""
 
     @property
     def started_at(self) -> datetime:
@@ -253,6 +254,14 @@ class ProgressTracker:
                 op.response_preview = preview
             if count is not None:
                 op.tokens_or_chars = count
+
+    def update_operation_token_usage(self, op_id: str, token_usage_text: str) -> None:
+        """Update public token usage text for an active operation."""
+        with self.lock:
+            op = self.operations.get(op_id)
+            if not op:
+                return
+            op.token_usage_text = token_usage_text
 
     def _end_operation(
         self,

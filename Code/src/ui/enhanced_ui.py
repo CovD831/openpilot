@@ -170,9 +170,13 @@ class EnhancedUI:
                 active_rows.append(
                     Text(f"    Response preview: {op.response_preview}", style="dim")
                 )
+            if getattr(op, "token_usage_text", ""):
+                active_rows.append(
+                    Text(f"    {op.token_usage_text}", style="dim")
+                )
             if op.tokens_or_chars:
                 active_rows.append(
-                    Text(f"    Progress: {op.tokens_or_chars} chars", style="dim")
+                    Text(f"    Response: {op.tokens_or_chars} chars", style="dim")
                 )
 
         if extra_content is not None:

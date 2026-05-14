@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from core.llm import LLMClient, LLMRequest, LLMResponse
 from ui.progress_tracker import ProgressTracker
@@ -54,11 +54,9 @@ class InstrumentedLLMClient(LLMClient):
                     preview=preview,
                     count=len(response.content),
                 )
-                if response.usage:
-                    self.tracker.append_operation_line(
-                        op_id,
-                        f"Usage: {response.usage}",
-                    )
+                token_usage_text = self._format_token_usage(response.usage)
+                self.tracker.update_operation_token_usage(op_id, token_usage_text)
+                self.tracker.append_operation_line(op_id, token_usage_text)
                 self.tracker.append_operation_line(op_id, "Response parsed")
                 return response
         else:
@@ -67,3 +65,39 @@ class InstrumentedLLMClient(LLMClient):
                 max_retries=max_retries,
                 use_cache=use_cache,
             )
+
+    def _format_token_usage(self, usage: dict[str, Any] | None) -> str:
+        """Format provider token usage for transient UI display."""
+        usage = usage or {}
+        if not usage:
+            return "Token usage unavailable"
+
+        input_tokens = self._coerce_int(
+            usage.get("prompt_tokens")
+            or usage.get("input_tokens")
+            or usage.get("prompt_token_count")
+        )
+        output_tokens = self._coerce_int(
+            usage.get("completion_tokens")
+            or usage.get("output_tokens")
+            or usage.get("completion_token_count")
+        )
+        total_tokens = self._coerce_int(usage.get("total_tokens") or usage.get("total_token_count"))
+        if total_tokens is None and input_tokens is not None and output_tokens is not None:
+            total_tokens = input_tokens + output_tokens
+
+        if input_tokens is None and output_tokens is None and total_tokens is None:
+            return "Token usage unavailable"
+
+        def fmt(value: int | None) -> str:
+            return str(value) if value is not None else "?"
+
+        return f"Tokens: input={fmt(input_tokens)} output={fmt(output_tokens)} total={fmt(total_tokens)}"
+
+    def _coerce_int(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
