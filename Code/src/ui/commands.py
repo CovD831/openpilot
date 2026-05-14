@@ -9,11 +9,8 @@ from typing import Callable
 
 class CommandCategory(str, Enum):
     """Command categories for organization."""
-    PLANNING = "planning"
     EXECUTION = "execution"
-    TASK_MANAGEMENT = "task_management"
     SYSTEM = "system"
-    MEMORY = "memory"
 
 
 @dataclass
@@ -39,23 +36,7 @@ class CommandRegistry:
     def _initialize_commands(self):
         """Initialize all available commands."""
         commands = [
-            # Planning & Execution
-            Command(
-                name="/plan",
-                aliases=[],
-                description="Generate a task plan without executing",
-                usage="/plan <goal>",
-                category=CommandCategory.PLANNING,
-                requires_args=True
-            ),
-            Command(
-                name="/execute",
-                aliases=[],
-                description="Execute goal with full workflow (8-stage pipeline)",
-                usage="/execute <goal>",
-                category=CommandCategory.EXECUTION,
-                requires_args=True
-            ),
+            # Execution
             Command(
                 name="/autopilot",
                 aliases=[],
@@ -63,34 +44,6 @@ class CommandRegistry:
                 usage="/autopilot <goal>",
                 category=CommandCategory.EXECUTION,
                 requires_args=True
-            ),
-
-            # Task Management
-            Command(
-                name="/task",
-                aliases=[],
-                description="Task management commands",
-                usage="/task",
-                category=CommandCategory.TASK_MANAGEMENT,
-                requires_args=False
-            ),
-            Command(
-                name="/report",
-                aliases=[],
-                description="Generate progress reports",
-                usage="/report",
-                category=CommandCategory.TASK_MANAGEMENT,
-                requires_args=False
-            ),
-
-            # Memory
-            Command(
-                name="/memory",
-                aliases=[],
-                description="Memory system status and management",
-                usage="/memory",
-                category=CommandCategory.MEMORY,
-                requires_args=False
             ),
 
             # System
@@ -174,10 +127,7 @@ class CommandRegistry:
 
         # Group by category
         categories = {
-            CommandCategory.PLANNING: "[bold]Planning & Execution:[/bold]",
-            CommandCategory.EXECUTION: "[bold]Execution Modes:[/bold]",
-            CommandCategory.TASK_MANAGEMENT: "[bold]Task Management:[/bold]",
-            CommandCategory.MEMORY: "[bold]Memory:[/bold]",
+            CommandCategory.EXECUTION: "[bold]Execution:[/bold]",
             CommandCategory.SYSTEM: "[bold]System:[/bold]",
         }
 
@@ -198,7 +148,7 @@ class CommandRegistry:
         lines.append("  - Type '/' to see command suggestions")
         lines.append("  - Use arrow keys to navigate command history")
         lines.append("  - Press Tab for command completion")
-        lines.append("  - Type any text without '/' for interactive planning")
+        lines.append("  - Type any text without '/' to run modern autopilot")
 
         return "\n".join(lines)
 

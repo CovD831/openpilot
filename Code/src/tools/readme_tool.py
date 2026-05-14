@@ -396,8 +396,10 @@ def _build_readme_content(
         "- If the run command fails because a package is missing, run the setup command first.",
         "- If you use a virtual environment or Conda environment, activate it before running the project.",
         "- Run commands from this project directory unless the command says otherwise.",
-        "",
     ])
+    if _looks_like_interactive_python_project(project_path, written_files):
+        lines.append("- Terminal or GUI games should be run in a real interactive terminal/window, not from a captured non-interactive smoke test.")
+    lines.append("")
 
     return "\n".join(lines), sections
 
@@ -421,6 +423,16 @@ def _looks_like_python_project(project_path: Path, written_files: list[str]) -> 
     if (project_path / "main.py").exists() or (project_path / "app.py").exists():
         return True
     return any(str(path).endswith(".py") for path in written_files)
+
+
+def _looks_like_interactive_python_project(project_path: Path, written_files: list[str]) -> bool:
+    candidates = _candidate_paths(project_path, written_files)
+    python_files = [path for path in candidates if path.suffix == ".py"]
+    interactive_imports = {"curses", "tkinter", "turtle", "pygame"}
+    for path in python_files:
+        if _read_python_imports(path).intersection(interactive_imports):
+            return True
+    return False
 
 
 def _format_written_files(project_path: Path, written_files: list[str]) -> list[str]:

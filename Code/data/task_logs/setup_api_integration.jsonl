@@ -1,2 +1,0 @@
-{"id":"setup_api_integration_created_2026-05-09T06:50:41.463922+00:00","timestamp":"2026-05-09T06:50:41.463922+00:00","task_id":"setup_api_integration","event_type":"created","metadata":{}}
-{"id":"setup_api_integration_blocked_2026-05-09T06:50:41.464688+00:00","timestamp":"2026-05-09T06:50:41.464688+00:00","task_id":"setup_api_integration","event_type":"blocked","blocked_reason":"Waiting for API credentials from vendor","metadata":{}}

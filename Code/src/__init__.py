@@ -1,51 +1,18 @@
-"""OpenPilot MVP planning core."""
+"""OpenPilot AI agent system."""
 
-from planning.clarifier import (
-    ClarificationAnswer,
-    ClarificationQuestion,
-    Clarifier,
-    TaskBrief,
-)
-from core.llm import LLMClient, LLMRequest, LLMResponse
-from planning.planner import TaskPlanner
-from models.planner_models import (
-    ExecutionPlan,
-    PlanStep,
-    RiskLevel,
-    TaskCard,
-    TaskNode,
-    TaskStatus,
-    TimelinePlan,
-    TimelineSlot,
-)
-from models.reminder_models import (
-    ReminderItem,
-    ReminderPlan,
-    ReminderStatus,
-    ReminderType,
-)
-from reporting.reminder_scheduler import ReminderScheduler
+from agents.iterative_improvement import AutonomousIterationAgent
+from agents.project_evaluator import ProjectEvaluatorAgent
+from agents.task_decomposer import TaskDecomposer
+from core.llm import LLMClient, LLMMessage, LLMRequest, LLMResponse
+from execution.intelligent_autopilot import IntelligentAutopilot
 
 __all__ = [
-    "ClarificationAnswer",
-    "ClarificationQuestion",
-    "Clarifier",
-    "ExecutionPlan",
+    "AutonomousIterationAgent",
+    "IntelligentAutopilot",
     "LLMClient",
+    "LLMMessage",
     "LLMRequest",
     "LLMResponse",
-    "PlanStep",
-    "RiskLevel",
-    "ReminderItem",
-    "ReminderPlan",
-    "ReminderScheduler",
-    "ReminderStatus",
-    "ReminderType",
-    "TaskCard",
-    "TaskBrief",
-    "TaskNode",
-    "TaskStatus",
-    "TaskPlanner",
-    "TimelinePlan",
-    "TimelineSlot",
+    "ProjectEvaluatorAgent",
+    "TaskDecomposer",
 ]

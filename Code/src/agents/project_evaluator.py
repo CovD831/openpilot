@@ -1,22 +1,25 @@
-"""Project-level evaluator agent for iterative improvement."""
+"""Project-level hard validator for iterative improvement."""
 
 from __future__ import annotations
 
 import ast
-import json
+import os
+import re
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
-from core.llm import LLMMessage, LLMRequest
 from models.evaluation_models import EvaluationResult
 
 
 class ProjectEvaluatorAgent:
-    """Evaluate whether a generated project satisfies the user's goal."""
+    """Validate whether a generated project can run without blocking bugs."""
 
-    def __init__(self, llm_client: Any | None = None, satisfaction_threshold: float = 0.85):
+    def __init__(self, llm_client: Any | None = None, smoke_timeout_seconds: int = 2):
         self.llm_client = llm_client
-        self.satisfaction_threshold = satisfaction_threshold
+        self.smoke_timeout_seconds = smoke_timeout_seconds
 
     def evaluate_project(
         self,
@@ -29,242 +32,285 @@ class ProjectEvaluatorAgent:
         static_review: dict[str, Any] | None = None,
         iteration: int = 0,
     ) -> EvaluationResult:
-        """Evaluate a generated project with static checks plus optional LLM judgment."""
+        """Run deterministic hard validation."""
         project = Path(project_path).expanduser()
         files = [Path(path).expanduser() for path in written_files]
         readme = Path(readme_path).expanduser() if readme_path else project / "README.md"
+        static_review = static_review or {}
 
-        static_result = self._static_evaluation(
-            goal=goal,
-            project_path=project,
-            files=files,
-            readme_path=readme,
-            run_command=run_command,
-            static_review=static_review or {},
-        )
-        llm_result = self._llm_evaluation(
-            goal=goal,
-            project_path=project,
-            files=files,
-            readme_path=readme,
-            run_command=run_command,
-            static_result=static_result,
-            iteration=iteration,
-        )
-        result = self._merge_evaluations(static_result, llm_result)
-        result.approved = result.satisfaction_score >= self.satisfaction_threshold and not self._has_hard_failure(result)
-        return result
-
-    def _static_evaluation(
-        self,
-        *,
-        goal: str,
-        project_path: Path,
-        files: list[Path],
-        readme_path: Path,
-        run_command: str,
-        static_review: dict[str, Any],
-    ) -> EvaluationResult:
-        issues: list[str] = []
+        errors: list[str] = []
+        warnings: list[str] = []
         opportunities: list[str] = []
         actions: list[str] = []
 
         existing_files = [path for path in files if path.exists()]
         if not existing_files:
-            issues.append("No generated project files were found.")
-            actions.append("Regenerate the project files in the requested directory.")
-            return EvaluationResult(
-                approved=False,
-                satisfaction_score=0.15,
-                summary="Project files are missing.",
-                issues=issues,
-                improvement_opportunities=opportunities,
-                recommended_actions=actions,
-                next_iteration_goal="Regenerate the missing project files.",
+            errors.append("No generated project files were found.")
+            actions.append("Regenerate the missing project files in the requested directory.")
+            return self._result(
+                errors=errors,
+                warnings=warnings,
+                run_command=run_command,
+                opportunities=opportunities,
+                actions=actions,
+                goal=goal,
+                summary="Project validation failed: no generated files were found.",
             )
 
         code_text = "\n\n".join(self._read_text(path) for path in existing_files if path.suffix == ".py")
-        readme_text = self._read_text(readme_path)
+        readme_text = self._read_text(readme)
+        effective_run_command = (run_command or self._extract_run_command(readme_text)).strip()
 
-        syntax_ok = True
         for path in existing_files:
             if path.suffix != ".py":
                 continue
             try:
                 ast.parse(self._read_text(path))
             except SyntaxError as exc:
-                syntax_ok = False
-                issues.append(f"Syntax error in {path.name} at line {exc.lineno}: {exc.msg}")
+                errors.append(f"Syntax error in {path.name} at line {exc.lineno}: {exc.msg}")
                 actions.append(f"Fix the syntax error in {path.name}.")
 
         if "{{" in code_text or "}}" in code_text:
-            issues.append("Generated code still contains template placeholders.")
+            errors.append("Generated code still contains template placeholders.")
             actions.append("Replace placeholder content with real implementation.")
 
-        effective_run_command = run_command or self._extract_run_command(readme_text)
         if not effective_run_command:
-            issues.append("README does not clearly explain how to run the project.")
+            errors.append("README does not clearly explain how to run the project.")
             actions.append("Add a concrete run command to README.md.")
+
+        if not static_review and code_text.strip():
+            static_review = self._review_python_code(code_text)
+
+        review_errors = self._blocking_review_errors(static_review)
+        if review_errors:
+            errors.extend(review_errors)
+            actions.extend(static_review.get("suggestions") or [])
+
+        if effective_run_command and not any(error.lower().startswith("syntax error") for error in errors):
+            smoke = self._smoke_test(project, effective_run_command, existing_files)
+            if not smoke["passed"]:
+                errors.append(smoke["message"])
+                actions.append("Fix the runtime error reported by the smoke test.")
+            elif smoke["warning"]:
+                warnings.append(smoke["message"])
 
         goal_lower = goal.lower()
         is_game = any(keyword in goal_lower for keyword in ("snake", "贪吃蛇", "game", "小游戏"))
         if is_game:
             missing_game_features = self._missing_game_features(code_text)
             if missing_game_features:
-                issues.extend(missing_game_features)
-                actions.append("Improve the game loop, controls, scoring, and restart/game-over experience.")
+                warnings.extend(missing_game_features)
+                opportunities.extend(missing_game_features[:3])
+                actions.append("Improve the game loop, controls, scoring, food, collision, and game-over experience.")
 
-        review_score = static_review.get("quality_score")
-        if review_score is not None and review_score < 0.8:
-            issues.append(f"Static code quality score is {review_score:.2f}.")
-            actions.extend(static_review.get("suggestions") or [])
-
-        functionality = 0.75 if existing_files else 0.0
-        if is_game:
-            functionality = 1.0 - min(0.45, 0.09 * len(self._missing_game_features(code_text)))
-        runnability = 1.0 if syntax_ok and effective_run_command else 0.55 if syntax_ok else 0.2
-        code_quality = float(review_score) if review_score is not None else self._static_code_quality(code_text)
-        user_experience = 0.9 if not is_game or not self._missing_game_features(code_text) else 0.55
-        documentation = 1.0 if "## Run" in readme_text and effective_run_command else 0.45
-
-        score = (
-            functionality * 0.30
-            + runnability * 0.25
-            + code_quality * 0.20
-            + user_experience * 0.15
-            + documentation * 0.10
-        )
-        if not syntax_ok:
-            score = min(score, 0.45)
-        if "{{" in code_text:
-            score = min(score, 0.35)
-
-        if score < self.satisfaction_threshold and not actions:
-            opportunities.append("Polish the implementation to better satisfy the original goal.")
-            actions.append("Add missing user-facing behavior and improve code structure.")
-        if issues:
-            opportunities.extend(issues[:3])
+        if warnings:
+            opportunities.extend(warnings[:3])
 
         summary = (
-            f"Automatic project evaluation scored {score:.2f}. "
-            f"Detected {len(issues)} issue(s)."
+            "Project validation passed."
+            if not errors
+            else f"Project validation failed with {len(errors)} blocking issue(s)."
         )
-        return EvaluationResult(
-            approved=score >= self.satisfaction_threshold and not issues,
-            satisfaction_score=max(0.0, min(1.0, score)),
+        return self._result(
+            errors=errors,
+            warnings=warnings,
+            run_command=effective_run_command,
+            opportunities=opportunities,
+            actions=actions,
+            goal=goal,
             summary=summary,
-            issues=issues,
-            improvement_opportunities=opportunities,
-            recommended_actions=actions[:5],
-            next_iteration_goal=self._build_next_iteration_goal(goal, actions, issues),
         )
 
-    def _llm_evaluation(
+    def _result(
         self,
         *,
-        goal: str,
-        project_path: Path,
-        files: list[Path],
-        readme_path: Path,
+        errors: list[str],
+        warnings: list[str],
         run_command: str,
-        static_result: EvaluationResult,
-        iteration: int,
-    ) -> EvaluationResult | None:
-        if not self.llm_client or not hasattr(self.llm_client, "complete"):
-            return None
-
-        file_previews = []
-        for path in files[:5]:
-            if path.exists():
-                file_previews.append(f"FILE: {path.name}\n{self._read_text(path)[:1800]}")
-        readme_preview = self._read_text(readme_path)[:1200]
-
-        prompt = f"""You are OpenPilot's Project Evaluator Agent.
-Evaluate the generated project against the user's goal. Return ONLY valid JSON.
-Do not include private internal reasoning. Use concise public reasoning in summary.
-
-Goal: {goal}
-Project path: {project_path}
-Iteration: {iteration}
-Run command: {run_command}
-Static evaluation: {static_result.model_dump()}
-README preview:
-{readme_preview}
-
-Project file previews:
-{chr(10).join(file_previews)}
-
-Return JSON:
-{{
-  "approved": false,
-  "satisfaction_score": 0.0,
-  "summary": "short public evaluation",
-  "issues": ["issue"],
-  "improvement_opportunities": ["opportunity"],
-  "recommended_actions": ["action"],
-  "next_iteration_goal": "specific improvement request or null"
-}}
-"""
-        try:
-            response = self.llm_client.complete(
-                LLMRequest(
-                    messages=[LLMMessage(role="user", content=prompt)],
-                    response_format="json_object",
-                    temperature=0.2,
-                ),
-                max_retries=2,
-                use_cache=False,
-            )
-        except Exception:
-            return None
-
-        payload = response.parsed_json if isinstance(response.parsed_json, dict) else None
-        if payload is None:
-            try:
-                payload = json.loads(response.content)
-            except (TypeError, json.JSONDecodeError):
-                return None
-        if "satisfaction_score" not in payload:
-            return None
-
-        try:
-            return EvaluationResult(
-                approved=bool(payload.get("approved", False)),
-                satisfaction_score=float(payload.get("satisfaction_score", 0.0)),
-                summary=str(payload.get("summary") or "Project evaluated."),
-                issues=[str(item) for item in payload.get("issues") or []],
-                improvement_opportunities=[str(item) for item in payload.get("improvement_opportunities") or []],
-                recommended_actions=[str(item) for item in payload.get("recommended_actions") or []],
-                next_iteration_goal=payload.get("next_iteration_goal"),
-            )
-        except Exception:
-            return None
-
-    def _merge_evaluations(
-        self,
-        static_result: EvaluationResult,
-        llm_result: EvaluationResult | None,
+        opportunities: list[str],
+        actions: list[str],
+        goal: str,
+        summary: str,
     ) -> EvaluationResult:
-        if llm_result is None:
-            return static_result
-
-        hard_failure_cap = 1.0
-        if self._has_hard_failure(static_result):
-            hard_failure_cap = min(hard_failure_cap, 0.55)
-        score = min(hard_failure_cap, (static_result.satisfaction_score * 0.55 + llm_result.satisfaction_score * 0.45))
-        issues = self._dedupe(static_result.issues + llm_result.issues)
-        opportunities = self._dedupe(static_result.improvement_opportunities + llm_result.improvement_opportunities)
-        actions = self._dedupe(static_result.recommended_actions + llm_result.recommended_actions)
-
+        deduped_errors = self._dedupe(errors)
+        deduped_warnings = self._dedupe(warnings)
+        deduped_actions = self._dedupe(actions)[:5]
+        deduped_opportunities = self._dedupe(opportunities)
+        validation_passed = not deduped_errors
         return EvaluationResult(
-            approved=score >= self.satisfaction_threshold and not self._has_hard_failure(static_result),
-            satisfaction_score=max(0.0, min(1.0, score)),
-            summary=llm_result.summary or static_result.summary,
-            issues=issues,
-            improvement_opportunities=opportunities,
-            recommended_actions=actions[:5],
-            next_iteration_goal=llm_result.next_iteration_goal or static_result.next_iteration_goal,
+            validation_passed=validation_passed,
+            runnable=validation_passed,
+            has_blocking_bugs=bool(deduped_errors),
+            summary=summary,
+            validation_errors=deduped_errors,
+            warnings=deduped_warnings,
+            run_command=run_command,
+            improvement_opportunities=deduped_opportunities,
+            recommended_actions=deduped_actions,
+            next_iteration_goal=self._build_next_iteration_goal(goal, deduped_actions, deduped_errors),
         )
+
+    def _smoke_test(self, project_path: Path, run_command: str, files: list[Path] | None = None) -> dict[str, Any]:
+        try:
+            args = shlex.split(run_command)
+        except ValueError as exc:
+            return {"passed": False, "warning": False, "message": f"Run command cannot be parsed: {exc}"}
+
+        if not args:
+            return {"passed": False, "warning": False, "message": "Run command is empty."}
+
+        if args[0] == "python":
+            args[0] = sys.executable
+
+        if self._looks_interactive_python_project(files or [], args):
+            import_result = self._import_only_smoke_test(project_path, args, files or [])
+            if not import_result["passed"]:
+                return import_result
+            return {
+                "passed": True,
+                "warning": True,
+                "message": "Smoke test skipped full run: interactive terminal or GUI program requires a real terminal/window.",
+            }
+
+        try:
+            result = subprocess.run(
+                args,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=self.smoke_timeout_seconds,
+                env=self._smoke_env(),
+            )
+        except FileNotFoundError as exc:
+            return {"passed": False, "warning": False, "message": f"Run command failed: {exc}"}
+        except subprocess.TimeoutExpired as exc:
+            combined = f"{exc.stdout or ''}\n{exc.stderr or ''}"
+            if self._looks_like_traceback(combined):
+                return {"passed": False, "warning": False, "message": self._short_error("Smoke test timed out with error output", combined)}
+            return {
+                "passed": True,
+                "warning": True,
+                "message": f"Smoke test timed out after {self.smoke_timeout_seconds}s; treating as runnable for an interactive app.",
+            }
+
+        combined_output = f"{result.stdout or ''}\n{result.stderr or ''}"
+        if self._is_interactive_environment_error(combined_output):
+            return {
+                "passed": True,
+                "warning": True,
+                "message": "Smoke test skipped full run: interactive terminal program requires a real terminal.",
+            }
+        if result.returncode != 0:
+            return {
+                "passed": False,
+                "warning": False,
+                "message": self._short_error(f"Smoke test exited with code {result.returncode}", combined_output),
+            }
+        if self._looks_like_traceback(combined_output):
+            return {"passed": False, "warning": False, "message": self._short_error("Smoke test printed a traceback", combined_output)}
+        return {"passed": True, "warning": False, "message": "Smoke test passed."}
+
+    def _looks_interactive_python_project(self, files: list[Path], args: list[str]) -> bool:
+        if not args or args[0] != sys.executable:
+            return False
+        source = "\n".join(self._read_text(path) for path in files if path.suffix == ".py")
+        if not source:
+            return False
+        interactive_imports = ("curses", "tkinter", "turtle", "pygame")
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return any(f"import {name}" in source or f"from {name}" in source for name in interactive_imports)
+        imports = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imports.add(node.module.split(".", 1)[0])
+        return bool(imports.intersection(interactive_imports))
+
+    def _import_only_smoke_test(self, project_path: Path, args: list[str], files: list[Path]) -> dict[str, Any]:
+        entry = self._entry_module_from_args(project_path, args, files)
+        if entry is None:
+            return {"passed": True, "warning": True, "message": "Smoke test skipped full run: interactive project entry could not be imported safely."}
+
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import importlib.util, pathlib; "
+                f"path = pathlib.Path({str(entry)!r}); "
+                "spec = importlib.util.spec_from_file_location('openpilot_smoke_entry', path); "
+                "module = importlib.util.module_from_spec(spec); "
+                "spec.loader.exec_module(module)"
+            ),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=self.smoke_timeout_seconds,
+                env=self._smoke_env(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            combined = f"{exc.stdout or ''}\n{exc.stderr or ''}"
+            return {"passed": False, "warning": False, "message": self._short_error("Import-only smoke test timed out", combined)}
+
+        combined_output = f"{result.stdout or ''}\n{result.stderr or ''}"
+        if result.returncode != 0:
+            return {
+                "passed": False,
+                "warning": False,
+                "message": self._short_error(f"Import-only smoke test exited with code {result.returncode}", combined_output),
+            }
+        return {"passed": True, "warning": False, "message": "Import-only smoke test passed."}
+
+    def _entry_module_from_args(self, project_path: Path, args: list[str], files: list[Path]) -> Path | None:
+        for arg in args[1:]:
+            if arg.startswith("-"):
+                continue
+            candidate = Path(arg).expanduser()
+            if not candidate.is_absolute():
+                candidate = project_path / candidate
+            if candidate.suffix == ".py" and candidate.exists():
+                return candidate
+            break
+        python_files = [path for path in files if path.suffix == ".py" and path.exists()]
+        if len(python_files) == 1:
+            return python_files[0]
+        for name in ("main.py", "app.py"):
+            candidate = project_path / name
+            if candidate.exists():
+                return candidate
+        return python_files[0] if python_files else None
+
+    def _smoke_env(self) -> dict[str, str]:
+        env = os.environ.copy()
+        env.setdefault("TERM", "xterm-256color")
+        env.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+        return env
+
+    def _blocking_review_errors(self, static_review: dict[str, Any]) -> list[str]:
+        errors: list[str] = []
+        if static_review.get("approved") is False:
+            errors.append("Static code review did not approve the generated code.")
+        syntax_errors = static_review.get("syntax_errors") or []
+        for error in syntax_errors:
+            errors.append(f"Static review syntax error: {error}")
+        for issue in static_review.get("issues") or []:
+            if any(marker in str(issue).lower() for marker in ("syntax", "runtime", "import", "undefined", "security")):
+                errors.append(f"Blocking static review issue: {issue}")
+        return errors
+
+    def _review_python_code(self, code_text: str) -> dict[str, Any]:
+        try:
+            from tools.code_reviewer import code_reviewer_executor
+
+            return code_reviewer_executor({"code": code_text, "language": "python"})
+        except Exception:
+            return {}
 
     def _missing_game_features(self, code: str) -> list[str]:
         code_lower = code.lower()
@@ -275,40 +321,53 @@ Return JSON:
             ("No food/apple target behavior was detected.", ("food", "apple")),
             ("No collision or game-over handling was detected.", ("collision", "game_over", "game over", "self hit")),
         ]
-        missing = []
-        for message, needles in checks:
-            if not any(needle in code_lower for needle in needles):
-                missing.append(message)
-        return missing
-
-    def _static_code_quality(self, code: str) -> float:
-        if not code.strip():
-            return 0.1
-        score = 0.75
-        if "def " in code or "class " in code:
-            score += 0.1
-        if "try:" in code:
-            score += 0.05
-        if len([line for line in code.splitlines() if line.strip()]) < 20:
-            score -= 0.15
-        return max(0.0, min(1.0, score))
+        return [message for message, needles in checks if not any(needle in code_lower for needle in needles)]
 
     def _extract_run_command(self, readme_text: str) -> str:
-        for line in readme_text.splitlines():
+        lines = readme_text.splitlines()
+        for index, line in enumerate(lines):
             stripped = line.strip()
             if stripped.startswith("python ") or stripped.startswith("npm "):
                 return stripped
+            if stripped in {"```bash", "```sh", "```"} and index + 1 < len(lines):
+                candidate = lines[index + 1].strip()
+                if candidate.startswith("python ") or candidate.startswith("npm "):
+                    return candidate
         return ""
 
-    def _build_next_iteration_goal(self, goal: str, actions: list[str], issues: list[str]) -> str | None:
-        if not actions and not issues:
+    def _build_next_iteration_goal(self, goal: str, actions: list[str], errors: list[str]) -> str | None:
+        focus = actions[:2] or errors[:2]
+        if not focus:
             return None
-        focus = actions[:2] or issues[:2]
-        return f"Improve the project for this goal: {goal}. Focus on: {'; '.join(focus)}"
+        return f"Fix the project for this goal: {goal}. Focus on: {'; '.join(focus)}"
 
-    def _has_hard_failure(self, result: EvaluationResult) -> bool:
-        hard_markers = ("missing", "syntax error", "placeholder", "no generated project files")
-        return any(any(marker in issue.lower() for marker in hard_markers) for issue in result.issues)
+    def _looks_like_traceback(self, output: str) -> bool:
+        lower = output.lower()
+        return any(marker in lower for marker in ("traceback", "syntaxerror", "modulenotfounderror", "importerror", "nameerror"))
+
+    def _is_interactive_environment_error(self, output: str) -> bool:
+        lower = self._strip_ansi(output).lower()
+        markers = (
+            "_curses.error: cbreak() returned err",
+            "_curses.error: nocbreak() returned err",
+            "_curses.error: endwin() returned err",
+            "setupterm",
+            "not a tty",
+            "inappropriate ioctl for device",
+            "no available video device",
+            "cannot open display",
+        )
+        return any(marker in lower for marker in markers)
+
+    def _short_error(self, prefix: str, output: str) -> str:
+        clean_output = self._strip_ansi(output)
+        clean = " ".join(line.strip() for line in clean_output.splitlines() if line.strip())
+        if len(clean) > 500:
+            clean = clean[:497] + "..."
+        return f"{prefix}: {clean}" if clean else prefix
+
+    def _strip_ansi(self, text: str) -> str:
+        return re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", text or "")
 
     def _read_text(self, path: Path) -> str:
         try:

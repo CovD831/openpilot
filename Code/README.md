@@ -1,377 +1,85 @@
-﻿# OpenPilot - AGI 智能体框架
+# OpenPilot
 
-OpenPilot 是一个智能增强框架，让普通 LLM 模型获得接近 AGI 的问题解决能力。
+OpenPilot is a modern AI agent system centered on the `IntelligentAutopilot` execution path. The codebase now favors an Agent + Tool protocol architecture instead of the removed legacy planning/workflow/reporting stack.
 
-## 核心特性
-
-🚀 **AGI 自主执行**
-- 完全自主的任务理解和分解
-- 自动工具选择和编排
-- 自动代码生成和执行
-- 自动结果验证和优化
-
-🧠 **持续学习**
-- 四层记忆系统（短期、长期、任务、技能）
-- 置信度驱动的自主度控制
-- 从每次执行中学习和优化
-
-🛡️ **安全保障**
-- 危险操作检测和阻断
-- 沙箱隔离执行
-- 完整的审计日志
-
-## 快速开始
-
-### 1. 环境要求
-
-- Python 3.11+
-- Conda（推荐）或 venv
-
-### 2. 安装步骤
-
-#### 方式 A：使用 Conda（推荐）
+## Quick Start
 
 ```bash
-# 创建 Conda 环境
 conda create -n openpilot python=3.11 -y
 conda activate openpilot
-
-# 进入项目目录
-cd /path/to/openPilot/Code
-
-# 安装依赖
+cd /Users/yanning/Projects/openpilot/Code
 pip install -r requirements.txt
-
-# 安装 OpenPilot（开发模式）
 pip install -e .
 ```
 
-#### 方式 B：使用 venv
+Configure the LLM connection in `.env` or environment variables:
 
 ```bash
-# 创建虚拟环境
-python3.11 -m venv venv
-source venv/bin/activate  # Linux/Mac
-# 或
-venv\Scripts\activate  # Windows
-
-# 进入项目目录
-cd /path/to/openPilot/Code
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 安装 OpenPilot（开发模式）
-pip install -e .
+OPENPILOT_LLM_BASE_URL=https://your-provider.example/v1
+OPENPILOT_LLM_API_KEY=your-api-key
+OPENPILOT_LLM_MODEL=your-model
 ```
 
-### 3. 配置 LLM API
+Check configuration:
 
 ```bash
-# 复制环境变量模板
-cp .env.example .env
-
-# 编辑 .env 文件
-nano .env  # 或使用你喜欢的编辑器
+openpilot config check
 ```
 
-**必需配置**：
+## Usage
 
-```bash
-# OpenAI 兼容的 API 配置
-OPENPILOT_LLM_BASE_URL=https://api.openai.com/v1
-OPENPILOT_LLM_API_KEY=your-api-key-here
-OPENPILOT_LLM_MODEL=gpt-4
-
-# 可选配置
-OPENPILOT_LLM_TIMEOUT_SECONDS=60
-OPENPILOT_LLM_TEMPERATURE=0.7
-```
-
-**支持的 LLM 提供商**：
-- OpenAI (GPT-4, GPT-3.5)
-- Azure OpenAI
-- 任何 OpenAI 兼容的 API（如 Ollama, LM Studio）
-
-### 4. 验证安装
-
-```bash
-# 检查配置
-openpilot run
-> /config
-
-# 应该显示：
-# Configuration is ready.
-```
-
-## 使用指南
-
-### 启动交互式 CLI
+Start interactive mode:
 
 ```bash
 openpilot run
 ```
 
-### 系统命令（以 / 开头）
-
-输入 `/` 后按 Tab 键查看所有命令：
+Run one goal and exit:
 
 ```bash
-/help        # 显示帮助
-/config      # 检查配置
-/plan        # 生成任务计划
-/execute     # 执行完整工作流
-/autopilot   # 🚀 AGI 自主模式
-/task        # 任务管理
-/report      # 报告生成
-/memory      # 记忆系统状态
-/clear       # 清屏
-/exit        # 退出
+openpilot run --once "在 /tmp/demo 中创建一个 Python 项目"
 ```
 
-### AGI 自主执行示例
+Interactive commands:
 
-#### 数据分析任务
-
-```bash
-openpilot run
-> /autopilot 分析 data/sales.csv 文件，计算每月销售额，生成趋势报告
+```text
+/autopilot <goal>  Run a goal through modern autonomous execution
+/config            Show current LLM configuration
+/help              Show command help
+/clear             Clear the screen
+/exit              Exit
 ```
 
-系统会自动：
-1. 理解任务类型（data_analysis）
-2. 选择工具链（file_reader → code_generator → code_executor → file_writer）
-3. 生成 Python 数据分析代码
-4. 在沙箱中执行代码
-5. 验证结果
-6. 生成报告并保存
+Plain text entered without a leading slash is also routed to the modern autopilot path.
 
-#### 自动化脚本任务
+## Current Architecture
 
-```bash
-> /autopilot 批量重命名 documents/ 目录下的所有 .txt 文件，添加日期前缀
+The active runtime path is:
+
+```text
+ui.cli -> ui.enhanced_cli -> execution.IntelligentAutopilot
+        -> core.SemanticAnalyzer / agents.TaskDecomposer
+        -> tools.ToolOrchestrator / tools.ToolExecutor
+        -> built-in tools
+        -> agents.ProjectEvaluatorAgent / agents.AutonomousIterationAgent
+        -> memory + logs + enhanced UI dashboard
 ```
 
-#### 研究任务
+Important directories:
 
-```bash
-> /autopilot 研究 Rust 语言的内存管理机制，生成技术报告
-```
+| Path | Purpose |
+| --- | --- |
+| `src/ui/` | CLI, interactive mode, Rich dashboard, progress tracking, question UI. |
+| `src/execution/` | Modern autopilot and code execution/generation/review support. |
+| `src/agents/` | Task decomposition, orchestration, project evaluation, autonomous iteration. |
+| `src/tools/` | Standard ToolDefinition protocol, tool registry, built-in tool executors. |
+| `src/models/` | Pydantic contracts shared by agents, tools, execution, memory, and UI. |
+| `src/core/` | LLM client, instrumentation, config, logging, semantic analysis, risk helpers. |
+| `src/memory/` | Memory store, short memory, context compression, memory vault. |
+| `src/utils/` | Pure utility functions and data structures without LLM/tool protocol behavior. |
 
-### 任务管理
+The legacy `planning/`, `validation/`, `autonomy/`, `reporting/`, and `WorkflowExecutor` code paths have been removed. Project validation and reflection now belong to the Agent layer, while autonomy decisions are exposed through `autonomy_tool`.
 
-```bash
-# 创建任务日志
-openpilot task log my_task created
+## Refactoring Notes
 
-# 更新任务状态
-openpilot task log my_task status_changed --old-status planned --new-status in_progress
-
-# 查看任务历史
-openpilot task history my_task
-
-# 列出所有任务
-openpilot task list
-```
-
-### 报告生成
-
-```bash
-# 生成今日日报
-openpilot report daily
-
-# 生成本周周报
-openpilot report weekly
-
-# 保存报告到文件
-openpilot report daily --save reports/daily.md
-openpilot report weekly --save reports/weekly.md
-```
-
-## 项目结构
-
-```
-openPilot/
-├── Code/
-│   ├── src/openpilot/          # 核心代码
-│   │   ├── cli.py              # CLI 入口
-│   │   ├── workflow_executor.py # 工作流执行器
-│   │   ├── tool_registry.py    # 工具注册表
-│   │   ├── tool_orchestrator.py # 工具编排器
-│   │   ├── tool_executor.py    # 工具执行器
-│   │   ├── code_generator.py   # 代码生成器
-│   │   ├── code_executor.py    # 代码执行器
-│   │   ├── result_validator.py # 结果验证器
-│   │   ├── reflection_analyzer.py # 反思分析器
-│   │   ├── strategy_optimizer.py # 策略优化器
-│   │   ├── memory_store.py     # 记忆系统
-│   │   ├── autonomy_controller.py # 自主度控制
-│   │   └── ...
-│   ├── data/                   # 数据目录
-│   │   ├── memory/             # 记忆文件
-│   │   └── task_logs/          # 任务日志
-│   ├── logs/                   # 审计日志
-│   ├── .env.example            # 环境变量模板
-│   ├── requirements.txt        # 依赖列表
-│   └── pyproject.toml          # 项目配置
-└── Plan/                       # 规划文档
-    ├── 产品方案任务流程.md
-    └── 测试指南.md
-```
-
-## 核心架构
-
-### Phase 1: 个人助手（✅ 已完成）
-- 任务管理、进度跟踪
-- 日报周报生成
-- 四层记忆系统
-- 置信度驱动自主度
-
-### Phase 2: AGI 智能体（✅ 已完成）
-- 工具注册与执行
-- 代码生成与执行
-- 结果验证与优化
-- 反思与持续学习
-
-### Phase 3: GUI 界面（规划中）
-- 可视化交互
-- Web 应用
-- 多用户支持
-
-## AGI 能力评估
-
-OpenPilot 已实现以下 AGI 能力级别：
-
-- ✅ **Level 1: 基础自动化** - 理解目标、生成计划、选择工具
-- ✅ **Level 2: 自主执行** - 自动执行操作、生成代码、验证结果
-- ✅ **Level 3: 智能决策** - 基于置信度决策、检测危险、自动重试
-- ✅ **Level 4: 持续学习** - 从执行中学习、保存经验、优化策略
-- ✅ **Level 5: 接近 AGI** - 独立完成复杂任务、自我优化进化
-
-## 测试
-
-详细测试指南请参考：[测试指南.md](../Plan/测试指南.md)
-
-### 快速测试
-
-```bash
-# 测试配置
-openpilot run
-> /config
-
-# 测试 AGI 能力
-> /autopilot 生成一个简单的数据分析报告
-
-# 测试记忆系统
-> /memory
-
-# 测试任务日志
-openpilot task log test_task created
-openpilot task history test_task
-```
-
-## 安全性
-
-### 危险操作检测
-
-OpenPilot 会自动检测和阻断以下危险操作：
-- `eval()` 和 `exec()` 调用
-- `os.system()` 系统命令
-- `rm -rf` 删除命令
-- 未授权的文件访问
-- 网络请求（需要确认）
-
-### 沙箱隔离
-
-所有代码执行都在隔离的沙箱环境中进行：
-- 使用 `subprocess` 隔离
-- 资源限制（CPU、内存、超时）
-- 文件系统访问控制
-
-### 审计日志
-
-所有操作都会记录到审计日志：
-- `logs/openpilot.jsonl` - 主日志
-- `logs/workflow.jsonl` - 工作流日志
-- `data/task_logs/*.jsonl` - 任务日志
-
-## 常见问题
-
-### Q: 找不到 openpilot 命令？
-
-```bash
-# 确保已安装
-pip install -e .
-
-# 或使用完整路径
-python -m openpilot.cli run
-```
-
-### Q: LLM API 调用失败？
-
-```bash
-# 检查配置
-openpilot run
-> /config
-
-# 确保 .env 文件配置正确
-cat .env
-```
-
-### Q: 命令补全不工作？
-
-```bash
-# 安装 prompt-toolkit
-pip install prompt-toolkit
-
-# 或重新安装依赖
-pip install -r requirements.txt
-```
-
-### Q: 如何禁用记忆系统？
-
-```bash
-# 使用 --ignore-memory 参数
-openpilot run --ignore-memory
-
-# 或在交互模式中使用普通命令（不使用 /autopilot）
-```
-
-### Q: 如何查看执行日志？
-
-```bash
-# 查看主日志
-cat logs/openpilot.jsonl | jq .
-
-# 查看工作流日志
-cat logs/workflow.jsonl | jq .
-
-# 查看任务日志
-cat data/task_logs/my_task.jsonl | jq .
-```
-
-## 贡献
-
-欢迎贡献代码、报告问题或提出建议！
-
-## 许可证
-
-[待定]
-
-## 联系方式
-
-- 项目地址：[待定]
-- 文档：参考 `Plan/` 目录
-- 问题反馈：[待定]
-
-## 致谢
-
-OpenPilot 使用了以下优秀的开源项目：
-- OpenAI Python SDK
-- Pydantic
-- Rich
-- prompt-toolkit
-
----
-
-**让普通模型变强大，让 AI 真正成为你的智能助手！** 🚀
+See `PROJECT_STRUCTURE.md` for a directory-level map and the reserved area for concrete refactoring recommendations.

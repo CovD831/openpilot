@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
@@ -10,10 +11,23 @@ from rich.console import Console
 from core.config import LLMSettings
 from core.instrumented_llm import InstrumentedLLMClient
 from core.openpilot_log import OpenPilotLogger
-from planning.planner import TaskPlanner
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker
-from ui.openpilot_session import OpenPilotSession
+
+
+DEFAULT_IMPROVEMENT_ITERATIONS = 2
+
+
+@dataclass(frozen=True)
+class OpenPilotRuntimeOptions:
+    """Runtime options for autopilot creation."""
+
+    improvement_iterations: int = DEFAULT_IMPROVEMENT_ITERATIONS
+    prompt_for_project_improvement_iterations: bool = False
+
+    @property
+    def enable_iterative_improvement(self) -> bool:
+        return self.improvement_iterations > 0
 
 
 def run_enhanced_cli(
@@ -38,9 +52,6 @@ def run_enhanced_cli(
     if llm_client is None:
         llm_client = InstrumentedLLMClient(settings, tracker)
 
-    # Initialize planner
-    planner = TaskPlanner(llm_client)
-
     # Setup logging
     log_file = getattr(args, 'log_file', None)
     if log_file:
@@ -53,24 +64,50 @@ def run_enhanced_cli(
 
     # Check for once mode
     if hasattr(args, 'once') and args.once:
+        runtime_options = _runtime_options_from_args(args, project_prompt_default=False)
         return _run_once_mode(
             args.once,
             enhanced_ui,
             tracker,
-            planner,
             logger,
-            settings
+            settings,
+            runtime_options,
         )
+
+    runtime_options = _runtime_options_from_args(args, project_prompt_default=True)
 
     # Interactive mode
     return _run_interactive_mode(
         enhanced_ui,
         tracker,
-        planner,
         logger,
         settings,
         args,
-        llm_client
+        llm_client,
+        runtime_options,
+    )
+
+
+def _runtime_options_from_args(
+    args,
+    *,
+    project_prompt_default: bool,
+) -> OpenPilotRuntimeOptions:
+    """Resolve runtime options from CLI args.
+
+    Interactive autopilot asks per generated project when the user did not pass
+    a fixed --improvement-iterations value.
+    """
+    configured = getattr(args, "improvement_iterations", None)
+    if configured is not None:
+        return OpenPilotRuntimeOptions(
+            improvement_iterations=configured,
+            prompt_for_project_improvement_iterations=False,
+        )
+
+    return OpenPilotRuntimeOptions(
+        improvement_iterations=DEFAULT_IMPROVEMENT_ITERATIONS,
+        prompt_for_project_improvement_iterations=project_prompt_default,
     )
 
 
@@ -78,9 +115,9 @@ def _run_once_mode(
     goal: str,
     ui: EnhancedUI,
     tracker: ProgressTracker,
-    planner: TaskPlanner,
     logger,
-    settings: LLMSettings
+    settings: LLMSettings,
+    runtime_options: OpenPilotRuntimeOptions,
 ) -> int:
     """Run a single goal and exit."""
     from execution.intelligent_autopilot import IntelligentAutopilot
@@ -100,6 +137,9 @@ def _run_once_mode(
             use_enhanced_ui=True,
             enhanced_ui=ui,
             tracker=tracker,
+            enable_iterative_improvement=runtime_options.enable_iterative_improvement,
+            required_successful_improvements=runtime_options.improvement_iterations,
+            prompt_for_project_improvement_iterations=runtime_options.prompt_for_project_improvement_iterations,
         )
 
         # Execute with live session
@@ -131,11 +171,11 @@ def _run_once_mode(
 def _run_interactive_mode(
     ui: EnhancedUI,
     tracker: ProgressTracker,
-    planner: TaskPlanner,
     logger,
     settings: LLMSettings,
     args,
-    llm_client
+    llm_client,
+    runtime_options: OpenPilotRuntimeOptions,
 ) -> int:
     """Run interactive REPL mode."""
     from prompt_toolkit import PromptSession
@@ -170,6 +210,12 @@ def _run_interactive_mode(
     ui.console.print()
     ui.console.print("[bold green]Welcome to OpenPilot Interactive Mode[/bold green]")
     ui.console.print("[dim]Type your goal or use /help for commands[/dim]")
+    if runtime_options.prompt_for_project_improvement_iterations:
+        ui.console.print("[dim]Project improvement iterations: asked per generated project[/dim]")
+    else:
+        ui.console.print(
+            f"[dim]Project improvement iterations: {runtime_options.improvement_iterations}[/dim]"
+        )
     ui.console.print()
 
     tracker.start_tracking()
@@ -195,7 +241,7 @@ def _run_interactive_mode(
 
                 # Handle config command
                 if user_input.strip() == "/config":
-                    _show_config(ui, settings)
+                    _show_config(ui, settings, runtime_options)
                     continue
 
                 # Handle clear command
@@ -211,12 +257,12 @@ def _run_interactive_mode(
                         ui.console.print("[red]Usage:[/red] /autopilot <goal>")
                         continue
                     goal = parts[1]
-                    _execute_autopilot(goal, ui, tracker, llm_client, logger)
+                    _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options)
                     continue
 
                 # Handle goal execution
                 if not user_input.startswith("/"):
-                    _execute_goal_interactive(user_input, ui, tracker, llm_client, logger)
+                    _execute_goal_interactive(user_input, ui, tracker, llm_client, logger, runtime_options)
                 else:
                     ui.console.print(f"[yellow]Unknown command: {user_input}[/yellow]")
                     ui.console.print("[dim]Type /help for available commands[/dim]")
@@ -239,48 +285,10 @@ def _execute_goal_interactive(
     tracker: ProgressTracker,
     llm_client,
     logger,
+    runtime_options: OpenPilotRuntimeOptions,
 ):
     """Execute a goal in interactive mode."""
-    return _execute_autopilot(goal, ui, tracker, llm_client, logger)
-
-
-def _execute_goal_interactive_legacy(
-    goal: str,
-    ui: EnhancedUI,
-    tracker: ProgressTracker,
-    planner: TaskPlanner
-):
-    """Legacy plan-only simulation path kept for explicit tests."""
-    ui.console.print()
-
-    try:
-        with ui.live_session(f"Executing: {goal[:50]}..."):
-            # Plan
-            ui.update_main_content(
-                ui.create_status_panel("Planning", "Analyzing your goal...")
-            )
-
-            with tracker.track_task("Planning", {"goal": goal}):
-                plan = planner.plan(goal)
-
-            ui.log_activity("success", f"Plan created with {len(plan.steps)} steps")
-
-            # Show plan and ask for confirmation
-            ui.update_main_content(ui.create_status_panel(
-                "Plan Ready",
-                f"Created {len(plan.steps)} steps. Executing..."
-            ))
-
-            # Execute steps
-            for i, step in enumerate(plan.steps, 1):
-                with tracker.track_task(f"Step {i}", {"action": step.title}):
-                    import time
-                    time.sleep(0.3)  # Simulate work
-
-        ui.show_success("Goal completed!")
-
-    except Exception as e:
-        ui.show_error("Execution failed", str(e))
+    return _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options)
 
 
 def _show_help(ui: EnhancedUI):
@@ -293,7 +301,11 @@ def _show_help(ui: EnhancedUI):
     ui.console.print()
 
 
-def _show_config(ui: EnhancedUI, settings: LLMSettings):
+def _show_config(
+    ui: EnhancedUI,
+    settings: LLMSettings,
+    runtime_options: OpenPilotRuntimeOptions | None = None,
+):
     """Show current configuration."""
     from rich.table import Table
 
@@ -307,6 +319,11 @@ def _show_config(ui: EnhancedUI, settings: LLMSettings):
     table.add_row("Temperature", str(settings.temperature))
     table.add_row("Timeout", f"{settings.timeout_seconds}s")
     table.add_row("API Key", "✓ Set" if settings.api_key else "✗ Not set")
+    if runtime_options is not None:
+        if runtime_options.prompt_for_project_improvement_iterations:
+            table.add_row("Improvement Iterations", "ask per generated project")
+        else:
+            table.add_row("Improvement Iterations", str(runtime_options.improvement_iterations))
 
     ui.console.print()
     ui.console.print(table)
@@ -318,13 +335,15 @@ def _execute_autopilot(
     ui: EnhancedUI,
     tracker: ProgressTracker,
     llm_client,
-    logger
+    logger,
+    runtime_options: OpenPilotRuntimeOptions | None = None,
 ):
     """Execute goal using intelligent autopilot with enhanced UI."""
     from execution.intelligent_autopilot import IntelligentAutopilot
     from core.llm import LLMClient
 
     ui.console.print()
+    runtime_options = runtime_options or OpenPilotRuntimeOptions()
 
     try:
         # Create autopilot with enhanced UI support
@@ -336,6 +355,9 @@ def _execute_autopilot(
             use_enhanced_ui=True,
             enhanced_ui=ui,
             tracker=tracker,
+            enable_iterative_improvement=runtime_options.enable_iterative_improvement,
+            required_successful_improvements=runtime_options.improvement_iterations,
+            prompt_for_project_improvement_iterations=runtime_options.prompt_for_project_improvement_iterations,
         )
 
         # Execute with live session
@@ -354,7 +376,21 @@ def _execute_autopilot(
         if result.get("success"):
             ui.show_success("Goal completed!")
         else:
-            ui.show_error("Autopilot execution failed", result.get("error") or "Autopilot reported failure")
+            details = (
+                result.get("error")
+                or result.get("iteration_error")
+                or result.get("failure_reason")
+                or "Autopilot reported failure"
+            )
+            if result.get("failure_stage") or result.get("failed_tool"):
+                context_lines = [
+                    f"Stage: {result.get('failure_stage') or 'unknown'}",
+                    f"Tool: {result.get('failed_tool') or 'unknown'}",
+                ]
+                if result.get("failed_iteration"):
+                    context_lines.append(f"Iteration: {result.get('failed_iteration')}")
+                details = f"{details}\n" + "\n".join(context_lines)
+            ui.show_error("Autopilot execution failed", details)
 
     except Exception as e:
         ui.console.print()

@@ -32,6 +32,9 @@ class EnhancedUI:
         self.active_operations: list[Any] = []
         self.max_log_lines = 10
         self.max_active_trace_lines = 8
+        self.spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        self._task_graph_spinner_index = 0
+        self._task_graph_spinner_frame = self.spinner_frames[0]
         self.task_graph_state: dict[str, Any] = {
             "goal": "",
             "stages": [],
@@ -316,7 +319,7 @@ class EnhancedUI:
         if status in {"failed", "error"}:
             return "red", "✗"
         if status in {"running", "in_progress"} or active:
-            return "yellow", "⠋"
+            return "yellow", self._task_graph_spinner_frame
         return "dim", "•"
 
     def log_activity(self, action_type: str, message: str):
@@ -330,7 +333,18 @@ class EnhancedUI:
     def set_active_operations(self, operations: list[Any]) -> None:
         """Update active operations displayed in the activity panel."""
         self.active_operations = operations
+        self._advance_task_graph_spinner()
         self._refresh_main_content()
+
+    def _advance_task_graph_spinner(self) -> None:
+        """Keep Task Graph running markers animated even though they are not operations."""
+        for op in self.active_operations:
+            frame = getattr(op, "spinner_frame", "")
+            if frame:
+                self._task_graph_spinner_frame = frame
+                return
+        self._task_graph_spinner_index = (self._task_graph_spinner_index + 1) % len(self.spinner_frames)
+        self._task_graph_spinner_frame = self.spinner_frames[self._task_graph_spinner_index]
 
     @contextmanager
     def live_session(self, title: str = "OpenPilot Session"):

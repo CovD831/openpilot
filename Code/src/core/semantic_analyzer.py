@@ -115,14 +115,14 @@ code_execution, shell_execution, email, calendar, database, network.
 
 Allowed preferred_tool values:
 directory_lister, multi_file_reader, llm_summarizer, file_writer,
-code_generator, code_reviewer, code_executor, readme_tool,
+code_generator, code_reviewer, code_executor, readme_tool, project_improvement_tool,
 unsupported_file_mutation.
 
 Use these operation_type values when appropriate:
 list_completion_reports, read_reports, summarize, generate_final_report,
 write_output_file, move_files, archive_files, rename_files,
 generate_code, review_code, execute_code,
-generate_readme,
+generate_readme, analyze_project_improvements,
 unsupported_file_mutation, other.
 
 Code Generation Policy:

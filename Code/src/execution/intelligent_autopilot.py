@@ -1,8 +1,4 @@
-"""
-Intelligent Autopilot Executor using Task Decomposition Agent.
-
-Replaces the rigid 8-stage workflow with dynamic task decomposition and execution.
-"""
+"""Intelligent Autopilot executor using dynamic task decomposition and tools."""
 
 from __future__ import annotations
 
@@ -25,7 +21,7 @@ from rich import box
 from agents.task_decomposer import TaskDecomposer
 from agents.orchestrator import AgentOrchestrator
 from agents.project_evaluator import ProjectEvaluatorAgent
-from agents.iterative_improvement import IterativeImprovementController
+from agents.iterative_improvement import AutonomousIterationAgent
 from core.llm import LLMClient
 from core.semantic_analyzer import SemanticAnalyzer
 from memory.memory_store import MemoryStore
@@ -64,8 +60,10 @@ class IntelligentAutopilot:
         enhanced_ui: Any | None = None,
         tracker: Any | None = None,
         enable_iterative_improvement: bool = True,
-        max_improvement_iterations: int = 2,
-        satisfaction_threshold: float = 0.85,
+        required_successful_improvements: int = 2,
+        required_successful_iterations: int | None = None,
+        max_iteration_attempts: int = 4,
+        prompt_for_project_improvement_iterations: bool = False,
     ):
         """Initialize intelligent autopilot.
 
@@ -78,16 +76,22 @@ class IntelligentAutopilot:
             use_enhanced_ui: Use enhanced UI with progress tracking
             enhanced_ui: Existing enhanced UI instance to update
             tracker: Existing progress tracker to reuse
-            enable_iterative_improvement: Run evaluation and bounded improvement loops for project outputs
-            max_improvement_iterations: Maximum improvement rounds after initial project completion
-            satisfaction_threshold: Score threshold required to stop iterative improvement
+            enable_iterative_improvement: Run evaluation and improvement loops for project outputs
+            required_successful_improvements: Successful code improvement rounds required before stopping
+            required_successful_iterations: Backward-compatible alias for required_successful_improvements
+            max_iteration_attempts: Maximum improvement/repair attempts before stopping
+            prompt_for_project_improvement_iterations: Ask per generated project how many improvement rounds to run
         """
         self.console = console or Console()
         self.auto_approve = auto_approve
         self.use_enhanced_ui = use_enhanced_ui
         self.enable_iterative_improvement = enable_iterative_improvement
-        self.max_improvement_iterations = max_improvement_iterations
-        self.satisfaction_threshold = satisfaction_threshold
+        if required_successful_iterations is not None:
+            required_successful_improvements = required_successful_iterations
+        self.required_successful_improvements = required_successful_improvements
+        self.max_iteration_attempts = max_iteration_attempts
+        self.prompt_for_project_improvement_iterations = prompt_for_project_improvement_iterations
+        self._project_improvement_iterations_prompted = False
 
         # Initialize UI components
         if use_enhanced_ui:
@@ -113,18 +117,17 @@ class IntelligentAutopilot:
 
         # Initialize components
         self.task_decomposer = TaskDecomposer(self.llm_client)
-        self.project_evaluator = ProjectEvaluatorAgent(
-            self.llm_client,
-            satisfaction_threshold=self.satisfaction_threshold,
-        )
-        self.iterative_improvement = IterativeImprovementController(
+        self.project_evaluator = ProjectEvaluatorAgent(self.llm_client)
+        self.memory_store = MemoryStore()
+        self.iterative_improvement = AutonomousIterationAgent(
             self.project_evaluator,
-            satisfaction_threshold=self.satisfaction_threshold,
-            max_iterations=self.max_improvement_iterations,
+            required_successful_improvements=self.required_successful_improvements,
+            max_iteration_attempts=self.max_iteration_attempts,
+            llm_client=self.llm_client,
+            memory_store=self.memory_store,
         )
         self.orchestrator = AgentOrchestrator(max_concurrent_tasks=3)
         self.semantic_analyzer = SemanticAnalyzer(self.llm_client)
-        self.memory_store = MemoryStore()
         self.tool_registry = ToolRegistry()
 
         # Register built-in tools
@@ -165,13 +168,35 @@ class IntelligentAutopilot:
     def _register_contextual_tools(self) -> None:
         """Register tool wrappers that can reuse this autopilot's runtime context."""
         from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
+        from tools.project_improvement_tool import (
+            PROJECT_IMPROVEMENT_TOOL_DEFINITION,
+            PROJECT_STATE_READER_DEFINITION,
+            project_improvement_tool_executor,
+            project_state_reader_executor,
+        )
 
         def execute_code_generator(params: dict[str, Any]) -> dict[str, Any]:
             return code_generator_executor({**params, "_llm_client": self.llm_client})
 
+        def execute_project_improvement(params: dict[str, Any]) -> dict[str, Any]:
+            return project_improvement_tool_executor({**params, "_llm_client": self.llm_client})
+
+        def execute_project_state_reader(params: dict[str, Any]) -> dict[str, Any]:
+            return project_state_reader_executor({**params, "_memory_store": self.memory_store})
+
         self.tool_registry.register(
             CODE_GENERATOR_DEFINITION,
             execute_code_generator,
+            allow_override=True,
+        )
+        self.tool_registry.register(
+            PROJECT_IMPROVEMENT_TOOL_DEFINITION,
+            execute_project_improvement,
+            allow_override=True,
+        )
+        self.tool_registry.register(
+            PROJECT_STATE_READER_DEFINITION,
+            execute_project_state_reader,
             allow_override=True,
         )
 
@@ -242,6 +267,7 @@ class IntelligentAutopilot:
         else:
             self.console.print("[cyan]Fast path:[/cyan] generating a single code artifact")
 
+        self._project_improvement_actions: list[str] = []
         task = Task(
             id=str(uuid.uuid4()),
             description=f"Generate complete code artifact at {target_file}",
@@ -368,6 +394,7 @@ class IntelligentAutopilot:
         readme_result = next((r for r in tool_results if r["tool"] == "readme_tool"), None)
         readme_error = readme_result["error"] if readme_result and not readme_result["success"] else None
         improvement_result = None
+        iteration_error_msg = None
         if success:
             improvement_result = self._run_iterative_improvement(
                 goal=goal,
@@ -380,6 +407,15 @@ class IntelligentAutopilot:
                     else target_file.parent / "README.md"
                 ),
             )
+            if improvement_result is not None and not improvement_result.get("success", False):
+                iteration_error_msg = self._format_iteration_failure(improvement_result)
+                validation = improvement_result.get("validation")
+                if not validation or not validation.validation_passed:
+                    success = False
+                    if validation is not None:
+                        error_msg = "; ".join(validation.validation_errors) or iteration_error_msg
+                    else:
+                        error_msg = iteration_error_msg
 
         if self.enhanced_ui:
             code_status = "completed" if code_result["success"] else "failed"
@@ -439,9 +475,13 @@ class IntelligentAutopilot:
                 fast_details += f"\nREADME: {readme_result['result']['file_path']}"
             elif success and readme_error:
                 fast_details += f"\nREADME generation failed: {readme_error}"
-            if success and improvement_result and improvement_result.get("evaluation"):
-                evaluation = improvement_result["evaluation"]
-                fast_details += f"\nSatisfaction: {evaluation.satisfaction_score:.2f}"
+            if improvement_result and improvement_result.get("validation"):
+                fast_details += (
+                    f"\nImprovements applied: {improvement_result.get('completed_improvements', 0)}/"
+                    f"{improvement_result.get('required_improvements', self.required_successful_improvements)}"
+                )
+                if iteration_error_msg:
+                    fast_details += f"\nIteration warning: {iteration_error_msg}"
             self.enhanced_ui.update_main_content(
                 self.enhanced_ui.create_status_panel(
                     "Success" if success else "Failed",
@@ -456,7 +496,9 @@ class IntelligentAutopilot:
                 "target_file": str(target_file),
                 "success": success,
                 "error": error_msg,
+                "iteration_error": iteration_error_msg,
                 "readme_error": readme_error,
+                "improvement": self._summarize_tool_output(improvement_result),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -471,9 +513,22 @@ class IntelligentAutopilot:
             "results": [task_result],
             "stats": self.stats,
             "error": error_msg,
+            "iteration_error": iteration_error_msg,
             "readme": readme_result,
+            "validation": improvement_result.get("validation") if improvement_result else None,
             "evaluation": improvement_result.get("evaluation") if improvement_result else None,
+            "completed_improvements": improvement_result.get("completed_improvements", 0) if improvement_result else 0,
+            "required_improvements": improvement_result.get("required_improvements", self.required_successful_improvements) if improvement_result else self.required_successful_improvements,
+            "completed_iterations": improvement_result.get("completed_iterations", 0) if improvement_result else 0,
+            "required_iterations": improvement_result.get("required_iterations", self.required_successful_improvements) if improvement_result else self.required_successful_improvements,
+            "improvement_report": improvement_result.get("improvement_report", {}) if improvement_result else {},
             "iterations": improvement_result.get("iterations", []) if improvement_result else [],
+            "partial_success": improvement_result.get("partial_success", False) if improvement_result else False,
+            "failure_stage": improvement_result.get("failure_stage") if improvement_result else None,
+            "failed_iteration": improvement_result.get("failed_iteration") if improvement_result else None,
+            "failed_tool": improvement_result.get("failed_tool") if improvement_result else None,
+            "failure_reason": improvement_result.get("failure_reason") if improvement_result else None,
+            "remaining_goals": improvement_result.get("remaining_goals", []) if improvement_result else [],
         }
 
     def _simple_code_artifact_target(self, goal: str, semantic: Any) -> Path | None:
@@ -501,6 +556,7 @@ class IntelligentAutopilot:
         step_id: str,
         tool_name: str,
         input_params: dict[str, Any],
+        timeout_override: int | None = None,
     ) -> dict[str, Any]:
         if self.enhanced_ui:
             display_params = dict(input_params)
@@ -522,14 +578,16 @@ class IntelligentAutopilot:
             requires_confirmation=False,
             fallback_tools=[],
             depends_on=[],
-            timeout_override=None,
+            timeout_override=timeout_override,
         )
 
         self.logger.log_event(
             "tool_execution_start",
             {
                 "task_id": task.id,
+                "step_id": step_id,
                 "tool": tool_name,
+                "timeout_override": timeout_override,
                 "params": self._sanitize_tool_params(input_params),
             },
             session_id=self.session_id or "unknown",
@@ -553,14 +611,23 @@ class IntelligentAutopilot:
             "result": exec_result.output,
             "success": exec_result.success,
             "error": exec_result.error.error_message if exec_result.error else None,
+            "error_type": exec_result.error.error_type if exec_result.error else None,
+            "status": getattr(exec_result.status, "value", str(exec_result.status)),
+            "duration_seconds": exec_result.duration_seconds,
+            "step_id": step_id,
+            "timeout_override": timeout_override,
         }
         self.logger.log_event(
             "tool_executed",
             {
                 "task_id": task.id,
+                "step_id": step_id,
                 "tool": tool_name,
                 "success": exec_result.success,
+                "status": result["status"],
+                "error_type": result["error_type"],
                 "error": result["error"],
+                "duration_seconds": result["duration_seconds"],
                 "output": self._summarize_tool_output(exec_result.output),
             },
             session_id=self.session_id or "unknown",
@@ -639,8 +706,11 @@ class IntelligentAutopilot:
         run_command: str = "",
         readme_path: str | Path | None = None,
     ) -> dict[str, Any] | None:
-        """Run the project-level evaluation and bounded improvement loop."""
+        """Run fixed-count validation and improvement loop."""
         if not self.enable_iterative_improvement or not written_files:
+            return None
+
+        if not self._resolve_project_improvement_iterations(goal, project_path):
             return None
 
         project_path = Path(project_path).expanduser()
@@ -648,13 +718,17 @@ class IntelligentAutopilot:
 
         if self.enhanced_ui:
             self._append_dashboard_tasks([
-                {"id": "evaluation", "description": "Evaluate project quality", "status": "running"},
-                {"id": "iteration_1", "description": "Improvement iteration 1", "status": "pending"},
-                {"id": "iteration_2", "description": "Improvement iteration 2", "status": "pending"},
-            ], current_task_id="evaluation")
+                {"id": "project_state", "description": "Read Project State", "status": "running"},
+                {"id": "goal_maker", "description": "Goal Maker", "status": "pending"},
+                {"id": "task_designer", "description": "Task Designer", "status": "pending"},
+                {"id": "decomposition", "description": "Task Decomposer", "status": "pending"},
+                {"id": "execution", "description": "Task Executor", "status": "pending"},
+                {"id": "evaluation", "description": "Modification Evaluator", "status": "pending"},
+                {"id": "mind_system", "description": "Mind System", "status": "pending"},
+            ], current_task_id="project_state")
             self.enhanced_ui.set_current_task_state(
-                title="Evaluation",
-                details="Evaluating project satisfaction and improvement opportunities",
+                title="Autonomous Iteration",
+                details=f"Improvements applied: 0/{self.required_successful_improvements}",
                 status="running",
             )
 
@@ -665,6 +739,8 @@ class IntelligentAutopilot:
             iteration: int,
             evaluation: EvaluationResult,
             actions: list[str],
+            improvement_report: dict[str, Any],
+            is_repair: bool,
         ) -> IterationResult:
             return self._apply_project_improvement(
                 goal=goal,
@@ -675,29 +751,91 @@ class IntelligentAutopilot:
                 iteration=iteration,
                 evaluation=evaluation,
                 actions=actions,
+                improvement_report=improvement_report,
+                is_repair=is_repair,
             )
 
-        result = self.iterative_improvement.run(
+        def analyze_improvements(completed_iteration: int, evaluation: EvaluationResult) -> dict[str, Any]:
+            return self._analyze_project_improvements(
+                goal=goal,
+                project_path=project_path,
+                written_files=written_files,
+                run_command=run_command or evaluation.run_command,
+                readme_path=readme_path,
+                completed_iteration=completed_iteration,
+                evaluation=evaluation,
+            )
+
+        def read_project_state(evaluation: EvaluationResult, iteration: int) -> dict[str, Any]:
+            task = Task(
+                id=str(uuid.uuid4()),
+                description="Read project state for autonomous iteration",
+                priority=TaskPriority.MEDIUM,
+            )
+            result = self._execute_fast_tool(
+                task=task,
+                step_id=f"iteration_{iteration}_project_state_reader",
+                tool_name="project_state_reader",
+                input_params={
+                    "project_path": str(project_path),
+                    "goal": goal,
+                    "written_files": written_files,
+                    "run_command": run_command or evaluation.run_command,
+                    "readme_path": str(readme_path),
+                    "memory_query": f"{goal} autonomous iteration {iteration}",
+                    "validation_context": evaluation.model_dump(),
+                },
+            )
+            if result["success"] and isinstance(result.get("result"), dict):
+                return result["result"]
+            from tools.project_improvement_tool import project_state_reader_executor
+            return project_state_reader_executor(
+                {
+                    "project_path": str(project_path),
+                    "goal": goal,
+                    "written_files": written_files,
+                    "run_command": run_command or evaluation.run_command,
+                    "readme_path": str(readme_path),
+                    "memory_query": f"{goal} autonomous iteration {iteration}",
+                    "validation_context": evaluation.model_dump(),
+                    "_memory_store": self.memory_store,
+                }
+            )
+
+        result = self.iterative_improvement.run_project_pipeline(
             goal=goal,
             project_path=project_path,
             written_files=written_files,
             run_command=run_command,
             readme_path=readme_path,
             apply_improvement=apply_improvement,
+            analyze_improvements=analyze_improvements,
+            read_project_state=read_project_state,
             on_progress=on_progress,
         )
 
-        evaluation = result["evaluation"]
+        evaluation = result["validation"]
         if self.enhanced_ui:
-            self._set_dashboard_task_status("evaluation", "completed" if evaluation else "failed")
+            validation_passed = bool(evaluation.validation_passed)
+            evaluation_status = "completed" if validation_passed else "failed"
+            result_status = "completed" if result["success"] else ("warning" if result.get("partial_success") else "failed")
+            self._set_dashboard_task_status("evaluation", evaluation_status)
             self.enhanced_ui.set_current_task_state(
-                title="Evaluation complete",
+                title="Autonomous Iteration complete" if result["success"] else "Autonomous Iteration stopped",
                 details=(
-                    f"Satisfaction: {evaluation.satisfaction_score:.2f}\n"
-                    f"Approved: {evaluation.approved}\n"
-                    f"Issues: {len(evaluation.issues)}"
+                    f"Improvements applied: {result['completed_improvements']}/{result['required_improvements']}\n"
+                    f"Validation passed: {evaluation.validation_passed}\n"
+                    f"Blocking issues: {len(evaluation.validation_errors)}"
+                    + (
+                        "\n"
+                        f"Failure stage: {result.get('failure_stage') or 'unknown'}\n"
+                        f"Failed tool: {result.get('failed_tool') or 'unknown'}\n"
+                        f"Reason: {result.get('failure_reason') or 'No failure reason reported'}"
+                        if not result["success"]
+                        else ""
+                    )
                 ),
-                status="completed" if evaluation.approved else "needs improvement",
+                status=result_status,
             )
 
         self.logger.log_event(
@@ -706,13 +844,119 @@ class IntelligentAutopilot:
                 "goal": goal,
                 "project_path": str(project_path),
                 "written_files": written_files,
-                "evaluation": evaluation.model_dump(),
+                "validation": evaluation.model_dump(),
+                "completed_improvements": result["completed_improvements"],
+                "required_improvements": result["required_improvements"],
+                "completed_iterations": result["completed_iterations"],
+                "required_iterations": result["required_iterations"],
+                "improvement_report": result.get("improvement_report", {}),
                 "iterations": [item.model_dump() for item in result["iterations"]],
+                "partial_success": result.get("partial_success", False),
+                "failure_stage": result.get("failure_stage"),
+                "failed_iteration": result.get("failed_iteration"),
+                "failed_tool": result.get("failed_tool"),
+                "failure_reason": result.get("failure_reason"),
+                "last_successful_iteration": result.get("last_successful_iteration"),
+                "remaining_goals": result.get("remaining_goals", []),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
         )
         return result
+
+    def _resolve_project_improvement_iterations(self, goal: str, project_path: str | Path) -> bool:
+        """Resolve per-project improvement count, optionally asking the user."""
+        if not self.prompt_for_project_improvement_iterations or self._project_improvement_iterations_prompted:
+            return self.required_successful_improvements > 0
+
+        self._project_improvement_iterations_prompted = True
+
+        try:
+            from ui.question_ui import QuestionUI
+
+            question_ui = QuestionUI(self.console)
+            live = getattr(self.enhanced_ui, "live", None) if self.enhanced_ui else None
+            live_was_started = bool(live and getattr(live, "is_started", False))
+            if live_was_started:
+                live.stop()
+            try:
+                iterations = question_ui.ask_integer(
+                    "improvement_iterations",
+                    "这次项目生成后，要执行几轮真实代码改进迭代？",
+                    title="Project Improvement Iterations",
+                    description=(
+                        f"项目路径: {Path(project_path).expanduser()}\n"
+                        "0 表示只生成并验证项目；1-5 表示继续完成对应次数的可验证代码升级。"
+                    ),
+                    default=self.required_successful_improvements,
+                    min_value=0,
+                    max_value=5,
+                )
+            finally:
+                if live_was_started:
+                    live.start(refresh=True)
+        except Exception as exc:
+            if self.enhanced_ui:
+                self.enhanced_ui.log_activity(
+                    "warning",
+                    f"Could not ask improvement iterations; using {self.required_successful_improvements}: {exc}",
+                )
+            return self.required_successful_improvements > 0
+
+        self.required_successful_improvements = iterations
+        self.enable_iterative_improvement = iterations > 0
+        self.iterative_improvement.required_successful_improvements = iterations
+        if self.enhanced_ui:
+            self.enhanced_ui.log_activity(
+                "info",
+                f"Project improvement iterations set to {iterations}",
+            )
+            self.enhanced_ui.set_current_task_state(
+                title="Project Improvement Setup",
+                details=f"Improvement iterations for this project: {iterations}",
+                status="completed" if iterations else "skipped",
+            )
+        return iterations > 0
+
+    def _analyze_project_improvements(
+        self,
+        *,
+        goal: str,
+        project_path: Path,
+        written_files: list[str],
+        run_command: str,
+        readme_path: Path,
+        completed_iteration: int,
+        evaluation: EvaluationResult,
+    ) -> dict[str, Any]:
+        task = Task(
+            id=str(uuid.uuid4()),
+            description=f"Analyze project improvements after iteration {completed_iteration}",
+            priority=TaskPriority.MEDIUM,
+        )
+        tool_result = self._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{completed_iteration}_project_improvement_tool",
+            tool_name="project_improvement_tool",
+            input_params={
+                "project_path": str(project_path),
+                "goal": goal,
+                "written_files": written_files,
+                "run_command": run_command,
+                "iteration": completed_iteration,
+                "validation_result": evaluation.model_dump(),
+                "readme_path": str(readme_path),
+            },
+        )
+        if tool_result["success"] and isinstance(tool_result.get("result"), dict):
+            return tool_result["result"]
+        return {
+            "summary": evaluation.summary,
+            "improvement_opportunities": evaluation.improvement_opportunities,
+            "recommended_actions": evaluation.recommended_actions,
+            "next_iteration_goal": evaluation.next_iteration_goal,
+            "blocking_risks": evaluation.validation_errors,
+        }
 
     def _apply_project_improvement(
         self,
@@ -725,13 +969,16 @@ class IntelligentAutopilot:
         iteration: int,
         evaluation: EvaluationResult,
         actions: list[str],
+        improvement_report: dict[str, Any] | None = None,
+        is_repair: bool = False,
     ) -> IterationResult:
         """Apply one safe project improvement round."""
         target_file = self._select_iteration_target_file(written_files, actions)
         if target_file is None:
             return IterationResult(
                 iteration=iteration,
-                before_score=evaluation.satisfaction_score,
+                validation_passed=False,
+                completed_successful_iteration=False,
                 applied_actions=actions,
                 changed_files=[],
                 success=False,
@@ -743,7 +990,8 @@ class IntelligentAutopilot:
         except OSError as exc:
             return IterationResult(
                 iteration=iteration,
-                before_score=evaluation.satisfaction_score,
+                validation_passed=False,
+                completed_successful_iteration=False,
                 applied_actions=actions,
                 changed_files=[],
                 success=False,
@@ -759,48 +1007,114 @@ class IntelligentAutopilot:
             self._set_dashboard_task_status("evaluation", "completed")
             self._set_dashboard_task_status(f"iteration_{iteration}", "running")
             self.enhanced_ui.set_current_task_state(
-                title=f"Iteration {iteration}",
+                title=f"{'Repair' if is_repair else 'Improvement'} {iteration}",
                 details="\n".join(actions),
                 status="running",
             )
 
-        improvement_prompt = (
-            f"Improve this Python project for the original user goal: {goal}\n"
-            f"Target file: {target_file}\n"
-            f"Current satisfaction score: {evaluation.satisfaction_score:.2f}\n"
-            f"Issues: {evaluation.issues}\n"
-            f"Recommended actions: {actions}\n\n"
-            "Return a complete replacement for the target Python file only. "
-            "Preserve a runnable entry point and avoid unrelated rewrites.\n\n"
-            f"Current code:\n{current_code}"
+        improvement_report = improvement_report or {}
+        improvement_prompt = self._build_project_improvement_prompt(
+            goal=goal,
+            target_file=target_file,
+            current_code=current_code,
+            evaluation=evaluation,
+            actions=actions,
+            improvement_report=improvement_report,
+            is_repair=is_repair,
+            simplified=False,
         )
-        code_result = self._execute_fast_tool(
+        code_result = self._execute_code_generation_for_improvement(
             task=task,
-            step_id=f"iteration_{iteration}_code_generator",
-            tool_name="code_generator",
-            input_params={
-                "task_description": improvement_prompt,
-                "language": "python",
-                "context": f"Improve {target_file}",
-            },
+            iteration=iteration,
+            target_file=target_file,
+            improvement_prompt=improvement_prompt,
+            simplified=False,
         )
+        retry_attempted = False
+        if self._is_timeout_tool_result(code_result):
+            retry_attempted = True
+            simplified_prompt = self._build_project_improvement_prompt(
+                goal=goal,
+                target_file=target_file,
+                current_code=current_code,
+                evaluation=evaluation,
+                actions=actions,
+                improvement_report=improvement_report,
+                is_repair=is_repair,
+                simplified=True,
+            )
+            self.logger.log_event(
+                "autonomous_iteration_simplified_retry",
+                {
+                    "iteration": iteration,
+                    "tool": "code_generator",
+                    "original_error": code_result.get("error"),
+                    "original_prompt_length": len(improvement_prompt),
+                    "retry_prompt_length": len(simplified_prompt),
+                    "selected_actions": actions,
+                    "target_file": str(target_file),
+                },
+                session_id=self.session_id or "unknown",
+                turn_id=1,
+            )
+            if self.enhanced_ui:
+                self.enhanced_ui.set_current_task_state(
+                    title=f"Improvement {iteration} retry",
+                    details="code_generator timed out; retrying with a compact prompt",
+                    status="running",
+                )
+            code_result = self._execute_code_generation_for_improvement(
+                task=task,
+                iteration=iteration,
+                target_file=target_file,
+                improvement_prompt=simplified_prompt,
+                simplified=True,
+            )
         if not code_result["success"] or not isinstance(code_result.get("result"), dict):
+            self._log_iteration_failure(
+                iteration=iteration,
+                stage="Task Executor",
+                tool="code_generator",
+                target_file=target_file,
+                actions=actions,
+                error=code_result.get("error") or "Code generation failed.",
+                prompt_length=len(improvement_prompt),
+                current_code_length=len(current_code),
+                retry_attempted=retry_attempted,
+                tool_result=code_result,
+            )
             return IterationResult(
                 iteration=iteration,
-                before_score=evaluation.satisfaction_score,
+                validation_passed=False,
+                completed_successful_iteration=False,
                 applied_actions=actions,
                 changed_files=[],
                 success=False,
                 error=code_result.get("error") or "Code generation failed.",
+                failure_stage="Task Executor",
+                failed_tool="code_generator",
+                failure_reason=code_result.get("error") or "Code generation failed.",
+                retry_attempted=retry_attempted,
             )
 
         improved_code = code_result["result"].get("code", "")
+        if improved_code.strip() == current_code.strip():
+            return IterationResult(
+                iteration=iteration,
+                validation_passed=False,
+                completed_successful_iteration=False,
+                applied_actions=actions,
+                changed_files=[],
+                success=False,
+                error="Generated improvement did not change the target file.",
+            )
         try:
             ast.parse(improved_code)
         except SyntaxError as exc:
             return IterationResult(
                 iteration=iteration,
-                before_score=evaluation.satisfaction_score,
+                validation_passed=False,
+                completed_successful_iteration=False,
                 applied_actions=actions,
                 changed_files=[],
                 success=False,
@@ -822,7 +1136,8 @@ class IntelligentAutopilot:
         if not write_result["success"]:
             return IterationResult(
                 iteration=iteration,
-                before_score=evaluation.satisfaction_score,
+                validation_passed=False,
+                completed_successful_iteration=False,
                 applied_actions=actions,
                 changed_files=[],
                 success=False,
@@ -844,7 +1159,9 @@ class IntelligentAutopilot:
             tool_name="readme_tool",
             input_params={
                 "project_path": str(project_path),
-                "project_summary": f"{goal}\n\nRecent Improvements:\n- " + "\n- ".join(actions),
+                "project_summary": f"{goal}\n\nRecent Improvements:\n- " + "\n- ".join(
+                    (getattr(self, "_project_improvement_actions", []) or []) + actions
+                ),
                 "written_files": written_files,
                 "entry_files": [str(target_file)],
                 "run_command": run_command,
@@ -853,16 +1170,205 @@ class IntelligentAutopilot:
         )
 
         success = review_result["success"] and readme_result["success"]
+        if success:
+            self._project_improvement_actions = (getattr(self, "_project_improvement_actions", []) or []) + actions
         if self.enhanced_ui:
             self._set_dashboard_task_status(f"iteration_{iteration}", "completed" if success else "failed")
         return IterationResult(
             iteration=iteration,
-            before_score=evaluation.satisfaction_score,
+            validation_passed=success,
+            completed_successful_iteration=False,
             applied_actions=actions,
             changed_files=[str(target_file)],
             success=success,
             error=None if success else (review_result.get("error") or readme_result.get("error")),
+            failure_stage=None if success else "Task Executor",
+            failed_tool=None if success else ("code_reviewer" if not review_result["success"] else "readme_tool"),
+            failure_reason=None if success else (review_result.get("error") or readme_result.get("error")),
+            retry_attempted=retry_attempted,
         )
+
+    def _build_project_improvement_prompt(
+        self,
+        *,
+        goal: str,
+        target_file: Path,
+        current_code: str,
+        evaluation: EvaluationResult,
+        actions: list[str],
+        improvement_report: dict[str, Any],
+        is_repair: bool,
+        simplified: bool,
+    ) -> str:
+        report_summary = improvement_report.get("summary") or ""
+        report_opportunities = improvement_report.get("improvement_opportunities") or []
+        report_recommended_actions = improvement_report.get("recommended_actions") or []
+        report_must_implement = improvement_report.get("must_implement_next") or []
+        report_blocking_risks = improvement_report.get("blocking_risks") or []
+        selected_goal = improvement_report.get("selected_goal") or {}
+        designed_tasks = improvement_report.get("designed_tasks") or []
+        observable_requirement = (
+            "Fix the blocking validation problem without adding unrelated features."
+            if is_repair
+            else (
+                "Implement one visible, user-observable upgrade from the selected task. "
+                "Do not rewrite unrelated parts, remove existing behavior, or simplify the game. "
+                "Preserve controls, score display, food, collision/game-over handling, restart/quit behavior, and README run compatibility."
+            )
+        )
+        code_context = (
+            self._compact_code_context(current_code, actions, max_chars=3200)
+            if simplified
+            else self._budget_code_context(current_code, max_chars=9000)
+        )
+        mode_note = (
+            "COMPACT RETRY MODE: the previous full code-generation request timed out. "
+            "Make the smallest complete replacement that satisfies the selected task."
+            if simplified
+            else "FULL IMPROVEMENT MODE"
+        )
+        return (
+            f"{mode_note}\n"
+            f"Improve this Python project for the original user goal: {goal}\n"
+            f"Target file: {target_file}\n"
+            f"Iteration mode: {'repair blocking validation failure' if is_repair else 'feature/quality improvement'}\n"
+            f"Latest validation passed: {evaluation.validation_passed}\n"
+            f"Validation errors: {evaluation.validation_errors}\n"
+            f"Warnings: {evaluation.warnings[:3]}\n"
+            f"Improvement report summary: {report_summary}\n"
+            f"Improvement opportunities: {report_opportunities[:4]}\n"
+            f"Recommended actions from report: {report_recommended_actions[:3]}\n"
+            f"Must implement next: {report_must_implement[:4]}\n"
+            f"Blocking risks from report: {report_blocking_risks[:3]}\n"
+            f"Selected goal: {selected_goal}\n"
+            f"Designed tasks: {designed_tasks[:1]}\n"
+            f"Selected actions for this iteration: {actions[:2]}\n"
+            f"Implementation requirement: {observable_requirement}\n\n"
+            "Return a complete replacement for the target Python file only. "
+            "Preserve a runnable entry point and avoid unrelated rewrites.\n\n"
+            f"Current code context:\n{code_context}"
+        )
+
+    def _execute_code_generation_for_improvement(
+        self,
+        *,
+        task: Task,
+        iteration: int,
+        target_file: Path,
+        improvement_prompt: str,
+        simplified: bool,
+    ) -> dict[str, Any]:
+        return self._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_{'compact_' if simplified else ''}code_generator",
+            tool_name="code_generator",
+            input_params={
+                "task_description": improvement_prompt,
+                "language": "python",
+                "context": f"Improve {target_file}",
+            },
+            timeout_override=120,
+        )
+
+    def _is_timeout_tool_result(self, result: dict[str, Any]) -> bool:
+        if result.get("success"):
+            return False
+        error_text = f"{result.get('error_type') or ''} {result.get('error') or ''} {result.get('status') or ''}"
+        return "timeout" in error_text.lower()
+
+    def _budget_code_context(self, code: str, max_chars: int) -> str:
+        if len(code) <= max_chars:
+            return code
+        head = code[: max_chars // 2]
+        tail = code[-max_chars // 2 :]
+        return (
+            f"{head}\n\n"
+            f"# [OpenPilot prompt budget: omitted {len(code) - len(head) - len(tail)} middle chars]\n\n"
+            f"{tail}"
+        )
+
+    def _compact_code_context(self, code: str, actions: list[str], max_chars: int) -> str:
+        if len(code) <= max_chars:
+            return code
+        lines = code.splitlines()
+        action_text = " ".join(actions).lower()
+        keywords = {"def ", "class ", "if __name__"}
+        if "key" in action_text or "control" in action_text or "pause" in action_text or "wasd" in action_text:
+            keywords.update({"on_key", "bind", "update", "draw"})
+        snippets: list[str] = []
+        for idx, line in enumerate(lines):
+            if any(keyword in line for keyword in keywords):
+                start = max(0, idx - 4)
+                end = min(len(lines), idx + 18)
+                snippet = "\n".join(lines[start:end])
+                if snippet not in snippets:
+                    snippets.append(snippet)
+        context = "\n\n# ...\n\n".join(snippets)
+        if not context:
+            context = "\n".join(lines[:80])
+        if len(context) > max_chars:
+            context = context[:max_chars] + "\n# [OpenPilot compact prompt truncated]"
+        return context
+
+    def _log_iteration_failure(
+        self,
+        *,
+        iteration: int,
+        stage: str,
+        tool: str,
+        target_file: Path,
+        actions: list[str],
+        error: str,
+        prompt_length: int,
+        current_code_length: int,
+        retry_attempted: bool,
+        tool_result: dict[str, Any],
+    ) -> None:
+        self.logger.log_event(
+            "autonomous_iteration_stage_failed",
+            {
+                "iteration": iteration,
+                "stage": stage,
+                "tool": tool,
+                "target_file": str(target_file),
+                "actions": actions,
+                "error": error,
+                "error_type": tool_result.get("error_type"),
+                "status": tool_result.get("status"),
+                "timeout_override": tool_result.get("timeout_override"),
+                "duration_seconds": tool_result.get("duration_seconds"),
+                "prompt_length": prompt_length,
+                "current_code_length": current_code_length,
+                "retry_attempted": retry_attempted,
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        if self.enhanced_ui:
+            self.enhanced_ui.set_current_task_state(
+                title=f"{stage} failed",
+                details=f"Iteration {iteration} · {tool}: {error}",
+                status="failed",
+            )
+
+    def _format_iteration_failure(self, improvement_result: dict[str, Any] | None) -> str:
+        """Return a concise, user-facing iteration failure summary."""
+        if not improvement_result:
+            return "Autonomous iteration did not return a result."
+
+        completed = improvement_result.get("completed_improvements", 0)
+        required = improvement_result.get("required_improvements", self.required_successful_improvements)
+        failed_iteration = improvement_result.get("failed_iteration")
+        stage = improvement_result.get("failure_stage") or "Autonomous Iteration"
+        tool = improvement_result.get("failed_tool") or "unknown tool"
+        reason = improvement_result.get("failure_reason") or "Project did not complete required improvements."
+        remaining_goals = improvement_result.get("remaining_goals") or []
+
+        where = f"Iteration {failed_iteration} · {stage}" if failed_iteration else stage
+        message = f"{where} failed in {tool}: {reason} (improvements {completed}/{required})"
+        if remaining_goals:
+            message += f"; remaining goal: {remaining_goals[0]}"
+        return message
 
     def _select_iteration_target_file(self, written_files: list[str], actions: list[str]) -> Path | None:
         candidates = [Path(path).expanduser() for path in written_files if str(path).endswith(".py")]
@@ -878,42 +1384,152 @@ class IntelligentAutopilot:
     def _handle_iteration_progress(self, event: str, payload: dict[str, Any]) -> None:
         if not self.enhanced_ui:
             return
-        if event == "evaluation":
+        if event == "validation":
             evaluation = payload["evaluation"]
+            self._set_dashboard_task_status("evaluation", "completed" if evaluation.validation_passed else "failed")
             self.enhanced_ui.set_current_task_state(
                 title="Evaluation",
                 details=(
-                    f"Satisfaction: {evaluation.satisfaction_score:.2f}\n"
-                    f"Approved: {evaluation.approved}\n"
+                    f"Validation passed: {evaluation.validation_passed}\n"
+                    f"Blocking issues: {len(evaluation.validation_errors)}\n"
                     f"Summary: {evaluation.summary}"
                 ),
-                status="completed" if evaluation.approved else "needs improvement",
+                status="completed" if evaluation.validation_passed else "needs improvement",
+            )
+        elif event == "project_state":
+            self._set_dashboard_task_status("project_state", "completed")
+            state = payload["state"]
+            self.enhanced_ui.set_current_task_state(
+                title="Read Project State",
+                details=(
+                    f"Files: {len(state.written_files)}\n"
+                    f"Safe targets: {len(state.safe_target_files)}\n"
+                    f"Memories: {len(state.memory_records)}"
+                ),
+                status="completed",
+            )
+        elif event == "goal_maker":
+            self._set_dashboard_task_status("goal_maker", "completed")
+            goal = payload["selected_goal"]
+            self.enhanced_ui.set_current_task_state(
+                title="Goal Maker",
+                details=(
+                    f"Selected goal: {goal.title}\n"
+                    f"Category: {goal.category}\n"
+                    + "\n".join(goal.acceptance_criteria[:3])
+                ),
+                status="completed",
+            )
+        elif event == "task_designer":
+            self._set_dashboard_task_status("task_designer", "completed")
+            tasks = payload.get("tasks") or []
+            details = "\n".join(task.description for task in tasks[:2])
+            self.enhanced_ui.set_current_task_state(
+                title="Task Designer",
+                details=details or "No task details reported",
+                status="completed",
+            )
+        elif event == "decomposition":
+            self._set_dashboard_task_status("decomposition", "completed")
+            self.enhanced_ui.set_current_task_state(
+                title="Task Decomposer",
+                details=f"Prepared {len(payload.get('tasks') or [])} improvement task(s)",
+                status="completed",
+            )
+        elif event == "successful_improvement":
+            self.enhanced_ui.set_current_task_state(
+                title="Improvement applied",
+                details=(
+                    f"Improvements applied: {payload['completed_improvements']}/{payload['required_improvements']}\n"
+                    "Calling project_improvement_tool for the next target"
+                ),
+                status="completed",
+            )
+        elif event == "improvement_report":
+            report = payload.get("report") or {}
+            next_goal = report.get("next_iteration_goal") or "No next goal reported."
+            self.enhanced_ui.set_current_task_state(
+                title="Improvement analysis",
+                details=(
+                    f"Improvements applied: {payload['completed_improvements']}/{payload['required_improvements']}\n"
+                    f"Next improvement goal: {next_goal}"
+                ),
+                status="completed",
             )
         elif event == "iteration_started":
             iteration = payload["iteration"]
-            self._set_dashboard_task_status(f"iteration_{iteration}", "running")
+            self._set_dashboard_task_status("execution", "running")
+            # Dynamically create iteration task
+            self._append_dashboard_tasks([
+                {"id": f"iteration_{iteration}", "description": f"Improvement iteration {iteration}", "status": "running"}
+            ], current_task_id=f"iteration_{iteration}")
             self.enhanced_ui.set_current_task_state(
                 title=f"Iteration {iteration}",
-                details="\n".join(payload.get("actions", [])),
+                details=(
+                    f"Improvements applied: {payload.get('completed_improvements', 0)}/{payload.get('required_improvements', self.required_successful_improvements)}\n"
+                    + "\n".join(payload.get("actions", []))
+                ),
                 status="running",
+            )
+        elif event == "modification_evaluation":
+            self._set_dashboard_task_status("evaluation", "completed" if payload["evaluation"].validation_passed else "failed")
+            evaluation = payload["evaluation"]
+            self.enhanced_ui.set_current_task_state(
+                title="Modification Evaluator",
+                details=(
+                    f"Validation passed: {evaluation.validation_passed}\n"
+                    f"Blocking issues: {len(evaluation.validation_errors)}"
+                ),
+                status="completed" if evaluation.validation_passed else "needs improvement",
+            )
+        elif event == "mind_system":
+            self._set_dashboard_task_status("mind_system", "completed")
+            self.enhanced_ui.set_current_task_state(
+                title="Mind System",
+                details=payload.get("note") or "Iteration memory recorded",
+                status="completed",
             )
         elif event == "iteration_completed":
             iteration = payload["iteration"]
             evaluation = payload["evaluation"]
-            self._set_dashboard_task_status(f"iteration_{iteration}", "completed")
+            self._set_dashboard_task_status("execution", "completed" if evaluation.validation_passed else "failed")
+            self._set_dashboard_task_status(f"iteration_{iteration}", "completed" if evaluation.validation_passed else "failed")
             self.enhanced_ui.set_current_task_state(
-                title=f"Iteration {iteration} complete",
-                details=f"Satisfaction: {evaluation.satisfaction_score:.2f}",
-                status="completed" if evaluation.approved else "needs improvement",
+                title=f"Iteration {iteration} validation",
+                details=(
+                    f"Validation passed: {evaluation.validation_passed}\n"
+                    f"Blocking issues: {len(evaluation.validation_errors)}"
+                ),
+                status="completed" if evaluation.validation_passed else "needs improvement",
             )
         elif event == "iteration_failed":
             iteration = payload["iteration"]
             result = payload["result"]
             self._set_dashboard_task_status(f"iteration_{iteration}", "failed")
+            self._set_dashboard_task_status("execution", "failed")
+            stage = payload.get("failure_stage") or getattr(result, "failure_stage", None) or "Task Executor"
+            tool = payload.get("failed_tool") or getattr(result, "failed_tool", None) or "unknown tool"
+            reason = payload.get("failure_reason") or getattr(result, "failure_reason", None) or result.error or "Unknown improvement failure"
+            retry_note = "yes" if getattr(result, "retry_attempted", False) else "no"
             self.enhanced_ui.set_current_task_state(
                 title=f"Iteration {iteration} failed",
-                details=result.error or "Unknown improvement failure",
+                details=(
+                    f"Stage: {stage}\n"
+                    f"Tool: {tool}\n"
+                    f"Reason: {reason}\n"
+                    f"Compact retry attempted: {retry_note}\n"
+                    f"Changed files: {len(result.changed_files)}"
+                ),
                 status="failed",
+            )
+        elif event == "max_attempts_reached":
+            self.enhanced_ui.set_current_task_state(
+                title="Max attempts reached",
+                details=(
+                    f"Improvements applied: {payload.get('completed_improvements', 0)}/{payload.get('required_improvements', self.required_successful_improvements)}\n"
+                    f"Attempts used: {payload.get('attempts_used', 0)}/{payload.get('max_iteration_attempts', self.max_iteration_attempts)}"
+                ),
+                status="warning",
             )
 
     def _append_dashboard_tasks(self, new_tasks: list[dict[str, Any]], current_task_id: str | None = None) -> None:
@@ -993,7 +1609,7 @@ class IntelligentAutopilot:
         for key, value in params.items():
             if key.startswith("_"):
                 continue
-            if key in {"content", "code"} and isinstance(value, str):
+            if key in {"content", "code", "task_description"} and isinstance(value, str):
                 sanitized[key] = f"<{len(value)} chars>"
                 sanitized[f"{key}_length"] = len(value)
                 sanitized[f"{key}_preview"] = value[:200]
@@ -1002,10 +1618,15 @@ class IntelligentAutopilot:
         return sanitized
 
     def _summarize_tool_output(self, output: Any) -> dict[str, Any]:
+        if hasattr(output, "model_dump"):
+            return self._summarize_tool_output(output.model_dump())
         if not isinstance(output, dict):
             return {"output_type": type(output).__name__} if output is not None else {}
 
-        summary = output.copy()
+        summary = {
+            key: self._json_safe_summary(value)
+            for key, value in output.items()
+        }
         if "code" in summary and isinstance(summary["code"], str):
             summary["code_length"] = len(summary["code"])
             summary["code_preview"] = summary["code"][:200]
@@ -1015,6 +1636,17 @@ class IntelligentAutopilot:
             summary["content_preview"] = summary["content"][:200]
             summary.pop("content", None)
         return summary
+
+    def _json_safe_summary(self, value: Any) -> Any:
+        if hasattr(value, "model_dump"):
+            return self._json_safe_summary(value.model_dump())
+        if isinstance(value, dict):
+            return {key: self._json_safe_summary(child) for key, child in value.items()}
+        if isinstance(value, list):
+            return [self._json_safe_summary(child) for child in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
 
     def _resolve_chained_inputs(
         self,
@@ -1288,6 +1920,12 @@ class IntelligentAutopilot:
             self.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
 
             success = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
+            iteration_error_msg = None
+            if improvement_result is not None and not improvement_result.get("success", False):
+                iteration_error_msg = self._format_iteration_failure(improvement_result)
+                validation = improvement_result.get("validation")
+                if not validation or not validation.validation_passed:
+                    success = False
             self.stats["success"] = success
             self.stats["tasks_completed"] = len([t for t in decomposition.subtasks if t.status == TaskStatus.COMPLETED])
             self.stats["tasks_failed"] = len([t for t in decomposition.subtasks if t.status == TaskStatus.FAILED])
@@ -1303,8 +1941,13 @@ class IntelligentAutopilot:
                         success_details += f"\nREADME: {readme_result['result'].get('file_path')}"
                     elif readme_result.get("error"):
                         success_details += f"\nREADME generation failed: {readme_result['error']}"
-                if improvement_result and improvement_result.get("evaluation"):
-                    success_details += f"\nSatisfaction: {improvement_result['evaluation'].satisfaction_score:.2f}"
+                if improvement_result and improvement_result.get("validation"):
+                    success_details += (
+                        f"\nImprovements applied: {improvement_result.get('completed_improvements', 0)}/"
+                        f"{improvement_result.get('required_improvements', self.required_successful_improvements)}"
+                    )
+                    if iteration_error_msg:
+                        success_details += f"\nIteration warning: {iteration_error_msg}"
                 self.enhanced_ui.set_current_task_state(
                     title="Success",
                     details=success_details,
@@ -1324,8 +1967,21 @@ class IntelligentAutopilot:
                 "decomposition": decomposition,
                 "results": results,
                 "readme": readme_result,
+                "validation": improvement_result.get("validation") if improvement_result else None,
                 "evaluation": improvement_result.get("evaluation") if improvement_result else None,
+                "completed_improvements": improvement_result.get("completed_improvements", 0) if improvement_result else 0,
+                "required_improvements": improvement_result.get("required_improvements", self.required_successful_improvements) if improvement_result else self.required_successful_improvements,
+                "completed_iterations": improvement_result.get("completed_iterations", 0) if improvement_result else 0,
+                "required_iterations": improvement_result.get("required_iterations", self.required_successful_improvements) if improvement_result else self.required_successful_improvements,
+                "improvement_report": improvement_result.get("improvement_report", {}) if improvement_result else {},
                 "iterations": improvement_result.get("iterations", []) if improvement_result else [],
+                "partial_success": improvement_result.get("partial_success", False) if improvement_result else False,
+                "iteration_error": iteration_error_msg,
+                "failure_stage": improvement_result.get("failure_stage") if improvement_result else None,
+                "failed_iteration": improvement_result.get("failed_iteration") if improvement_result else None,
+                "failed_tool": improvement_result.get("failed_tool") if improvement_result else None,
+                "failure_reason": improvement_result.get("failure_reason") if improvement_result else None,
+                "remaining_goals": improvement_result.get("remaining_goals", []) if improvement_result else [],
                 "stats": self.stats,
             }
 
@@ -1433,6 +2089,12 @@ class IntelligentAutopilot:
 
             # Calculate success
             success = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
+            iteration_error_msg = None
+            if improvement_result is not None and not improvement_result.get("success", False):
+                iteration_error_msg = self._format_iteration_failure(improvement_result)
+                validation = improvement_result.get("validation")
+                if not validation or not validation.validation_passed:
+                    success = False
             self.stats["success"] = success
             self.stats["tasks_completed"] = len([t for t in decomposition.subtasks if t.status == TaskStatus.COMPLETED])
             self.stats["tasks_failed"] = len([t for t in decomposition.subtasks if t.status == TaskStatus.FAILED])
@@ -1440,6 +2102,8 @@ class IntelligentAutopilot:
 
             # Show completion summary
             self._show_completion_summary(decomposition, results)
+            if iteration_error_msg:
+                self.console.print(f"[yellow]Autonomous iteration warning:[/yellow] {iteration_error_msg}")
 
             return {
                 "success": success,
@@ -1448,8 +2112,21 @@ class IntelligentAutopilot:
                 "decomposition": decomposition,
                 "results": results,
                 "readme": readme_result,
+                "validation": improvement_result.get("validation") if improvement_result else None,
                 "evaluation": improvement_result.get("evaluation") if improvement_result else None,
+                "completed_improvements": improvement_result.get("completed_improvements", 0) if improvement_result else 0,
+                "required_improvements": improvement_result.get("required_improvements", self.required_successful_improvements) if improvement_result else self.required_successful_improvements,
+                "completed_iterations": improvement_result.get("completed_iterations", 0) if improvement_result else 0,
+                "required_iterations": improvement_result.get("required_iterations", self.required_successful_improvements) if improvement_result else self.required_successful_improvements,
+                "improvement_report": improvement_result.get("improvement_report", {}) if improvement_result else {},
                 "iterations": improvement_result.get("iterations", []) if improvement_result else [],
+                "partial_success": improvement_result.get("partial_success", False) if improvement_result else False,
+                "iteration_error": iteration_error_msg,
+                "failure_stage": improvement_result.get("failure_stage") if improvement_result else None,
+                "failed_iteration": improvement_result.get("failed_iteration") if improvement_result else None,
+                "failed_tool": improvement_result.get("failed_tool") if improvement_result else None,
+                "failure_reason": improvement_result.get("failure_reason") if improvement_result else None,
+                "remaining_goals": improvement_result.get("remaining_goals", []) if improvement_result else [],
                 "final_result": final_result,
                 "stats": self.stats,
             }
@@ -1872,6 +2549,7 @@ Output ONLY valid JSON in this format:
 Important:
 - For code generation tasks, use code_generator to generate code, then file_writer to save it
 - For completed project/code deliveries, use readme_tool after file_writer to create README.md with run instructions
+- Autopilot will run hard validation and project_improvement_tool after project delivery; only call project_improvement_tool yourself when explicitly asked to analyze improvements
 - Provide actual values for all parameters, do not use null or placeholders
 - If you need to pass output from one tool to another, generate the content directly in the first tool
 """
@@ -2153,7 +2831,7 @@ Important:
     ) -> ToolSelection:
         """Resolve tool inputs from previous step outputs.
 
-        Based on WorkflowExecutor pattern for proper tool chaining.
+        Based on the modern autopilot tool-chaining path.
         """
         input_params = dict(selection.input_params)
         source_step_id = input_params.pop("source_step_id", None)

@@ -1,5 +1,5 @@
 """Execution module."""
 
-from execution.workflow_executor import WorkflowExecutor
+from execution.intelligent_autopilot import IntelligentAutopilot
 
-__all__ = ['WorkflowExecutor']
+__all__ = ["IntelligentAutopilot"]

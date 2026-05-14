@@ -11,6 +11,13 @@ from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_execu
 from tools.code_reviewer import CODE_REVIEWER_DEFINITION, code_reviewer_executor
 from tools.code_executor import CODE_EXECUTOR_DEFINITION, code_executor_executor
 from tools.readme_tool import README_TOOL_DEFINITION, readme_tool_executor
+from tools.project_improvement_tool import (
+    PROJECT_IMPROVEMENT_TOOL_DEFINITION,
+    PROJECT_STATE_READER_DEFINITION,
+    project_improvement_tool_executor,
+    project_state_reader_executor,
+)
+from tools.autonomy_tool import AUTONOMY_TOOL_DEFINITION, autonomy_tool_executor
 
 
 __all__ = [
@@ -41,6 +48,14 @@ __all__ = [
     # README Tool
     "README_TOOL_DEFINITION",
     "readme_tool_executor",
+    # Project Improvement Tool
+    "PROJECT_IMPROVEMENT_TOOL_DEFINITION",
+    "project_improvement_tool_executor",
+    "PROJECT_STATE_READER_DEFINITION",
+    "project_state_reader_executor",
+    # Autonomy Tool
+    "AUTONOMY_TOOL_DEFINITION",
+    "autonomy_tool_executor",
     # Registration
     "register_builtin_tools",
 ]
@@ -62,3 +77,6 @@ def register_builtin_tools(registry) -> None:
     registry.register(CODE_REVIEWER_DEFINITION, code_reviewer_executor)
     registry.register(CODE_EXECUTOR_DEFINITION, code_executor_executor)
     registry.register(README_TOOL_DEFINITION, readme_tool_executor)
+    registry.register(PROJECT_IMPROVEMENT_TOOL_DEFINITION, project_improvement_tool_executor)
+    registry.register(PROJECT_STATE_READER_DEFINITION, project_state_reader_executor)
+    registry.register(AUTONOMY_TOOL_DEFINITION, autonomy_tool_executor)

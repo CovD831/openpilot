@@ -1,12 +1,15 @@
-"""UI module - User interface components."""
+"""UI module - modern OpenPilot interface components."""
 
-from ui.terminal_ui import TerminalUI
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker, OperationType
+from ui.question_ui import QuestionOption, QuestionResult, QuestionSpec, QuestionUI
 
 __all__ = [
-    'TerminalUI',
     'EnhancedUI',
     'ProgressTracker',
     'OperationType',
+    'QuestionOption',
+    'QuestionResult',
+    'QuestionSpec',
+    'QuestionUI',
 ]

@@ -1,4 +1,0 @@
-{"id":"research_ai_agents_created_2026-05-09T06:50:41.458374+00:00","timestamp":"2026-05-09T06:50:41.458374+00:00","task_id":"research_ai_agents","event_type":"created","metadata":{"priority":"high"}}
-{"id":"research_ai_agents_status_changed_2026-05-09T06:50:41.460499+00:00","timestamp":"2026-05-09T06:50:41.460499+00:00","task_id":"research_ai_agents","event_type":"status_changed","old_status":"planned","new_status":"in_progress","metadata":{}}
-{"id":"research_ai_agents_note_added_2026-05-09T06:50:41.461299+00:00","timestamp":"2026-05-09T06:50:41.461299+00:00","task_id":"research_ai_agents","event_type":"note_added","note":"Found 15 relevant research papers","metadata":{}}
-{"id":"research_ai_agents_completed_2026-05-09T06:50:41.461818+00:00","timestamp":"2026-05-09T06:50:41.461818+00:00","task_id":"research_ai_agents","event_type":"completed","metadata":{"deliverable":"research_report.md"}}

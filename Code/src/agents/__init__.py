@@ -3,11 +3,12 @@
 from agents.task_decomposer import TaskDecomposer
 from agents.orchestrator import AgentOrchestrator
 from agents.project_evaluator import ProjectEvaluatorAgent
-from agents.iterative_improvement import IterativeImprovementController
+from agents.iterative_improvement import AutonomousIterationAgent, IterativeImprovementController
 
 __all__ = [
     'TaskDecomposer',
     'AgentOrchestrator',
     'ProjectEvaluatorAgent',
+    'AutonomousIterationAgent',
     'IterativeImprovementController',
 ]

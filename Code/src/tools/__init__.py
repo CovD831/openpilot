@@ -17,6 +17,13 @@ from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_execu
 from tools.code_reviewer import CODE_REVIEWER_DEFINITION, code_reviewer_executor
 from tools.code_executor import CODE_EXECUTOR_DEFINITION, code_executor_executor
 from tools.readme_tool import README_TOOL_DEFINITION, readme_tool_executor
+from tools.project_improvement_tool import (
+    PROJECT_IMPROVEMENT_TOOL_DEFINITION,
+    PROJECT_STATE_READER_DEFINITION,
+    project_improvement_tool_executor,
+    project_state_reader_executor,
+)
+from tools.autonomy_tool import AUTONOMY_TOOL_DEFINITION, autonomy_tool_executor
 from tools.builtin_tools import register_builtin_tools
 
 __all__ = [
@@ -52,5 +59,11 @@ __all__ = [
     'code_executor_executor',
     'README_TOOL_DEFINITION',
     'readme_tool_executor',
+    'PROJECT_IMPROVEMENT_TOOL_DEFINITION',
+    'project_improvement_tool_executor',
+    'PROJECT_STATE_READER_DEFINITION',
+    'project_state_reader_executor',
+    'AUTONOMY_TOOL_DEFINITION',
+    'autonomy_tool_executor',
     'register_builtin_tools',
 ]
