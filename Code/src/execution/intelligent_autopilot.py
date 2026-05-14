@@ -94,6 +94,7 @@ class IntelligentAutopilot:
         self.max_iteration_attempts = max_iteration_attempts
         self.prompt_for_project_improvement_iterations = prompt_for_project_improvement_iterations
         self._project_improvement_iterations_prompted = False
+        self._project_environments: dict[str, dict[str, Any]] = {}
 
         # Initialize UI components
         if use_enhanced_ui:
@@ -176,6 +177,7 @@ class IntelligentAutopilot:
             project_improvement_tool_executor,
             project_state_reader_executor,
         )
+        from tools.env_tools import PROJECT_ENVIRONMENT_TOOL_DEFINITION, project_environment_tool_executor
 
         def execute_code_generator(params: dict[str, Any]) -> dict[str, Any]:
             return code_generator_executor({**params, "_llm_client": self.llm_client})
@@ -185,6 +187,9 @@ class IntelligentAutopilot:
 
         def execute_project_state_reader(params: dict[str, Any]) -> dict[str, Any]:
             return project_state_reader_executor({**params, "_memory_store": self.memory_store})
+
+        def execute_project_environment(params: dict[str, Any]) -> dict[str, Any]:
+            return project_environment_tool_executor({**params, "_memory_store": self.memory_store})
 
         self.tool_registry.register(
             CODE_GENERATOR_DEFINITION,
@@ -199,6 +204,11 @@ class IntelligentAutopilot:
         self.tool_registry.register(
             PROJECT_STATE_READER_DEFINITION,
             execute_project_state_reader,
+            allow_override=True,
+        )
+        self.tool_registry.register(
+            PROJECT_ENVIRONMENT_TOOL_DEFINITION,
+            execute_project_environment,
             allow_override=True,
         )
 
@@ -357,20 +367,46 @@ class IntelligentAutopilot:
             )
             tool_results.append(write_result)
             if write_result["success"]:
-                readme_result = self._execute_fast_tool(
+                environment_result = self._sync_project_environment(
                     task=task,
-                    step_id="fast_readme_tool",
-                    tool_name="readme_tool",
-                    input_params={
-                        "project_path": str(target_file.parent),
-                        "project_summary": goal,
-                        "written_files": [str(target_file)],
-                        "entry_files": [str(target_file)],
-                        "run_command": f"python {shlex.quote(target_file.name)}",
-                        "overwrite": True,
-                    },
+                    step_id="fast_project_environment_tool",
+                    project_path=target_file.parent,
+                    written_files=[str(target_file)],
+                    entry_files=[str(target_file)],
+                    run_command=f"python {shlex.quote(target_file.name)}",
                 )
-                tool_results.append(readme_result)
+                tool_results.append(environment_result)
+                if not environment_result["success"]:
+                    if self.enhanced_ui:
+                        self.enhanced_ui.set_current_task_state(
+                            title="Environment Setup failed",
+                            details=str(environment_result.get("error") or "Project environment sync failed."),
+                            status="failed",
+                        )
+                    readme_result = None
+                    environment_payload = {}
+                    run_command = f"python {shlex.quote(target_file.name)}"
+                else:
+                    readme_result = None
+                    environment_payload = environment_result.get("result") if isinstance(environment_result.get("result"), dict) else {}
+                    run_command = str(environment_payload.get("run_command") or f"python {shlex.quote(target_file.name)}")
+                if environment_result["success"]:
+                    readme_result = self._execute_fast_tool(
+                        task=task,
+                        step_id="fast_readme_tool",
+                        tool_name="readme_tool",
+                        input_params={
+                            "project_path": str(target_file.parent),
+                            "project_summary": goal,
+                            "written_files": [str(target_file)],
+                            "entry_files": [str(target_file)],
+                            "run_command": run_command,
+                            "setup_commands": environment_payload.get("setup_commands") or [],
+                            "environment": self._readme_environment_context(environment_payload),
+                            "overwrite": True,
+                        },
+                    )
+                    tool_results.append(readme_result)
         elif syntax_error:
             tool_results.append({
                 "tool": "syntax_validation",
@@ -392,11 +428,15 @@ class IntelligentAutopilot:
         improvement_result = None
         iteration_error_msg = None
         if success:
+            run_command = f"python {shlex.quote(target_file.name)}"
+            environment_result = next((r for r in tool_results if r["tool"] == "project_environment_tool" and r["success"]), None)
+            if environment_result and isinstance(environment_result.get("result"), dict):
+                run_command = str(environment_result["result"].get("run_command") or run_command)
             improvement_result = self._run_iterative_improvement(
                 goal=goal,
                 project_path=target_file.parent,
                 written_files=[str(target_file)],
-                run_command=f"python {shlex.quote(target_file.name)}",
+                run_command=run_command,
                 readme_path=(
                     readme_result.get("result", {}).get("file_path")
                     if readme_result and isinstance(readme_result.get("result"), dict)
@@ -791,6 +831,67 @@ class IntelligentAutopilot:
                 status="running",
             )
 
+        environment_task = Task(
+            id=str(uuid.uuid4()),
+            description="Prepare project virtual environment",
+            priority=TaskPriority.HIGH,
+        )
+        if self.enhanced_ui:
+            self._ensure_dashboard_iteration(1)
+        environment_result = self._sync_project_environment(
+            task=environment_task,
+            step_id="iteration_initial_project_environment_tool",
+            project_path=project_path,
+            written_files=written_files,
+            entry_files=written_files,
+            run_command=run_command,
+            parent_task_id=self._dashboard_stage_id("environment"),
+        )
+        if not environment_result["success"] or not isinstance(environment_result.get("result"), dict):
+            reason = environment_result.get("error") or "Project environment sync failed."
+            evaluation = EvaluationResult(
+                validation_passed=False,
+                runnable=False,
+                has_blocking_bugs=True,
+                summary="Project environment setup failed.",
+                validation_errors=[reason],
+                warnings=[],
+                run_command=run_command,
+                recommended_actions=["Fix the project environment setup failure."],
+                next_iteration_goal=f"Fix project environment setup: {reason}",
+            )
+            return {
+                "success": False,
+                "partial_success": False,
+                "completed_improvements": 0,
+                "required_improvements": self.required_successful_improvements,
+                "completed_iterations": 0,
+                "required_iterations": self.required_successful_improvements,
+                "attempts_used": 0,
+                "max_iteration_attempts": self.max_iteration_attempts,
+                "validation": evaluation,
+                "evaluation": evaluation,
+                "evaluations": [evaluation],
+                "iterations": [],
+                "improvement_report": {},
+                "project_state": None,
+                "project_states": [],
+                "iteration_goals": [],
+                "designed_tasks": [],
+                "mind_notes": [],
+                "autonomous_iteration": None,
+                "failure_stage": "Environment Setup",
+                "failed_iteration": 0,
+                "failed_tool": "project_environment_tool",
+                "failure_reason": reason,
+                "retry_attempted": False,
+                "retry_history": [],
+                "last_successful_iteration": 0,
+                "remaining_goals": [],
+            }
+        environment_payload = environment_result["result"]
+        run_command = str(environment_payload.get("run_command") or run_command)
+
         def on_progress(event: str, payload: dict[str, Any]) -> None:
             self._handle_iteration_progress(event, payload)
 
@@ -941,6 +1042,101 @@ class IntelligentAutopilot:
         )
         return result
 
+    def _sync_project_environment(
+        self,
+        *,
+        task: Task,
+        step_id: str,
+        project_path: Path,
+        written_files: list[str],
+        entry_files: list[str],
+        run_command: str,
+        parent_task_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self.enhanced_ui and parent_task_id:
+            self._set_dashboard_task_status(parent_task_id, "running")
+            self.enhanced_ui.set_current_task_state(
+                title="Environment Setup",
+                details=f"Project: {project_path}\nVirtual environment: .venv",
+                status="running",
+            )
+        result = self._execute_fast_tool(
+            task=task,
+            step_id=step_id,
+            tool_name="project_environment_tool",
+            input_params={
+                "project_path": str(project_path),
+                "written_files": written_files,
+                "entry_files": entry_files,
+                "run_command": run_command,
+                "env_name": ".venv",
+                "install": True,
+            },
+            parent_task_id=parent_task_id,
+        )
+        if result.get("success") and isinstance(result.get("result"), dict):
+            payload = result["result"]
+            if not hasattr(self, "_project_environments"):
+                self._project_environments = {}
+            self._project_environments[str(project_path.resolve())] = payload
+            if self.enhanced_ui and parent_task_id:
+                packages = payload.get("detected_packages") or []
+                self._set_dashboard_task_status(parent_task_id, "completed")
+                self._append_dashboard_stage_child(
+                    "environment",
+                    child_id=f"sync_{step_id}",
+                    description=(
+                        f".venv ready; packages: {', '.join(packages) if packages else 'none'}; "
+                        f"python: {Path(str(payload.get('python_executable') or '')).name}"
+                    ),
+                    kind="result",
+                )
+                self._append_dashboard_stage_child(
+                    "environment",
+                    child_id=f"memory_{step_id}",
+                    description="Saved project environment dependency context to short-term memory",
+                    kind="note",
+                )
+                self.enhanced_ui.set_current_task_state(
+                    title="Environment Setup",
+                    details=(
+                        f"Virtual environment: {payload.get('venv_path')}\n"
+                        f"Run command: {payload.get('run_command')}\n"
+                        f"Packages: {', '.join(packages) if packages else 'none'}"
+                    ),
+                    status="completed",
+                )
+        elif self.enhanced_ui and parent_task_id:
+            self._set_dashboard_task_status(parent_task_id, "failed")
+            self._append_dashboard_stage_child(
+                "environment",
+                child_id=f"sync_failed_{step_id}",
+                description=str(result.get("error") or "Project environment sync failed."),
+                kind="result",
+                status="failed",
+            )
+        return result
+
+    def _readme_environment_context(self, environment_payload: dict[str, Any]) -> dict[str, Any]:
+        if not environment_payload:
+            return {}
+        packages = environment_payload.get("detected_packages") or []
+        return {
+            "virtual_environment": ".venv",
+            "python_executable": environment_payload.get("python_executable"),
+            "python_version": environment_payload.get("python_version"),
+            "dependencies": ", ".join(packages) if packages else "No third-party Python packages detected",
+        }
+
+    def _project_environment_context(self, project_path: Path | None) -> dict[str, Any]:
+        if not project_path:
+            return {}
+        environments = getattr(self, "_project_environments", {})
+        try:
+            return environments.get(str(project_path.resolve()), {})
+        except OSError:
+            return environments.get(str(project_path), {})
+
     def _resolve_project_improvement_iterations(self, goal: str, project_path: str | Path) -> bool:
         """Resolve per-project improvement count, optionally asking the user."""
         if not self.prompt_for_project_improvement_iterations or self._project_improvement_iterations_prompted:
@@ -1082,6 +1278,7 @@ class IntelligentAutopilot:
             "target_file": str(target_file) if target_file else "",
             "written_files": written_files or [],
             "run_command": run_command,
+            "environment": self._project_environment_context(project_path),
             "validation_passed": getattr(evaluation, "validation_passed", None),
             "validation_errors": getattr(evaluation, "validation_errors", [])[:3] if evaluation else [],
             "warnings": getattr(evaluation, "warnings", [])[:3] if evaluation else [],
@@ -1345,6 +1542,34 @@ class IntelligentAutopilot:
                 retry_history=retry_history,
             )
 
+        environment_result = self._sync_project_environment(
+            task=task,
+            step_id=f"iteration_{iteration}_project_environment_tool",
+            project_path=project_path,
+            written_files=[str(target_file)],
+            entry_files=[str(target_file)],
+            run_command=run_command,
+            parent_task_id=self._dashboard_stage_id("environment"),
+        )
+        if not environment_result["success"] or not isinstance(environment_result.get("result"), dict):
+            reason = environment_result.get("error") or "Project environment sync failed."
+            return IterationResult(
+                iteration=iteration,
+                validation_passed=False,
+                completed_successful_iteration=False,
+                applied_actions=actions,
+                changed_files=[str(target_file)],
+                success=False,
+                error=reason,
+                failure_stage="Environment Setup",
+                failed_tool="project_environment_tool",
+                failure_reason=reason,
+                retry_attempted=retry_attempted,
+                retry_history=retry_history,
+            )
+        environment_payload = environment_result["result"]
+        run_command = str(environment_payload.get("run_command") or run_command)
+
         review_result = self._execute_fast_tool(
             task=task,
             step_id=f"iteration_{iteration}_code_reviewer",
@@ -1382,6 +1607,8 @@ class IntelligentAutopilot:
                 "written_files": written_files,
                 "entry_files": [str(target_file)],
                 "run_command": run_command,
+                "setup_commands": environment_payload.get("setup_commands") or [],
+                "environment": self._readme_environment_context(environment_payload),
                 "overwrite": True,
             },
             parent_task_id=self._dashboard_stage_id("execution"),
@@ -1982,6 +2209,7 @@ class IntelligentAutopilot:
     def _dashboard_iteration_stage_nodes(self, iteration_id: str) -> list[dict[str, Any]]:
         return [
             {"id": f"{iteration_id}_project_state", "description": "Read Project State", "status": "pending", "kind": "agent"},
+            {"id": f"{iteration_id}_environment", "description": "Environment Setup", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_goal_maker", "description": "Goal Maker", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_task_designer", "description": "Task Designer", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_decomposition", "description": "Task Decomposer", "status": "pending", "kind": "agent"},

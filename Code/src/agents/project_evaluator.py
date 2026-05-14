@@ -159,8 +159,7 @@ class ProjectEvaluatorAgent:
         if not args:
             return {"passed": False, "warning": False, "message": "Run command is empty."}
 
-        if args[0] == "python":
-            args[0] = sys.executable
+        args = self._normalize_python_args(project_path, args)
 
         if self._looks_interactive_python_project(files or [], args):
             import_result = self._import_only_smoke_test(project_path, args, files or [])
@@ -211,7 +210,7 @@ class ProjectEvaluatorAgent:
         return {"passed": True, "warning": False, "message": "Smoke test passed."}
 
     def _looks_interactive_python_project(self, files: list[Path], args: list[str]) -> bool:
-        if not args or args[0] != sys.executable:
+        if not args or not self._is_python_executable(args[0]):
             return False
         source = "\n".join(self._read_text(path) for path in files if path.suffix == ".py")
         if not source:
@@ -235,7 +234,7 @@ class ProjectEvaluatorAgent:
             return {"passed": True, "warning": True, "message": "Smoke test skipped full run: interactive project entry could not be imported safely."}
 
         command = [
-            sys.executable,
+            args[0],
             "-c",
             (
                 "import importlib.util, pathlib; "
@@ -266,6 +265,31 @@ class ProjectEvaluatorAgent:
                 "message": self._short_error(f"Import-only smoke test exited with code {result.returncode}", combined_output),
             }
         return {"passed": True, "warning": False, "message": "Import-only smoke test passed."}
+
+    def _normalize_python_args(self, project_path: Path, args: list[str]) -> list[str]:
+        if not args:
+            return args
+        executable = args[0]
+        if executable == "python" or executable.startswith("python"):
+            project_python = self._project_python_executable(project_path)
+            args[0] = str(project_python or sys.executable)
+        elif executable.startswith(".venv/") or executable.startswith(".venv\\"):
+            args[0] = str(project_path / executable)
+        return args
+
+    def _project_python_executable(self, project_path: Path) -> Path | None:
+        candidates = [
+            project_path / ".venv" / "bin" / "python",
+            project_path / ".venv" / "Scripts" / "python.exe",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _is_python_executable(self, executable: str) -> bool:
+        name = Path(executable).name.lower()
+        return name == "python" or name.startswith("python")
 
     def _entry_module_from_args(self, project_path: Path, args: list[str], files: list[Path]) -> Path | None:
         for arg in args[1:]:
@@ -327,11 +351,11 @@ class ProjectEvaluatorAgent:
         lines = readme_text.splitlines()
         for index, line in enumerate(lines):
             stripped = line.strip()
-            if stripped.startswith("python ") or stripped.startswith("npm "):
+            if stripped.startswith(("python ", "npm ", ".venv/bin/python ", ".venv/Scripts/python.exe ")):
                 return stripped
             if stripped in {"```bash", "```sh", "```"} and index + 1 < len(lines):
                 candidate = lines[index + 1].strip()
-                if candidate.startswith("python ") or candidate.startswith("npm "):
+                if candidate.startswith(("python ", "npm ", ".venv/bin/python ", ".venv/Scripts/python.exe ")):
                     return candidate
         return ""
 

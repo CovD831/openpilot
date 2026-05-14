@@ -86,6 +86,17 @@ class FastPathUITest(unittest.TestCase):
                 "success": True,
                 "error": None,
             },
+            "project_environment_tool": {
+                "tool": "project_environment_tool",
+                "result": {
+                    "run_command": ".venv/bin/python main.py",
+                    "setup_commands": ["python -m venv .venv"],
+                    "detected_packages": [],
+                    "python_executable": str(target_file.parent / ".venv/bin/python"),
+                },
+                "success": True,
+                "error": None,
+            },
             "readme_tool": {
                 "tool": "readme_tool",
                 "result": {"file_path": str(target_file.parent / "README.md")},
@@ -169,6 +180,17 @@ class FastPathUITest(unittest.TestCase):
             "file_writer": {
                 "tool": "file_writer",
                 "result": {"file_path": str(target_file)},
+                "success": True,
+                "error": None,
+            },
+            "project_environment_tool": {
+                "tool": "project_environment_tool",
+                "result": {
+                    "run_command": ".venv/bin/python main.py",
+                    "setup_commands": ["python -m venv .venv"],
+                    "detected_packages": [],
+                    "python_executable": str(target_file.parent / ".venv/bin/python"),
+                },
                 "success": True,
                 "error": None,
             },

@@ -18,6 +18,7 @@ from tools.project_improvement_tool import (
     project_state_reader_executor,
 )
 from tools.autonomy_tool import AUTONOMY_TOOL_DEFINITION, autonomy_tool_executor
+from tools.env_tools import PROJECT_ENVIRONMENT_TOOL_DEFINITION, project_environment_tool_executor
 
 
 __all__ = [
@@ -56,6 +57,8 @@ __all__ = [
     # Autonomy Tool
     "AUTONOMY_TOOL_DEFINITION",
     "autonomy_tool_executor",
+    "PROJECT_ENVIRONMENT_TOOL_DEFINITION",
+    "project_environment_tool_executor",
     # Registration
     "register_builtin_tools",
 ]
@@ -80,3 +83,4 @@ def register_builtin_tools(registry) -> None:
     registry.register(PROJECT_IMPROVEMENT_TOOL_DEFINITION, project_improvement_tool_executor)
     registry.register(PROJECT_STATE_READER_DEFINITION, project_state_reader_executor)
     registry.register(AUTONOMY_TOOL_DEFINITION, autonomy_tool_executor)
+    registry.register(PROJECT_ENVIRONMENT_TOOL_DEFINITION, project_environment_tool_executor)

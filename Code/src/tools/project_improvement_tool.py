@@ -132,7 +132,7 @@ def project_state_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
         try:
             query_result = memory_store.query(
                 memory_query,
-                memory_types=[MemoryType.PROJECT, MemoryType.TASK, MemoryType.FEEDBACK, MemoryType.LONG_TERM],
+                memory_types=[MemoryType.PROJECT, MemoryType.TASK, MemoryType.FEEDBACK, MemoryType.LONG_TERM, MemoryType.SHORT_TERM],
                 limit=8,
             )
             memory_records = [
@@ -142,9 +142,30 @@ def project_state_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
                     "content": memory.content[:500],
                     "tags": memory.tags,
                     "confidence": memory.confidence,
+                    "metadata": memory.metadata,
                 }
                 for memory in query_result.memories
             ]
+            if hasattr(memory_store, "load_all"):
+                env_memories = [
+                    memory
+                    for memory in memory_store.load_all(MemoryType.SHORT_TERM)
+                    if "project_environment" in memory.tags and project_path.name in memory.tags
+                ][-3:]
+                known_ids = {item["id"] for item in memory_records}
+                for memory in env_memories:
+                    if memory.id in known_ids:
+                        continue
+                    memory_records.append(
+                        {
+                            "id": memory.id,
+                            "type": memory.memory_type.value,
+                            "content": memory.content[:500],
+                            "tags": memory.tags,
+                            "confidence": memory.confidence,
+                            "metadata": memory.metadata,
+                        }
+                    )
         except Exception:
             memory_records = []
 
