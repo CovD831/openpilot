@@ -7,7 +7,7 @@ from typing import Any
 
 from core.graph import Graph, GraphNode, GraphEdge, GraphType
 from core.llm import LLMClient, LLMMessage, LLMRequest
-from models.task_models import (
+from agents.task_models import (
     Task,
     TaskStatus,
     TaskPriority,

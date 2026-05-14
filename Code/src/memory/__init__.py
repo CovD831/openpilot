@@ -1,18 +1,13 @@
-"""Memory module."""
+"""Memory package.
 
-from memory.memory_store import MemoryStore
-from memory.short_memory import ShortMemory, GitInfo, GitInfoCollector, ContextManager, MemorySketchGenerator
-from memory.context_compressor import ContextCompressor, CompressionResult
-from memory.memory_vault import MemoryVault
+Import memory components from their owning modules. The initializer stays
+lightweight so memory contracts can be imported without loading stores.
+"""
 
 __all__ = [
-    'MemoryStore',
-    'ShortMemory',
-    'GitInfo',
-    'GitInfoCollector',
-    'ContextManager',
-    'MemorySketchGenerator',
-    'ContextCompressor',
-    'CompressionResult',
-    'MemoryVault',
+    "context_compressor",
+    "memory_models",
+    "memory_store",
+    "memory_vault",
+    "short_memory",
 ]

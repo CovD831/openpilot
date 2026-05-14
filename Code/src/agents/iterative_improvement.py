@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from agents.project_evaluator import ProjectEvaluatorAgent
 from core.llm import LLMMessage, LLMRequest
-from models.evaluation_models import (
+from agents.evaluation_models import (
     AutonomousIterationResult,
     DesignedImprovementTask,
     EvaluationResult,
@@ -23,7 +23,7 @@ from models.evaluation_models import (
     IterationResult,
     ProjectStateSnapshot,
 )
-from models.memory_models import MemoryRecord, MemoryType
+from memory.memory_models import MemoryRecord, MemoryType
 from tools.project_improvement_tool import project_state_reader_executor
 
 

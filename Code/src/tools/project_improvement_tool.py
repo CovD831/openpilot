@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from core.llm import LLMMessage, LLMRequest
-from models.memory_models import MemoryType
-from models.tool_models import (
+from memory.memory_models import MemoryType
+from tools.tool_models import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,

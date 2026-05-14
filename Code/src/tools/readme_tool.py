@@ -8,7 +8,7 @@ import shlex
 from pathlib import Path
 from typing import Any
 
-from models.tool_models import (
+from tools.tool_models import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,

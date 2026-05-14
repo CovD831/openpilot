@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from models.tool_models import ToolCapability, PermissionLevel
-from models.tool_orchestration_models import (
+from tools.tool_models import ToolCapability, PermissionLevel
+from tools.tool_orchestration_models import (
     OrchestrationContext,
     SelectionReason,
     ToolMatchScore,

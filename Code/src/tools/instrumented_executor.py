@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional
 
-from models.tool_models import ToolDefinition, ToolExecutionResult
+from tools.tool_models import ToolDefinition, ToolExecutionResult
 from tools.tool_executor import ToolExecutor
 from ui.progress_tracker import ProgressTracker
 

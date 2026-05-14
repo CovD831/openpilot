@@ -4,13 +4,13 @@
 
 本文档用于重构前后的项目盘点，帮助快速理解当前 OpenPilot 的目录边界、关键文件职责和主要运行链路。它不是用户使用手册；用户安装和运行说明见 `README.md`。
 
-当前代码已经收敛为现代 autopilot/agent/tool 架构。旧的 `planning/`、`validation/`、`autonomy/`、`reporting/`、`WorkflowExecutor` 和 `tests/` 已删除；后续重构建议可以写在本文末尾的占位区。
+当前代码已经收敛为现代 autopilot/agent/tool 架构。旧的 `planning/`、`validation/`、`autonomy/`、`reporting/`、`models/`、`WorkflowExecutor` 和 `tests/` 已删除；后续重构建议可以写在本文末尾的占位区。
 
 ## 顶层目录
 
 | 路径 | 主要职责 |
 | --- | --- |
-| `Code/src/` | OpenPilot 的 Python 包源码，包含 CLI、Agent、工具、模型、记忆、执行器、UI 和通用工具。 |
+| `Code/src/` | OpenPilot 的 Python 包源码，包含 CLI、Agent、工具、记忆、执行器、UI 和通用工具。 |
 | `Code/data/` | 本地运行时数据，目前主要保留 memory 数据。 |
 | `Code/logs/` | 运行时日志目录；日志 JSONL 是运行产物，可按需清理。 |
 | `Code/README.md` | 安装、配置、使用方式和当前架构概览。 |
@@ -36,18 +36,15 @@
 ### `tools/`
 
 负责标准化工具定义、注册、选择、编排和执行。核心边界包括 `tool_registry.py`、`tool_orchestrator.py`、`tool_executor.py`、`tool_selector.py` 和 `builtin_tools.py`。内置工具包括文件读写、目录列举、多文件读取、LLM 总结、代码生成、代码审查、代码执行、命令执行、README 生成、项目状态读取、项目提升空间分析和 `autonomy_tool`。
-
-### `models/`
-
-集中定义跨模块传递的数据结构，主要使用 Pydantic 模型和枚举。`task_models.py` 描述任务、Agent、执行上下文和任务执行结果；`tool_models.py` 与 `tool_orchestration_models.py` 描述工具协议、工具选择和编排结果；`evaluation_models.py` 描述项目评估、自主迭代目标、任务和结果；`autonomy_models.py` 描述 autonomy tool 的决策输出。
+工具协议类型也归属该目录，例如 `tool_models.py` 和 `tool_orchestration_models.py`。`autonomy_tool` 的决策类型位于 `tools/autonomy_models.py`。
 
 ### `core/`
 
-提供系统底层能力和共享基础设施。`llm.py` 封装 LLM 请求/响应和客户端，`instrumented_llm.py` 将 LLM 调用接入进度追踪，`config.py` 读取运行配置，`openpilot_log.py` 写审计日志，`semantic_analyzer.py` 负责目标语义分类，`risk.py` 处理风险识别，`graph.py` 和 `embedding.py` 提供通用图结构与 embedding 能力。
+提供系统底层能力和共享基础设施。`llm.py` 封装 LLM 请求/响应和客户端，`instrumented_llm.py` 将 LLM 调用接入进度追踪，`config.py` 读取运行配置，`openpilot_log.py` 写审计日志，`semantic_analyzer.py` 负责目标语义分类，`semantic_types.py` 放置语义分类和轻量 plan-step 类型，`risk.py` 处理风险识别，`graph.py` 和 `embedding.py` 提供通用图结构与 embedding 能力。
 
 ### `memory/`
 
-负责短期上下文、长期记忆、上下文压缩和 memory vault。`memory_store.py` 是结构化记忆读写入口，`short_memory.py` 管理会话短期记忆、Git 信息和上下文摘要，`context_compressor.py` 负责压缩长上下文，`memory_vault.py` 提供 vault 式记忆管理。
+负责短期上下文、长期记忆、上下文压缩和 memory vault。`memory_models.py` 定义 memory 数据契约，`memory_store.py` 是结构化记忆读写入口，`short_memory.py` 管理会话短期记忆、Git 信息和上下文摘要，`context_compressor.py` 负责压缩长上下文，`memory_vault.py` 提供 vault 式记忆管理。
 
 ### `utils/`
 
@@ -82,6 +79,7 @@ flowchart TD
 - `validation/`：旧验证目录已删除，项目级硬校验和改进评估迁入 `agents/`。
 - `autonomy/`：旧控制器目录已删除，自治决策迁移为标准工具 `autonomy_tool`。
 - `reporting/`：旧 task/report 命令和报告目录已删除。
+- `models/`：旧共享类型桶已删除，类型按所有权迁入 `agents/`、`tools/`、`memory/`、`execution/` 和 `core/`。
 - `tests/`：旧测试目录已删除，后续如需测试体系应按新架构重新设计。
 
 ## 待填写：具体重构建议

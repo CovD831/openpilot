@@ -16,7 +16,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any, Optional
 
-from models.code_models import (
+from execution.code_models import (
     CodeExecutionResult,
     CodeLanguage,
     GeneratedCode,

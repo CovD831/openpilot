@@ -1,14 +1,15 @@
-"""Agents module."""
+"""Agents package.
 
-from agents.task_decomposer import TaskDecomposer
-from agents.orchestrator import AgentOrchestrator
-from agents.project_evaluator import ProjectEvaluatorAgent
-from agents.iterative_improvement import AutonomousIterationAgent, IterativeImprovementController
+Import concrete agents and their contracts from their owning modules. The
+initializer stays lightweight to avoid loading the autopilot stack during type
+imports such as `agents.task_models`.
+"""
 
 __all__ = [
-    'TaskDecomposer',
-    'AgentOrchestrator',
-    'ProjectEvaluatorAgent',
-    'AutonomousIterationAgent',
-    'IterativeImprovementController',
+    "evaluation_models",
+    "iterative_improvement",
+    "orchestrator",
+    "project_evaluator",
+    "task_decomposer",
+    "task_models",
 ]

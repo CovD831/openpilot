@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from models.planner_models import ExecutionPlan, RiskLevel
+from core.semantic_types import ExecutionPlan, RiskLevel
 
 RISK_ORDER = {
     RiskLevel.LOW: 0,

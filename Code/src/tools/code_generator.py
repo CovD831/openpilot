@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from models.tool_models import (
+from tools.tool_models import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
@@ -88,7 +88,7 @@ def code_generator_executor(params: dict[str, Any]) -> dict[str, Any]:
         Dictionary with code, language, explanation, imports, functions
     """
     from execution.code_generator import CodeGenerator
-    from models.code_models import CodeGenerationRequest, CodeLanguage
+    from execution.code_models import CodeGenerationRequest, CodeLanguage
     from core.llm import LLMClient
     import uuid
 

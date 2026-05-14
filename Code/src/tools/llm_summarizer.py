@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.llm import LLMClient, LLMMessage, LLMRequest
-from models.tool_models import (
+from tools.tool_models import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,

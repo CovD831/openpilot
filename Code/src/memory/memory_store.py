@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from models.memory_models import MemoryRecord, MemoryQueryResult, MemoryType
+from memory.memory_models import MemoryRecord, MemoryQueryResult, MemoryType
 
 
 class MemoryStore:

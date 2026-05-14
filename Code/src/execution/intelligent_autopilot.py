@@ -25,7 +25,7 @@ from agents.iterative_improvement import AutonomousIterationAgent
 from core.llm import LLMClient
 from core.semantic_analyzer import SemanticAnalyzer
 from memory.memory_store import MemoryStore
-from models.task_models import (
+from agents.task_models import (
     Task,
     TaskStatus,
     TaskPriority,
@@ -34,8 +34,8 @@ from models.task_models import (
     TaskExecutionContext,
     TaskExecutionResult
 )
-from models.evaluation_models import EvaluationResult, IterationResult
-from models.tool_orchestration_models import (
+from agents.evaluation_models import EvaluationResult, IterationResult
+from tools.tool_orchestration_models import (
     OrchestrationContext,
     ToolSelection,
     ExecutionStrategy

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from models.evaluation_models import EvaluationResult
+from agents.evaluation_models import EvaluationResult
 
 
 class ProjectEvaluatorAgent:

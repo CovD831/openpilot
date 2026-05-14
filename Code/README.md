@@ -73,12 +73,11 @@ Important directories:
 | `src/execution/` | Modern autopilot and code execution/generation/review support. |
 | `src/agents/` | Task decomposition, orchestration, project evaluation, autonomous iteration. |
 | `src/tools/` | Standard ToolDefinition protocol, tool registry, built-in tool executors. |
-| `src/models/` | Pydantic contracts shared by agents, tools, execution, memory, and UI. |
 | `src/core/` | LLM client, instrumentation, config, logging, semantic analysis, risk helpers. |
 | `src/memory/` | Memory store, short memory, context compression, memory vault. |
 | `src/utils/` | Pure utility functions and data structures without LLM/tool protocol behavior. |
 
-The legacy `planning/`, `validation/`, `autonomy/`, `reporting/`, and `WorkflowExecutor` code paths have been removed. Project validation and reflection now belong to the Agent layer, while autonomy decisions are exposed through `autonomy_tool`.
+The legacy `planning/`, `validation/`, `autonomy/`, `reporting/`, `models/`, and `WorkflowExecutor` code paths have been removed. Pydantic contracts now live beside their owning package: Agent contracts in `agents/`, tool contracts in `tools/`, memory contracts in `memory/`, execution contracts in `execution/`, and semantic classification types in `core/`.
 
 ## Refactoring Notes
 

@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from core.exceptions import InvalidLLMResponseError
 from core.llm import LLMMessage, LLMRequest, LLMResponse
-from models.planner_models import RiskLevel, STANDARD_RESOURCES, TaskType
-from models.tool_models import ToolCapability
+from core.semantic_types import RiskLevel, STANDARD_RESOURCES, TaskType
+from tools.tool_models import ToolCapability
 
 
 class CompletionClient(Protocol):

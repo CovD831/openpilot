@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 from core.embedding import EmbeddingService
 from core.graph import Graph, GraphNode, GraphEdge, GraphType
-from models.memory_models import MemoryRecord, MemoryType
+from memory.memory_models import MemoryRecord, MemoryType
 
 
 class MemoryVault:

@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime
 from typing import Any, Optional
 
-from models.executor_models import (
+from execution.executor_models import (
     ExecutionContext,
     ExecutionError,
     ExecutionResult,
@@ -18,7 +18,7 @@ from models.executor_models import (
     ParallelExecutionResult,
     ResourceUsage,
 )
-from models.tool_orchestration_models import (
+from tools.tool_orchestration_models import (
     ParallelExecutionGroup,
     ToolOrchestrationPlan,
     ToolSelection,

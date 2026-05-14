@@ -1,23 +1,19 @@
-"""Core functionality module."""
+"""Core package.
 
-from core.llm import LLMClient
-from core.config import LLMSettings
-from core.exceptions import OpenPilotError
-from core.openpilot_log import OpenPilotLogger
-from core.semantic_analyzer import SemanticAnalyzer
-from core.graph import Graph, GraphNode, GraphEdge, GraphType
-from core.embedding import EmbeddingService, EmbeddingError
+Import concrete core components from their owning modules. The initializer is
+kept lightweight so `from core.config import LLMSettings` does not load the
+semantic analyzer, tools, or execution stack.
+"""
 
 __all__ = [
-    'LLMClient',
-    'LLMSettings',
-    'OpenPilotError',
-    'OpenPilotLogger',
-    'SemanticAnalyzer',
-    'Graph',
-    'GraphNode',
-    'GraphEdge',
-    'GraphType',
-    'EmbeddingService',
-    'EmbeddingError',
+    "config",
+    "embedding",
+    "exceptions",
+    "graph",
+    "instrumented_llm",
+    "llm",
+    "openpilot_log",
+    "risk",
+    "semantic_analyzer",
+    "semantic_types",
 ]
