@@ -134,10 +134,16 @@ class EnhancedUI:
             header.append(f" · {task_status}", style="dim")
             active_rows.append(header)
             if task_details:
-                for detail_line in str(task_details).splitlines()[:4]:
+                detail_limit = 9 if self._is_failure_summary_state(task_status, task_details) else 4
+                for detail_line in str(task_details).splitlines()[:detail_limit]:
                     active_rows.append(Text(f"    {detail_line}", style="dim"))
 
-        for op in self.active_operations:
+        visible_operations = [] if self._is_failure_summary_state(
+            self.current_task_state.get("status") or "",
+            self.current_task_state.get("details") or "",
+        ) else self.active_operations
+
+        for op in visible_operations:
             elapsed = (datetime.now() - op.start_time).total_seconds()
             op_type = op.type.value if hasattr(op.type, "value") else str(op.type)
             if op_type == "llm":
@@ -218,6 +224,14 @@ class EnhancedUI:
             height=self.max_log_lines + 4,
         )
 
+    def _is_failure_summary_state(self, status: str, details: str) -> bool:
+        """Return true when details should outrank transient operation traces."""
+        status_text = (status or "").lower()
+        details_text = str(details or "").lower()
+        if status_text in {"failed", "warning", "needs improvement", "stopped"}:
+            return any(marker in details_text for marker in ("failure", "failed", "reason:", "tool:"))
+        return False
+
     def set_task_graph_state(
         self,
         *,
@@ -267,13 +281,15 @@ class EnhancedUI:
 
         if tasks:
             tree = Tree(f"[bold]{goal}[/bold]", guide_style="dim")
-            for index, task in enumerate(tasks, 1):
-                status = task.get("status", "pending")
-                style, icon = self._status_style_icon(status, active=task.get("id") == current_task_id)
-                description = task.get("description", "Untitled task")
-                effort = task.get("effort")
-                suffix = f" [dim]({effort})[/dim]" if effort else ""
-                tree.add(f"{icon} [{style}]{index}. {description}[/{style}]{suffix}")
+            display_tasks = self._task_graph_live_tasks(tasks, current_task_id)
+            for index, task in enumerate(display_tasks, 1):
+                self._add_task_graph_node(
+                    tree,
+                    task,
+                    current_task_id=current_task_id,
+                    index=index,
+                    depth=0,
+                )
         else:
             stages = self.task_graph_state.get("stages") or [
                 "Semantic Analysis",
@@ -292,25 +308,171 @@ class EnhancedUI:
                 style, icon = self._status_style_icon(status, active=stage == current_stage)
                 tree.add(f"{icon} [{style}]{stage}[/{style}] [dim]{status}[/dim]")
 
+        visible_rows = self._task_graph_visible_rows(display_tasks) if tasks else len(stages)
+        panel_height = self._task_graph_panel_height(visible_rows)
+
         return Panel(
             tree,
             title="[bold]Task Graph[/bold]",
             border_style="cyan",
             box=ROUNDED,
-            height=12,
+            height=panel_height,
         )
 
     def create_progress_dashboard(self, extra_content: Any | None = None) -> Layout:
         """Create the fixed two-region autopilot dashboard."""
         layout = Layout()
+        tasks = self.task_graph_state.get("tasks") or []
+        stages = self.task_graph_state.get("stages") or []
+        current_task_id = self.task_graph_state.get("current_task_id")
+        display_tasks = self._task_graph_live_tasks(tasks, current_task_id) if tasks else []
+        graph_rows = self._task_graph_visible_rows(display_tasks) if tasks else len(stages or [])
         layout.split_column(
-            Layout(self.create_task_graph_state_panel(), name="task_graph", size=12),
+            Layout(
+                self.create_task_graph_state_panel(),
+                name="task_graph",
+                size=self._task_graph_panel_height(graph_rows),
+            ),
             Layout(
                 self.create_current_task_panel(extra_content=extra_content),
                 name="current_task",
             ),
         )
         return layout
+
+    def create_full_task_graph_timeline_panel(self) -> Panel | None:
+        """Render the full task graph timeline without live-dashboard height limits."""
+        tasks = self.task_graph_state.get("tasks") or []
+        if not tasks:
+            return None
+        goal = self.task_graph_state.get("goal") or "OpenPilot task"
+        current_task_id = self.task_graph_state.get("current_task_id")
+        tree = Tree(f"[bold]{goal}[/bold]", guide_style="dim")
+        for index, task in enumerate(tasks, 1):
+            self._add_task_graph_node(
+                tree,
+                task,
+                current_task_id=current_task_id,
+                index=index,
+                depth=0,
+            )
+        return Panel(
+            tree,
+            title="[bold]Full Task Graph Timeline[/bold]",
+            border_style="cyan",
+            box=ROUNDED,
+        )
+
+    def show_full_task_graph_timeline(self) -> None:
+        """Print the full task graph timeline into terminal scrollback."""
+        panel = self.create_full_task_graph_timeline_panel()
+        if panel is not None:
+            self.console.print(panel)
+
+    def _add_task_graph_node(
+        self,
+        parent,
+        node: dict[str, Any],
+        *,
+        current_task_id: str | None,
+        index: int,
+        depth: int,
+    ):
+        status = node.get("status", "pending")
+        style, icon = self._status_style_icon(status, active=node.get("id") == current_task_id)
+        description = node.get("description", "Untitled task")
+        label = self._task_graph_node_label(node, description, index=index, depth=depth)
+        effort = node.get("effort")
+        suffix = f" [dim]({effort})[/dim]" if effort else ""
+        branch = parent.add(f"{icon} [{style}]{label}[/{style}]{suffix}")
+        for child_index, child in enumerate(node.get("children") or [], 1):
+            self._add_task_graph_node(
+                branch,
+                child,
+                current_task_id=current_task_id,
+                index=child_index,
+                depth=depth + 1,
+            )
+        return branch
+
+    def _task_graph_node_label(self, node: dict[str, Any], description: str, *, index: int, depth: int) -> str:
+        if depth == 0:
+            return f"{index}. {description}"
+        kind = (node.get("kind") or "").lower()
+        prefixes = {
+            "tool": f"Tool {index}",
+            "goal": f"Goal {index}",
+            "task": f"Task {index}",
+            "result": "Result",
+            "note": "Note",
+            "prompt_context": "Prompt Context",
+            "rubric": "Rubric",
+        }
+        prefix = prefixes.get(kind)
+        return f"{prefix}: {description}" if prefix else description
+
+    def _task_graph_live_tasks(
+        self,
+        tasks: list[dict[str, Any]],
+        current_task_id: str | None,
+    ) -> list[dict[str, Any]]:
+        """Return a live-dashboard view that keeps top-level iterations visible."""
+        row_limit = self._task_graph_live_row_limit()
+        if self._task_graph_visible_rows(tasks) <= row_limit:
+            return tasks
+
+        active_root_id = self._task_graph_active_root_id(tasks, current_task_id)
+        last_root_id = tasks[-1].get("id") if tasks else None
+        display_tasks: list[dict[str, Any]] = []
+
+        for task in tasks:
+            task_id = task.get("id")
+            should_keep_expanded = task_id in {active_root_id, last_root_id}
+            is_completed_iteration = (
+                (task.get("kind") or "").lower() == "iteration"
+                and (task.get("status") or "").lower() in {"completed", "success"}
+            )
+            if is_completed_iteration and not should_keep_expanded and task.get("children"):
+                hidden_rows = self._task_graph_visible_rows(task.get("children") or [])
+                collapsed = dict(task)
+                collapsed["description"] = (
+                    f"{task.get('description', 'Iteration')} "
+                    f"(... {hidden_rows} details hidden; full timeline printed below)"
+                )
+                collapsed.pop("children", None)
+                display_tasks.append(collapsed)
+            else:
+                display_tasks.append(task)
+
+        return display_tasks
+
+    def _task_graph_active_root_id(self, tasks: list[dict[str, Any]], current_task_id: str | None) -> str | None:
+        if current_task_id:
+            for task in tasks:
+                if self._task_graph_contains_node(task, current_task_id):
+                    return task.get("id")
+        for task in tasks:
+            if (task.get("status") or "").lower() in {"running", "in_progress"}:
+                return task.get("id")
+        return None
+
+    def _task_graph_contains_node(self, node: dict[str, Any], node_id: str) -> bool:
+        if node.get("id") == node_id:
+            return True
+        return any(self._task_graph_contains_node(child, node_id) for child in node.get("children") or [])
+
+    def _task_graph_visible_rows(self, nodes: list[dict[str, Any]]) -> int:
+        total = 0
+        for node in nodes:
+            total += 1
+            total += self._task_graph_visible_rows(node.get("children") or [])
+        return total
+
+    def _task_graph_live_row_limit(self) -> int:
+        return max(8, self._task_graph_panel_height(999) - 4)
+
+    def _task_graph_panel_height(self, visible_rows: int) -> int:
+        return max(12, min(22, visible_rows + 4))
 
     def _status_style_icon(self, status: str, active: bool = False) -> tuple[str, str]:
         status = (status or "pending").lower()

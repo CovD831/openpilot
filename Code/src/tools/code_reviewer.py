@@ -33,7 +33,14 @@ CODE_REVIEWER_DEFINITION = ToolDefinition(
             type="string",
             description="Programming language (python, shell, bash)",
             required=True
-        )
+        ),
+        ToolInputSchema(
+            name="prompt_context",
+            type="object",
+            description="Structured upper-layer Prompt Context for product-fit review",
+            required=False,
+            default={}
+        ),
     ],
     output_schema=ToolOutputSchema(
         type="object",
@@ -80,6 +87,7 @@ def code_reviewer_executor(params: dict[str, Any]) -> dict[str, Any]:
 
     code = params["code"]
     language_str = params["language"].lower()
+    prompt_context = params.get("prompt_context") if isinstance(params.get("prompt_context"), dict) else {}
 
     # Map language string to CodeLanguage enum
     language_map = {
@@ -112,19 +120,35 @@ def code_reviewer_executor(params: dict[str, Any]) -> dict[str, Any]:
         # Review code
         result = reviewer.review_code(generated_code)
 
+        product_warnings = _product_fit_warnings(code, prompt_context)
+        approved = bool(result.approved and not product_warnings)
         return {
             "review": (
                 "Approved"
-                if result.approved
+                if approved
                 else "Review found issues"
             ),
             "issues": [issue.dict() if hasattr(issue, 'dict') else str(issue) for issue in result.dangerous_operations],
-            "suggestions": result.recommendations,
-            "approved": result.approved,
+            "suggestions": result.recommendations + product_warnings,
+            "approved": approved,
             "syntax_errors": result.syntax_errors,
-            "warnings": result.warnings,
+            "warnings": result.warnings + product_warnings,
             "quality_score": result.quality_score,
             "complexity_score": result.complexity_score,
         }
     except Exception as e:
         raise Exception(f"Code review failed: {e}") from e
+
+
+def _product_fit_warnings(code: str, prompt_context: dict[str, Any]) -> list[str]:
+    product_judgment = prompt_context.get("product_judgment") or {}
+    if product_judgment.get("preferred_stack") != "pygame":
+        return []
+    lowered = code.lower()
+    if "pygame" in lowered:
+        return []
+    if "import curses" in lowered or "curses." in lowered or "stdscr" in lowered:
+        return [
+            "Product-fit rubric not satisfied: default Python snake game should migrate from terminal/curses to pygame unless terminal was requested."
+        ]
+    return []

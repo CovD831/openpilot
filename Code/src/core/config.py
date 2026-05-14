@@ -24,6 +24,9 @@ class LLMSettings(BaseSettings):
     model: str = Field(default="gpt-4o-mini", alias="OPENPILOT_LLM_MODEL")
     timeout_seconds: float = Field(default=60.0, alias="OPENPILOT_LLM_TIMEOUT_SECONDS")
     temperature: float = Field(default=0.2, alias="OPENPILOT_LLM_TEMPERATURE")
+    transport_retries: int = Field(default=2, alias="OPENPILOT_LLM_TRANSPORT_RETRIES")
+    retry_initial_delay: float = Field(default=2.0, alias="OPENPILOT_LLM_RETRY_INITIAL_DELAY")
+    retry_max_delay: float = Field(default=20.0, alias="OPENPILOT_LLM_RETRY_MAX_DELAY")
 
     def missing_fields(self) -> list[str]:
         """Return required LLM settings that are blank or missing."""
@@ -48,5 +51,4 @@ class LLMSettings(BaseSettings):
             raise MissingAPIKeyError(
                 f"Missing LLM configuration: {', '.join(missing)}."
             )
-
 

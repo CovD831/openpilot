@@ -40,7 +40,14 @@ CODE_GENERATOR_DEFINITION = ToolDefinition(
             description="Additional context or requirements",
             required=False,
             default=""
-        )
+        ),
+        ToolInputSchema(
+            name="prompt_context",
+            type="object",
+            description="Structured upper-layer Prompt Context from the autonomous agent",
+            required=False,
+            default={}
+        ),
     ],
     output_schema=ToolOutputSchema(
         type="object",
@@ -95,6 +102,7 @@ def code_generator_executor(params: dict[str, Any]) -> dict[str, Any]:
     task_description = params["task_description"]
     language_str = params["language"].lower()
     context = params.get("context", "")
+    prompt_context = params.get("prompt_context") or {}
 
     # Map language string to CodeLanguage enum
     language_map = {
@@ -122,7 +130,9 @@ def code_generator_executor(params: dict[str, Any]) -> dict[str, Any]:
             request_id=f"req_{uuid.uuid4().hex[:8]}",
             task_description=task_description,
             language=language,
-            context=context
+            context=context,
+            prompt_context=prompt_context if isinstance(prompt_context, dict) else {},
+            max_lines=260 if (prompt_context.get("product_judgment") or {}).get("preferred_stack") == "pygame" else 100,
         )
 
         # Generate code

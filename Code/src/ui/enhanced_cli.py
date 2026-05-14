@@ -154,6 +154,8 @@ def _run_once_mode(
             import time
             time.sleep(1)
 
+        ui.show_full_task_graph_timeline()
+
         if result.get("success"):
             ui.show_success("Goal completed successfully!")
             return 0
@@ -162,6 +164,7 @@ def _run_once_mode(
         return 2
 
     except Exception as e:
+        ui.show_full_task_graph_timeline()
         ui.show_error("Execution failed", str(e))
         import traceback
         traceback.print_exc()
@@ -373,8 +376,17 @@ def _execute_autopilot(
             import time
             time.sleep(1)
 
+        ui.show_full_task_graph_timeline()
+
         if result.get("success"):
-            ui.show_success("Goal completed!")
+            warning = result.get("iteration_error")
+            if warning:
+                ui.show_success(
+                    "Goal completed with iteration warning",
+                    warning,
+                )
+            else:
+                ui.show_success("Goal completed!")
         else:
             details = (
                 result.get("error")
@@ -394,6 +406,7 @@ def _execute_autopilot(
 
     except Exception as e:
         ui.console.print()
+        ui.show_full_task_graph_timeline()
         ui.show_error("Autopilot execution failed", str(e))
         import traceback
         traceback.print_exc()

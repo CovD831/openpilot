@@ -225,6 +225,7 @@ class AutonomousIterationAgent:
                 iteration_result,
                 tasks,
                 is_repair,
+                improvement_report,
             )
             evaluations.append(current)
             self._notify(
@@ -316,6 +317,8 @@ class AutonomousIterationAgent:
             "failed_iteration": failure_context.get("failed_iteration"),
             "failed_tool": failure_context.get("failed_tool"),
             "failure_reason": failure_context.get("failure_reason"),
+            "retry_attempted": failure_context.get("retry_attempted", False),
+            "retry_history": failure_context.get("retry_history", []),
             "last_successful_iteration": completed_improvements,
             "remaining_goals": remaining_goals,
         }
@@ -360,7 +363,9 @@ class AutonomousIterationAgent:
     ) -> list[ImprovementGoal]:
         prompt = (
             "You are OpenPilot's Goal Maker Agent. Create 1-3 concrete, evaluable project "
-            "improvement goals. Avoid vague goals like 'make it better'. Return ONLY JSON.\n\n"
+            "improvement goals. Avoid vague goals like 'make it better'. Return ONLY JSON.\n"
+            "Respect any Prompt Context in the improvement report as parent intent. Treat product fit "
+            "and default user expectations as first-class evaluation criteria, not optional polish.\n\n"
             f"Completed successful improvements: {completed_iteration}\n"
             f"Project state JSON: {project_state.model_dump_json()}\n"
             f"Validation JSON: {evaluation.model_dump_json()}\n"
@@ -387,7 +392,9 @@ class AutonomousIterationAgent:
     ) -> list[DesignedImprovementTask]:
         prompt = (
             "You are OpenPilot's Task Designer Agent. Convert one improvement goal into 1-2 "
-            "specific implementation tasks with target files and acceptance criteria. Return ONLY JSON.\n\n"
+            "specific implementation tasks with target files and acceptance criteria. Return ONLY JSON.\n"
+            "Carry forward the Prompt Context/rubric from the improvement report exactly. Do not dilute "
+            "a product-fit migration goal into terminal-only polish tasks.\n\n"
             f"Completed successful improvements: {completed_iteration}\n"
             f"Selected goal JSON: {goal.model_dump_json()}\n"
             f"Project state JSON: {project_state.model_dump_json()}\n"
@@ -501,12 +508,16 @@ class AutonomousIterationAgent:
         iteration_result: IterationResult,
         tasks: list[DesignedImprovementTask],
         is_repair: bool,
+        improvement_report: dict[str, Any] | None = None,
     ) -> bool:
         notes = []
         if not evaluation.validation_passed:
             notes.append("Hard validation did not pass after modification.")
         if not iteration_result.changed_files:
             notes.append("No changed files were reported by the task executor.")
+        product_note = self._product_fit_failure_note(improvement_report or {}, iteration_result, tasks)
+        if product_note:
+            notes.append(product_note)
         if tasks:
             criteria = [item for task in tasks for item in task.acceptance_criteria]
             if criteria:
@@ -515,7 +526,38 @@ class AutonomousIterationAgent:
         if notes and not iteration_result.failure_reason:
             iteration_result.failure_reason = "; ".join(notes)
             iteration_result.failure_stage = "Modification Evaluator"
-        return bool(evaluation.validation_passed and not is_repair and iteration_result.changed_files)
+        return bool(evaluation.validation_passed and not is_repair and iteration_result.changed_files and not product_note)
+
+    def _product_fit_failure_note(
+        self,
+        improvement_report: dict[str, Any],
+        iteration_result: IterationResult,
+        tasks: list[DesignedImprovementTask],
+    ) -> str | None:
+        prompt_context = improvement_report.get("prompt_context") if isinstance(improvement_report, dict) else {}
+        product_judgment = (prompt_context or {}).get("product_judgment") or improvement_report.get("product_judgment") or {}
+        if product_judgment.get("preferred_stack") != "pygame":
+            return None
+        task_text = " ".join([task.description for task in tasks] + [item for task in tasks for item in task.acceptance_criteria]).lower()
+        terminal_polish_terms = ("terminal", "curses", "resize", "stdscr", "pause", "timeout", "终端", "窗口大小", "暂停")
+        if not any(term in task_text for term in terminal_polish_terms):
+            return None
+        code_text = ""
+        for raw_path in iteration_result.changed_files[:3]:
+            path = Path(raw_path).expanduser()
+            if path.exists() and path.is_file():
+                try:
+                    code_text += "\n" + path.read_text(encoding="utf-8")[:5000].lower()
+                except OSError:
+                    pass
+        if "pygame" in code_text:
+            return None
+        if "import curses" in code_text or "curses." in code_text or "stdscr" in code_text or not code_text:
+            return (
+                "Product-fit rubric not satisfied: for a default Python snake game, terminal/curses polish "
+                "does not count as a better improvement than migrating to a standalone pygame GUI."
+            )
+        return None
 
     def _record_mind_note(
         self,
@@ -618,6 +660,8 @@ class AutonomousIterationAgent:
             "failed_iteration": iteration,
             "failed_tool": failed_tool,
             "failure_reason": reason,
+            "retry_attempted": iteration_result.retry_attempted,
+            "retry_history": iteration_result.retry_history,
             "failed_actions": actions,
             "selected_goal": selected_goal,
             "designed_tasks": designed_tasks,

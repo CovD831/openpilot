@@ -35,6 +35,7 @@ class IterationResult(BaseModel):
     failed_tool: str | None = None
     failure_reason: str | None = None
     retry_attempted: bool = False
+    retry_history: list[dict] = Field(default_factory=list)
     remaining_goals: list[str] = Field(default_factory=list)
 
 

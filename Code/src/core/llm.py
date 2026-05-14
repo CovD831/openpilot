@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any, Literal
 
 from openai import APITimeoutError, OpenAI, OpenAIError
@@ -11,14 +12,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from core.config import LLMSettings
 from core.exceptions import (
+    ErrorCategory,
     InvalidLLMResponseError,
     LLMProviderError,
     LLMTimeoutError,
     classify_error,
-    is_retryable_error,
 )
 from utils.json_utils import safe_parse_json
-from utils.concurrency import retry_with_backoff
 
 
 class LLMMessage(BaseModel):
@@ -113,22 +113,7 @@ class LLMClient:
             if request.response_format == "json_object":
                 payload["response_format"] = {"type": "json_object"}
 
-            try:
-                response = client.chat.completions.create(**payload)
-            except APITimeoutError as exc:
-                # Retry on timeout (max 2 retries)
-                if attempt < 2:  # Will retry up to 2 times (total 3 attempts)
-                    import time
-                    wait_time = 5 * (attempt + 1)  # 5s, 10s
-                    print(f"⚠️  Request timed out, retrying in {wait_time}s... (attempt {attempt + 1}/2)")
-                    time.sleep(wait_time)
-                    continue
-                raise LLMTimeoutError(str(exc)) from exc
-            except OpenAIError as exc:
-                error_type = classify_error(exc)
-                if is_retryable_error(exc) and attempt < max_retries - 1:
-                    continue
-                raise LLMProviderError(f"{error_type}: {exc}") from exc
+            response = self._create_completion_with_transport_retry(client, payload)
 
             choice = response.choices[0]
             content = choice.message.content or ""
@@ -207,6 +192,61 @@ class LLMClient:
             f"LLM returned invalid JSON after {max_retries} attempts."
         )
 
+    def _create_completion_with_transport_retry(self, client: OpenAI, payload: dict[str, Any]) -> Any:
+        attempts = max(0, int(getattr(self.settings, "transport_retries", 0))) + 1
+        delay = max(0.0, float(getattr(self.settings, "retry_initial_delay", 0.0)))
+        max_delay = max(delay, float(getattr(self.settings, "retry_max_delay", delay)))
+        last_error: OpenAIError | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return client.chat.completions.create(**payload)
+            except APITimeoutError as exc:
+                last_error = exc
+                category = ErrorCategory.TIMEOUT
+                retryable = True
+            except OpenAIError as exc:
+                last_error = exc
+                category = self._classify_provider_error(exc)
+                retryable = self._is_retryable_provider_error(exc, category)
+
+            if not retryable or attempt >= attempts:
+                break
+            if delay > 0:
+                time.sleep(min(delay, max_delay))
+                delay = min(delay * 2 if delay else 0, max_delay)
+
+        if isinstance(last_error, APITimeoutError):
+            raise LLMTimeoutError(str(last_error), timeout_seconds=self.settings.timeout_seconds) from last_error
+        if last_error is not None:
+            category = self._classify_provider_error(last_error)
+            status_code = getattr(last_error, "status_code", None)
+            raise LLMProviderError(
+                f"{category}: {last_error}",
+                status_code=status_code,
+                retryable=self._is_retryable_provider_error(last_error, category),
+                category=category,
+            ) from last_error
+        raise LLMProviderError("Provider request failed without an error.", retryable=True, category=ErrorCategory.RETRYABLE)
+
+    def _classify_provider_error(self, exc: OpenAIError) -> ErrorCategory:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 429:
+            return ErrorCategory.RETRYABLE
+        if isinstance(status_code, int) and status_code >= 500:
+            return ErrorCategory.RETRYABLE
+        if isinstance(status_code, int) and 400 <= status_code < 500:
+            if status_code in {401, 403}:
+                return ErrorCategory.AUTH
+            return ErrorCategory.TERMINAL
+        return classify_error(exc)
+
+    def _is_retryable_provider_error(self, exc: OpenAIError, category: ErrorCategory) -> bool:
+        status_code = getattr(exc, "status_code", None)
+        if isinstance(status_code, int):
+            return status_code == 429 or status_code >= 500
+        return category in {ErrorCategory.RETRYABLE, ErrorCategory.TIMEOUT, ErrorCategory.NETWORK}
+
     def _extract_json_from_content(self, content: str) -> str:
         """Extract JSON from content, handling markdown code blocks.
 
@@ -238,5 +278,4 @@ class LLMClient:
 
         # Return as-is if no patterns found
         return content
-
 

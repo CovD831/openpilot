@@ -56,9 +56,29 @@ class LLMTimeoutError(OpenPilotError):
 class LLMProviderError(OpenPilotError):
     """Raised when the configured LLM provider returns an error."""
 
-    def __init__(self, message: str, status_code: Optional[int] = None, retryable: bool = False):
-        category = ErrorCategory.RETRYABLE if retryable else ErrorCategory.TERMINAL
-        context = {"status_code": status_code} if status_code else {}
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        retryable: bool = False,
+        category: ErrorCategory | None = None,
+    ):
+        if category is None:
+            message_lower = message.lower()
+            if "network" in message_lower or "connection" in message_lower:
+                category = ErrorCategory.NETWORK
+                retryable = True
+            elif "timeout" in message_lower:
+                category = ErrorCategory.TIMEOUT
+                retryable = True
+            elif "rate limit" in message_lower or "429" in message_lower:
+                category = ErrorCategory.RETRYABLE
+                retryable = True
+            else:
+                category = ErrorCategory.RETRYABLE if retryable else ErrorCategory.TERMINAL
+        context = {"retryable": retryable}
+        if status_code:
+            context["status_code"] = status_code
         super().__init__(message, category=category, context=context)
 
 
@@ -321,5 +341,3 @@ def is_permission_error(error: Exception) -> bool:
         return True
 
     return any(keyword in str(error).lower() for keyword in ['permission denied', 'access denied'])
-
-

@@ -5,6 +5,7 @@
 """
 
 import ast
+import json
 import re
 import time
 import uuid
@@ -118,6 +119,9 @@ class CodeGenerator:
 
     def _build_prompt(self, request: CodeGenerationRequest) -> str:
         """构建提示词"""
+        if request.prompt_context:
+            return self._build_contextual_prompt(request)
+
         # 选择模板
         if request.language == CodeLanguage.PYTHON:
             template = self.PYTHON_TEMPLATE
@@ -153,38 +157,99 @@ class CodeGenerator:
 
         return prompt
 
+    def _build_contextual_prompt(self, request: CodeGenerationRequest) -> str:
+        """Build a tool-specific prompt around the upper-layer Prompt Context."""
+        prompt_context = request.prompt_context or {}
+        constraints = self._constraint_lines(request)
+        context_json = json.dumps(prompt_context, ensure_ascii=False, indent=2, default=str)
+        product_judgment = prompt_context.get("product_judgment") or {}
+        quality_rubric = prompt_context.get("quality_rubric") or []
+        if isinstance(quality_rubric, str):
+            quality_rubric = [quality_rubric]
+        rubric_text = "\n".join(f"- {item}" for item in quality_rubric[:8])
+        if not rubric_text:
+            rubric_text = "- Satisfy the original user goal with visible, user-facing behavior."
+
+        runtime_guidance = ""
+        if product_judgment.get("preferred_stack") == "pygame":
+            runtime_guidance = (
+                "\nProduct-fit guidance: for this game request, prefer a standalone pygame window "
+                "unless the user explicitly requested terminal/curses. Include a normal pygame main loop, "
+                "visual score display, restart/quit controls, and dependency-aware run behavior."
+            )
+
+        return f"""You are OpenPilot's Code Generator Tool.
+The parent Agent has already decided the project intent, product judgment, rubric, and iteration goal.
+Preserve that upper-layer context exactly; use it as the source of truth, then apply your tool-specific code generation duties.
+
+PROMPT CONTEXT JSON:
+{context_json}
+
+TOOL TASK:
+{request.task_description}
+
+PRODUCT QUALITY RUBRIC:
+{rubric_text}
+{runtime_guidance}
+
+TOOL OUTPUT REQUIREMENTS:
+1. Generate complete, executable {request.language.value} code for the target file.
+2. Return the full replacement source code, not a patch.
+3. Keep existing useful behavior unless the Prompt Context explicitly asks to replace it for product fit.
+4. Include necessary imports, entry point, and concise comments for non-obvious logic.
+5. If using pygame, make the windowed game directly playable and keep README/run-command compatibility in mind.
+6. Return only code in a fenced code block; do not include explanations outside the code block.
+{constraints}
+"""
+
+    def _constraint_lines(self, request: CodeGenerationRequest) -> str:
+        constraints = []
+
+        if request.max_lines:
+            constraints.append(f"- Code should be at most {request.max_lines} lines when practical.")
+
+        if request.allowed_imports:
+            imports_str = ", ".join(request.allowed_imports)
+            constraints.append(f"- Allowed imports only: {imports_str}")
+
+        if request.forbidden_operations:
+            ops_str = ", ".join(request.forbidden_operations)
+            constraints.append(f"- Forbidden operations: {ops_str}")
+
+        if request.context:
+            constraints.append(f"- Additional tool context: {request.context}")
+
+        return "\n".join(constraints)
+
     def _call_llm(self, prompt: str) -> str:
         """调用 LLM"""
-        try:
-            # 调用实际的 LLM API
-            if hasattr(self.llm_client, 'complete'):
-                # LLMClient 使用 complete 方法，需要 LLMRequest 对象
-                from core.llm import LLMRequest, LLMMessage
-                request = LLMRequest(
-                    messages=[LLMMessage(role="user", content=prompt)],
-                    response_format="text",
-                    temperature=0.7
-                )
-                response = self.llm_client.complete(request)
-                return response.content
-            elif hasattr(self.llm_client, 'generate'):
-                response = self.llm_client.generate(prompt)
-            elif hasattr(self.llm_client, 'chat'):
-                response = self.llm_client.chat([{"role": "user", "content": prompt}])
-            else:
-                # 如果 LLM 客户端没有标准方法，尝试直接调用
-                response = self.llm_client(prompt)
+        # 调用实际的 LLM API。真实 provider 错误必须向上传递，交给
+        # LLM/tool retry 层分类处理，避免误写入模拟代码。
+        if hasattr(self.llm_client, 'complete'):
+            # LLMClient 使用 complete 方法，需要 LLMRequest 对象
+            from core.llm import LLMRequest, LLMMessage
+            request = LLMRequest(
+                messages=[LLMMessage(role="user", content=prompt)],
+                response_format="text",
+                temperature=0.7
+            )
+            response = self.llm_client.complete(request)
+            return response.content
+        elif hasattr(self.llm_client, 'generate'):
+            response = self.llm_client.generate(prompt)
+        elif hasattr(self.llm_client, 'chat'):
+            response = self.llm_client.chat([{"role": "user", "content": prompt}])
+        else:
+            # 如果 LLM 客户端没有标准方法，尝试直接调用
+            response = self.llm_client(prompt)
 
-            # 确保返回字符串
-            if isinstance(response, dict):
-                response = response.get('content') or response.get('text') or str(response)
-            elif not isinstance(response, str):
-                response = str(response)
+        # 确保返回字符串
+        if isinstance(response, dict):
+            response = response.get('content') or response.get('text') or str(response)
+        elif not isinstance(response, str):
+            response = str(response)
 
-            return response
-        except Exception as e:
-            print(f"[WARNING] LLM call failed: {e}, falling back to simulation")
-            return self._simulate_llm_response(prompt)
+        return response
 
     def _simulate_llm_response(self, prompt: str) -> str:
         """模拟 LLM 响应（用于测试）"""

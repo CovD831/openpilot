@@ -273,6 +273,23 @@ class ProgressTracker:
         with self.lock:
             return [op for op in self.operations.values() if op.end_time is None]
 
+    def finish_active_operations(self, success: bool = False, error: str | None = None) -> None:
+        """Force-close active operations so stale traces do not remain visible."""
+        with self.lock:
+            now = datetime.now()
+            for op in self.operations.values():
+                if op.end_time is None:
+                    op.end_time = now
+                    op.success = success
+                    op.error = error
+                    if error:
+                        op.phase = "Failed"
+                        lines = op.display_lines or []
+                        lines.append(f"Stopped: {error}")
+                        max_lines = getattr(self.ui, "max_active_trace_lines", 8)
+                        op.display_lines = lines[-max_lines:]
+        self.ui.set_active_operations([])
+
     def get_completed_operations(self, limit: int = 10) -> list[Operation]:
         """Get list of recently completed operations."""
         with self.lock:

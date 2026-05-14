@@ -37,6 +37,7 @@ class CodeGenerationRequest(BaseModel):
     # 输入数据
     input_data: Optional[dict[str, Any]] = Field(default=None, description="输入数据")
     context: Optional[str] = Field(default=None, description="上下文信息")
+    prompt_context: dict[str, Any] = Field(default_factory=dict, description="上层 Agent 传入的结构化提示上下文")
 
     # 约束条件
     max_lines: int = Field(default=100, description="最大行数")

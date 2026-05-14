@@ -357,7 +357,7 @@ class ToolExecutor:
             step_id=tool_selection.step_id,
             input_params=tool_selection.input_params,
             timeout_seconds=tool_selection.timeout_override or (tool_def.timeout_seconds if tool_def else 30),
-            max_retries=3,
+            max_retries=tool_def.max_retries if tool_def else 3,
             permission_level=tool_def.permission_level if tool_def else "medium",
             depends_on=tool_selection.depends_on
         )
