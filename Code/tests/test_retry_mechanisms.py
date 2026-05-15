@@ -13,6 +13,10 @@ from core.config import LLMSettings
 from core.exceptions import ErrorCategory, LLMProviderError, classify_error
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from execution.intelligent_autopilot import IntelligentAutopilot
+from tools.project_improvement_tool import (
+    PROJECT_IMPROVEMENT_TOOL_DEFINITION,
+    project_improvement_tool_executor,
+)
 
 
 class RetryLogger:
@@ -60,6 +64,8 @@ class RetryMechanismTest(unittest.TestCase):
 
         self.assertEqual(response.content, "ok")
         self.assertEqual(calls["count"], 2)
+        retry_history = response.raw_response_metadata["transport_retry_history"]
+        self.assertEqual([item["status"] for item in retry_history], ["failed", "success"])
 
     def test_llm_transport_retry_does_not_retry_auth_error(self) -> None:
         calls = {"count": 0}
@@ -94,6 +100,103 @@ class RetryMechanismTest(unittest.TestCase):
         error = LLMProviderError("ErrorCategory.NETWORK: Connection error.")
 
         self.assertEqual(classify_error(error), ErrorCategory.NETWORK)
+
+    def test_chat_provider_boundary_is_only_core_llm(self) -> None:
+        repo_root = Path(__file__).resolve().parents[2]
+        offenders = []
+        for path in (repo_root / "Code" / "src").rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            if "chat.completions.create" in text and path.name != "llm.py":
+                offenders.append(path.relative_to(repo_root).as_posix())
+
+        self.assertEqual(offenders, [])
+
+    def test_project_improvement_tool_uses_llm_sized_timeout_without_outer_retry(self) -> None:
+        self.assertGreaterEqual(PROJECT_IMPROVEMENT_TOOL_DEFINITION.timeout_seconds, 360)
+        self.assertEqual(PROJECT_IMPROVEMENT_TOOL_DEFINITION.max_retries, 0)
+
+    def test_project_improvement_tool_returns_marked_fallback_on_llm_failure(self) -> None:
+        class FailingLLM:
+            def complete(self, *args, **kwargs):
+                raise TimeoutError("provider stalled")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            main = project / "main.py"
+            main.write_text("import tkinter as tk\nroot = tk.Tk()\n", encoding="utf-8")
+            result = project_improvement_tool_executor(
+                {
+                    "project_path": str(project),
+                    "goal": "帮我做一个贪吃蛇",
+                    "written_files": [str(main)],
+                    "validation_result": {"validation_passed": True},
+                    "prompt_context": {
+                        "product_judgment": {
+                            "project_type": "interactive_game",
+                            "explicit_terminal_requested": False,
+                            "current_runtime": "tkinter_gui",
+                            "preferred_runtime": "standalone_gui",
+                            "preferred_stack": "pygame",
+                        }
+                    },
+                    "_llm_client": FailingLLM(),
+                }
+            )
+
+        self.assertEqual(result["source"], "fallback")
+        self.assertIn("provider stalled", result["fallback_reason"])
+        self.assertIn("pygame", result["next_iteration_goal"].lower())
+
+    def test_project_improvement_prompt_is_hard_cropped(self) -> None:
+        captured = {}
+
+        class CapturingLLM:
+            def complete(self, request, **kwargs):
+                captured["prompt"] = request.messages[0].content
+                return SimpleNamespace(
+                    parsed_json={
+                        "summary": "ok",
+                        "improvement_opportunities": ["Improve the GUI"],
+                        "recommended_actions": ["Use pygame"],
+                        "next_iteration_goal": "Migrate to pygame",
+                        "must_implement_next": ["pygame launches"],
+                        "blocking_risks": [],
+                    },
+                    content="{}",
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            main = project / "main.py"
+            main.write_text("import tkinter as tk\n" + "x = 1\n" * 3000 + "TAIL_SHOULD_BE_CROPPED\n", encoding="utf-8")
+            result = project_improvement_tool_executor(
+                {
+                    "project_path": str(project),
+                    "goal": "帮我做一个贪吃蛇",
+                    "written_files": [str(main)],
+                    "validation_result": {"validation_passed": True},
+                    "_llm_client": CapturingLLM(),
+                }
+            )
+
+        self.assertEqual(result["source"], "llm")
+        self.assertLess(len(captured["prompt"]), 9000)
+        self.assertNotIn("TAIL_SHOULD_BE_CROPPED", captured["prompt"])
+
+    def test_product_judgment_detects_tkinter_runtime(self) -> None:
+        autopilot = object.__new__(IntelligentAutopilot)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir)
+            main = project / "main.py"
+            main.write_text("import tkinter as tk\nroot = tk.Tk()\n", encoding="utf-8")
+            judgment = autopilot._infer_product_judgment(
+                original_goal="帮我做一个贪吃蛇",
+                project_path=project,
+                written_files=[str(main)],
+            )
+
+        self.assertEqual(judgment["current_runtime"], "tkinter_gui")
+        self.assertEqual(judgment["preferred_stack"], "pygame")
 
     def test_fast_tool_retries_retryable_non_timeout_but_not_timeout(self) -> None:
         autopilot = object.__new__(IntelligentAutopilot)

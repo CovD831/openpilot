@@ -100,10 +100,11 @@ class LLMClient:
         )
 
         last_error = None
+        repair_messages = list(request.messages)
         for attempt in range(max_retries):
             payload: dict[str, Any] = {
                 "model": self.settings.model,
-                "messages": [message.model_dump() for message in request.messages],
+                "messages": [message.model_dump() for message in repair_messages],
                 "temperature": request.temperature
                 if request.temperature is not None
                 else self.settings.temperature,
@@ -135,7 +136,12 @@ class LLMClient:
                         provider=self.settings.provider,
                         usage=usage,
                         finish_reason=choice.finish_reason,
-                        raw_response_metadata={"id": response.id, "created": response.created},
+                        raw_response_metadata={
+                            "id": response.id,
+                            "created": response.created,
+                            "transport_retry_history": getattr(self, "_last_transport_retry_history", []),
+                            "json_repair_attempt": attempt + 1,
+                        },
                     )
 
                     # Cache successful response
@@ -151,13 +157,13 @@ class LLMClient:
                     )
                     if attempt < max_retries - 1:
                         # Add a stronger instruction for the next attempt
-                        request.messages.append(
+                        repair_messages.append(
                             LLMMessage(
                                 role="assistant",
                                 content=content
                             )
                         )
-                        request.messages.append(
+                        repair_messages.append(
                             LLMMessage(
                                 role="user",
                                 content="The previous response was not valid JSON. Please return ONLY valid JSON without any markdown formatting, explanations, or extra text. Start with { or [ and end with } or ]."
@@ -177,7 +183,12 @@ class LLMClient:
                     provider=self.settings.provider,
                     usage=usage,
                     finish_reason=choice.finish_reason,
-                    raw_response_metadata={"id": response.id, "created": response.created},
+                    raw_response_metadata={
+                        "id": response.id,
+                        "created": response.created,
+                        "transport_retry_history": getattr(self, "_last_transport_retry_history", []),
+                        "json_repair_attempt": attempt + 1,
+                    },
                 )
 
                 # Cache successful response
@@ -197,10 +208,20 @@ class LLMClient:
         delay = max(0.0, float(getattr(self.settings, "retry_initial_delay", 0.0)))
         max_delay = max(delay, float(getattr(self.settings, "retry_max_delay", delay)))
         last_error: OpenAIError | None = None
+        history: list[dict[str, Any]] = []
+        self._last_transport_retry_history = history
 
         for attempt in range(1, attempts + 1):
             try:
-                return client.chat.completions.create(**payload)
+                response = client.chat.completions.create(**payload)
+                history.append(
+                    {
+                        "attempt": attempt,
+                        "status": "success",
+                        "retryable": False,
+                    }
+                )
+                return response
             except APITimeoutError as exc:
                 last_error = exc
                 category = ErrorCategory.TIMEOUT
@@ -210,6 +231,17 @@ class LLMClient:
                 category = self._classify_provider_error(exc)
                 retryable = self._is_retryable_provider_error(exc, category)
 
+            history.append(
+                {
+                    "attempt": attempt,
+                    "status": "failed",
+                    "category": category.value,
+                    "retryable": retryable,
+                    "error_type": type(last_error).__name__ if last_error else None,
+                    "error": str(last_error)[:500] if last_error else "",
+                }
+            )
+
             if not retryable or attempt >= attempts:
                 break
             if delay > 0:
@@ -217,16 +249,20 @@ class LLMClient:
                 delay = min(delay * 2 if delay else 0, max_delay)
 
         if isinstance(last_error, APITimeoutError):
-            raise LLMTimeoutError(str(last_error), timeout_seconds=self.settings.timeout_seconds) from last_error
+            error = LLMTimeoutError(str(last_error), timeout_seconds=self.settings.timeout_seconds)
+            error.context["transport_retry_history"] = history
+            raise error from last_error
         if last_error is not None:
             category = self._classify_provider_error(last_error)
             status_code = getattr(last_error, "status_code", None)
-            raise LLMProviderError(
+            error = LLMProviderError(
                 f"{category}: {last_error}",
                 status_code=status_code,
                 retryable=self._is_retryable_provider_error(last_error, category),
                 category=category,
-            ) from last_error
+            )
+            error.context["transport_retry_history"] = history
+            raise error from last_error
         raise LLMProviderError("Provider request failed without an error.", retryable=True, category=ErrorCategory.RETRYABLE)
 
     def _classify_provider_error(self, exc: OpenAIError) -> ErrorCategory:
@@ -278,4 +314,3 @@ class LLMClient:
 
         # Return as-is if no patterns found
         return content
-

@@ -566,6 +566,9 @@ class IntelligentAutopilot:
         timeout_override: int | None = None,
         parent_task_id: str | None = None,
     ) -> dict[str, Any]:
+        if timeout_override is None:
+            timeout_override = self._llm_tool_timeout_override(tool_name)
+
         if self.enhanced_ui:
             if parent_task_id:
                 self._set_dashboard_task_status(parent_task_id, "running")
@@ -737,10 +740,36 @@ class IntelligentAutopilot:
             return False
         if self._execution_result_is_timeout(exec_result):
             return False
+        error_type = exec_result.error.error_type or ""
+        if error_type in {"LLMProviderError", "LLMTimeoutError"}:
+            return False
         if exec_result.error.retry_recommended:
             return True
         category = classify_error(Exception(exec_result.error.error_message))
         return category.value in {"retryable", "network"}
+
+    def _llm_tool_timeout_override(self, tool_name: str) -> int | None:
+        tool_def = self.tool_registry.get(tool_name) if getattr(self, "tool_registry", None) else None
+        capabilities = getattr(tool_def, "capabilities", []) if tool_def else []
+        has_llm_call = any(getattr(capability, "value", capability) == "llm_call" for capability in capabilities)
+        if not has_llm_call:
+            return None
+
+        settings = getattr(self.llm_client, "settings", None)
+        provider_timeout = float(getattr(settings, "timeout_seconds", 60.0) or 60.0)
+        transport_attempts = max(1, int(getattr(settings, "transport_retries", 0) or 0) + 1)
+        initial_delay = max(0.0, float(getattr(settings, "retry_initial_delay", 0.0) or 0.0))
+        max_delay = max(initial_delay, float(getattr(settings, "retry_max_delay", initial_delay) or initial_delay))
+        delay_budget = 0.0
+        delay = initial_delay
+        for _ in range(max(0, transport_attempts - 1)):
+            delay_budget += min(delay, max_delay)
+            delay = min(delay * 2 if delay else 0.0, max_delay)
+
+        json_attempt_budget = 2
+        computed = int(provider_timeout * transport_attempts * json_attempt_budget + delay_budget * json_attempt_budget + 30)
+        default_timeout = int(getattr(tool_def, "timeout_seconds", 30) or 30)
+        return max(default_timeout, min(computed, 900))
 
     def _finalize_project_readme(
         self,
@@ -1239,7 +1268,7 @@ class IntelligentAutopilot:
         )
         if tool_result["success"] and isinstance(tool_result.get("result"), dict):
             return tool_result["result"]
-        return {
+        fallback = {
             "summary": evaluation.summary,
             "improvement_opportunities": evaluation.improvement_opportunities,
             "recommended_actions": evaluation.recommended_actions,
@@ -1247,7 +1276,34 @@ class IntelligentAutopilot:
             "blocking_risks": evaluation.validation_errors,
             "prompt_context": prompt_context,
             "product_judgment": prompt_context.get("product_judgment") or {},
+            "source": "fallback",
+            "fallback_reason": tool_result.get("error") or "project_improvement_tool did not return a usable report.",
         }
+        if not fallback.get("next_iteration_goal") and self._fallback_should_prefer_pygame(prompt_context):
+            fallback.update(
+                {
+                    "summary": (
+                        "Using fallback improvement analysis: default Python snake-game product fit favors "
+                        "a standalone pygame GUI."
+                    ),
+                    "improvement_opportunities": [
+                        "Migrate the playable snake experience to a standalone pygame window.",
+                        *fallback.get("improvement_opportunities", [])[:2],
+                    ],
+                    "recommended_actions": [
+                        "Rebuild main.py as a pygame snake game with visible snake, food, score, collision, game over, restart, and quit controls.",
+                        "Update README dependencies and run command for pygame.",
+                        *fallback.get("recommended_actions", [])[:2],
+                    ],
+                    "next_iteration_goal": "Migrate the snake game to a standalone pygame GUI",
+                    "must_implement_next": [
+                        "The game opens in a pygame window.",
+                        "Snake movement, food, scoring, collision, game-over, restart, and quit controls are playable.",
+                        "README includes pygame setup and run instructions.",
+                    ],
+                }
+            )
+        return fallback
 
     def _build_prompt_context(
         self,
@@ -1321,6 +1377,8 @@ class IntelligentAutopilot:
                         pass
         if "pygame" in code_text:
             current_runtime = "pygame_gui"
+        elif "import tkinter" in code_text or "from tkinter" in code_text or "tk." in code_text or "tkinter." in code_text:
+            current_runtime = "tkinter_gui"
         elif "import curses" in code_text or "curses." in code_text or "stdscr" in code_text:
             current_runtime = "terminal_curses"
         else:
@@ -1349,6 +1407,16 @@ class IntelligentAutopilot:
             "preferred_stack": preferred_stack,
             "recommendation": recommendation,
         }
+
+    def _fallback_should_prefer_pygame(self, prompt_context: dict[str, Any]) -> bool:
+        product_judgment = prompt_context.get("product_judgment") or {}
+        if product_judgment.get("explicit_terminal_requested"):
+            return False
+        return (
+            product_judgment.get("project_type") == "interactive_game"
+            and product_judgment.get("preferred_stack") == "pygame"
+            and product_judgment.get("current_runtime") != "pygame_gui"
+        )
 
     def _quality_rubric_for_product(self, product_judgment: dict[str, Any]) -> list[str]:
         rubric = [
@@ -2393,6 +2461,15 @@ class IntelligentAutopilot:
             self._set_dashboard_task_status(self._dashboard_stage_id("goal_maker"), "running")
             report = payload.get("report") or {}
             next_goal = report.get("next_iteration_goal") or "No next goal reported."
+            if report.get("source") == "fallback":
+                fallback_reason = report.get("fallback_reason") or "project_improvement_tool did not return a usable report."
+                self._append_dashboard_stage_child(
+                    "goal_maker",
+                    child_id=f"improvement_fallback_{payload.get('completed_improvements', 0)}",
+                    description=f"Using fallback improvement report because {fallback_reason}",
+                    kind="result",
+                    status="completed",
+                )
             self._append_dashboard_stage_child(
                 "goal_maker",
                 child_id=f"improvement_report_{payload.get('completed_improvements', 0)}",
@@ -2425,7 +2502,12 @@ class IntelligentAutopilot:
                 title="Improvement analysis",
                 details=(
                     f"Improvements applied: {payload['completed_improvements']}/{payload['required_improvements']}\n"
-                    f"Next improvement goal: {next_goal}"
+                    + (
+                        f"Fallback: {report.get('fallback_reason')}\n"
+                        if report.get("source") == "fallback"
+                        else ""
+                    )
+                    + f"Next improvement goal: {next_goal}"
                 ),
                 status="completed",
             )

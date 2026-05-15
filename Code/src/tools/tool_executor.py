@@ -16,16 +16,13 @@ from execution.executor_models import (
     ExecutionResult,
     ExecutionStatus,
     ParallelExecutionResult,
-    ResourceUsage,
 )
 from tools.tool_orchestration_models import (
     ParallelExecutionGroup,
-    ToolOrchestrationPlan,
     ToolSelection,
 )
 from tools.tool_registry import ToolRegistry
 from core.exceptions import classify_error, is_retryable_error, extract_error_context
-from utils.concurrency import with_timeout, retry_with_backoff, sequential
 
 
 class ToolExecutor:
@@ -251,53 +248,6 @@ class ToolExecutor:
         )
 
         return parallel_result
-
-    def execute_with_retry(
-        self,
-        tool_selection: ToolSelection,
-        max_retries: int = 3,
-        retry_delay: int = 2
-    ) -> ExecutionResult:
-        """
-        执行工具（带重试）
-
-        Args:
-            tool_selection: 工具选择
-            max_retries: 最大重试次数
-            retry_delay: 重试延迟（秒）
-
-        Returns:
-            ExecutionResult: 执行结果
-        """
-        last_result = None
-
-        for attempt in range(1, max_retries + 1):
-            # 创建上下文
-            context = self._create_context(tool_selection)
-            context.max_retries = max_retries
-
-            # 执行
-            result = self.execute_single(tool_selection, context)
-            result.attempt_number = attempt
-            result.retry_count = attempt - 1
-
-            # 如果成功，直接返回
-            if result.success:
-                return result
-
-            # 如果失败但不建议重试，直接返回
-            if result.error and not result.error.retry_recommended:
-                return result
-
-            # 记录重试
-            last_result = result
-            if attempt < max_retries:
-                result.status = ExecutionStatus.RETRYING
-                result.add_log("INFO", f"Retrying in {retry_delay}s (attempt {attempt}/{max_retries})")
-                time.sleep(retry_delay)
-
-        # 所有重试都失败
-        return last_result
 
     def execute_with_fallback(
         self,

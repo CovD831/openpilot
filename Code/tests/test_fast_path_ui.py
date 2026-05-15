@@ -282,6 +282,43 @@ class FastPathUITest(unittest.TestCase):
         )
         self.assertNotIn("children", evaluation)
 
+    def test_improvement_report_fallback_is_visible_in_task_graph(self) -> None:
+        autopilot = object.__new__(IntelligentAutopilot)
+        ui = FakeEnhancedUI()
+        autopilot.enhanced_ui = ui
+        autopilot.required_successful_improvements = 2
+
+        autopilot._reset_iteration_dashboard("make snake")
+        autopilot._ensure_dashboard_iteration(1)
+        autopilot._handle_iteration_progress(
+            "improvement_report",
+            {
+                "completed_improvements": 0,
+                "required_improvements": 2,
+                "report": {
+                    "source": "fallback",
+                    "fallback_reason": "Execution exceeded timeout of 60s",
+                    "next_iteration_goal": "Migrate the snake game to a standalone pygame GUI",
+                    "prompt_context": {
+                        "product_judgment": {
+                            "preferred_runtime": "standalone_gui",
+                            "preferred_stack": "pygame",
+                            "current_runtime": "tkinter_gui",
+                            "explicit_terminal_requested": False,
+                        },
+                        "quality_rubric": ["Prefer pygame GUI."],
+                    },
+                },
+            },
+        )
+
+        iteration = next(task for task in ui.task_graph_state["tasks"] if task["id"] == "iteration_1")
+        goal_maker = next(child for child in iteration["children"] if child["id"] == "iteration_1_goal_maker")
+        descriptions = [child["description"] for child in goal_maker["children"]]
+
+        self.assertTrue(any("Using fallback improvement report" in item for item in descriptions))
+        self.assertTrue(any("Migrate the snake game" in item for item in descriptions))
+
     def test_iteration_timeline_preserves_history_and_debug_children(self) -> None:
         autopilot = object.__new__(IntelligentAutopilot)
         ui = FakeEnhancedUI()
