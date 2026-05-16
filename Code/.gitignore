@@ -47,6 +47,8 @@ logs/*.jsonl
 # Data
 data/memory/*.jsonl
 data/task_logs/*.jsonl
+sketch.json
+**/sketch.json
 
 # Reports
 reports/

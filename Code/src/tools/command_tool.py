@@ -12,6 +12,15 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from tools.tool_models import (
+    PermissionLevel,
+    ToolCapability,
+    ToolDefinition,
+    ToolFailureMode,
+    ToolInputSchema,
+    ToolOutputSchema,
+)
+
 
 class RiskLevel(str, Enum):
     """Command risk levels."""
@@ -49,6 +58,84 @@ class CommandResult(BaseModel):
     exit_code: int
     duration: float
     risk_assessment: dict[str, Any] | None = None
+
+
+COMMAND_EXECUTOR_DEFINITION = ToolDefinition(
+    name="command_executor",
+    display_name="Command Executor",
+    description="Execute or dry-run a shell command with risk assessment",
+    version="1.0.0",
+    capabilities=[ToolCapability.SHELL_EXECUTION],
+    permission_level=PermissionLevel.HIGH,
+    input_schema=[
+        ToolInputSchema(
+            name="command",
+            type="string",
+            description="Shell command to execute or dry-run",
+            required=True,
+        ),
+        ToolInputSchema(
+            name="mode",
+            type="string",
+            description="Execution mode: dry_run, interactive, or automatic",
+            required=False,
+            default=ExecutionMode.DRY_RUN.value,
+        ),
+        ToolInputSchema(
+            name="timeout",
+            type="integer",
+            description="Command timeout in seconds",
+            required=False,
+            default=30,
+        ),
+        ToolInputSchema(
+            name="cwd",
+            type="string",
+            description="Working directory for command execution",
+            required=False,
+        ),
+        ToolInputSchema(
+            name="env",
+            type="object",
+            description="Environment variables for command execution",
+            required=False,
+        ),
+    ],
+    output_schema=ToolOutputSchema(
+        type="object",
+        description="Command execution result and risk assessment",
+        properties={
+            "command": {"type": "string", "description": "Command that was evaluated"},
+            "success": {"type": "boolean", "description": "Whether the command succeeded"},
+            "stdout": {"type": "string", "description": "Standard output"},
+            "stderr": {"type": "string", "description": "Standard error"},
+            "exit_code": {"type": "integer", "description": "Process exit code"},
+            "duration": {"type": "number", "description": "Execution duration in seconds"},
+            "risk_assessment": {"type": "object", "description": "Risk details"},
+        },
+    ),
+    timeout_seconds=60,
+    max_retries=1,
+    failure_modes=[
+        ToolFailureMode(
+            error_type="invalid_input",
+            description="Command parameters are invalid",
+            recovery_strategy="Provide a non-empty command and a valid execution mode",
+        ),
+        ToolFailureMode(
+            error_type="execution_timeout",
+            description="Command timed out",
+            recovery_strategy="Increase timeout or run a narrower command",
+        ),
+        ToolFailureMode(
+            error_type="execution_error",
+            description="Command returned an error or could not be launched",
+            recovery_strategy="Review stderr, cwd, environment variables, and command syntax",
+        ),
+    ],
+    tags=["command", "shell", "execution", "risk"],
+    audit_required=True,
+)
 
 
 class CommandTool:
@@ -304,3 +391,35 @@ class CommandTool:
             return "MEDIUM RISK: This command will modify files. Ensure you have backups if needed."
         else:
             return "LOW RISK: This command is safe to execute."
+
+
+def command_executor(params: dict[str, Any]) -> dict[str, Any]:
+    """Standard ToolDefinition-compatible command executor."""
+    command = str(params.get("command") or "").strip()
+    if not command:
+        raise ValueError("Invalid input: command is required")
+
+    mode_value = str(params.get("mode") or ExecutionMode.DRY_RUN.value)
+    try:
+        mode = ExecutionMode(mode_value)
+    except ValueError as exc:
+        raise ValueError(f"Invalid input: unsupported command execution mode: {mode_value}") from exc
+
+    timeout = params.get("timeout", 30)
+    cwd = params.get("cwd")
+    env = params.get("env")
+    tool = CommandTool(default_timeout=float(timeout))
+    result = tool.execute(
+        command=command,
+        mode=mode,
+        timeout=float(timeout),
+        cwd=str(cwd) if cwd else None,
+        env={str(key): str(value) for key, value in env.items()} if isinstance(env, dict) else None,
+    )
+    payload = result.model_dump()
+    risk_assessment = payload.get("risk_assessment")
+    if isinstance(risk_assessment, dict):
+        risk_level = risk_assessment.get("risk_level")
+        if isinstance(risk_level, RiskLevel):
+            risk_assessment["risk_level"] = risk_level.value
+    return payload

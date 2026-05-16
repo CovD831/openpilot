@@ -64,6 +64,42 @@ class OpenPilotLogger:
         if turn_id % 100 == 0:
             self._truncate_if_needed()
 
+    def log_structured_event(
+        self,
+        *,
+        source_type: str,
+        source_name: str,
+        phase: str,
+        event_type: str,
+        session_id: str,
+        turn_id: int,
+        success: bool | None = None,
+        duration_ms: int | None = None,
+        input_summary: Any | None = None,
+        output_summary: Any | None = None,
+        error: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Write a normalized event while preserving the legacy log_event API."""
+        payload = {
+            "source_type": source_type,
+            "source_name": source_name,
+            "phase": phase,
+            "success": success,
+            "duration_ms": duration_ms,
+            "input_summary": input_summary,
+            "output_summary": output_summary,
+            "error": error,
+            "metadata": metadata or {},
+        }
+
+        self.log_event(
+            event_type,
+            payload,
+            session_id=session_id,
+            turn_id=turn_id,
+        )
+
     def _truncate_if_needed(self) -> None:
         """Truncate log file if it exceeds max lines."""
         try:
@@ -87,5 +123,4 @@ class OpenPilotLogger:
     def clear_error_buffer(self) -> None:
         """Clear the in-memory error buffer."""
         self._error_buffer.clear()
-
 

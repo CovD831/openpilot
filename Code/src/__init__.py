@@ -1,9 +1,9 @@
 """OpenPilot AI agent system."""
 
-from agents.iterative_improvement import AutonomousIterationAgent
-from agents.project_evaluator import ProjectEvaluatorAgent
-from agents.task_decomposer import TaskDecomposer
+from autonomous_iteration.agents.iteration_agent import AutonomousIterationAgent
+from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
 from core.llm import LLMClient, LLMMessage, LLMRequest, LLMResponse
+from execution.agents.task_decomposer import TaskDecomposer
 from execution.intelligent_autopilot import IntelligentAutopilot
 
 __all__ = [

@@ -13,9 +13,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from agents.project_evaluator import ProjectEvaluatorAgent
+from autonomous_iteration.agents.context_loader import ContextLoaderAgent
+from autonomous_iteration.agents.goal_maker import GoalMakerAgent
+from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
+from autonomous_iteration.agents.task_decomposer import TaskDecomposerAgent
+from autonomous_iteration.agents.task_designer import TaskDesignerAgent
+from autonomous_iteration.pipeline import AutonomousIterationPipeline
 from core.llm import LLMMessage, LLMRequest
-from agents.evaluation_models import (
+from autonomous_iteration.models import (
     AutonomousIterationResult,
     DesignedImprovementTask,
     EvaluationResult,
@@ -44,6 +49,8 @@ class AutonomousIterationAgent:
         max_iteration_attempts: int = 4,
         llm_client: Any | None = None,
         memory_store: Any | None = None,
+        memory_context_builder: Any | None = None,
+        logger: Any | None = None,
     ):
         self.evaluator = evaluator
         if required_successful_iterations is not None:
@@ -52,8 +59,71 @@ class AutonomousIterationAgent:
         self.max_iteration_attempts = max_iteration_attempts
         self.llm_client = llm_client or getattr(evaluator, "llm_client", None)
         self.memory_store = memory_store
+        self.memory_context_builder = memory_context_builder
+        self.logger = logger
+        self.pipeline = AutonomousIterationPipeline(
+            context_loader=ContextLoaderAgent(memory_context_builder),
+            goal_maker=GoalMakerAgent(self._make_goals),
+            task_designer=TaskDesignerAgent(self._design_tasks),
+            task_decomposer=TaskDecomposerAgent(
+                self._actions_from_tasks,
+                self._evaluate_task_difficulty,
+            ),
+        )
 
     def run_project_pipeline(
+        self,
+        *,
+        goal: str,
+        project_path: str | Path,
+        written_files: list[str],
+        run_command: str = "",
+        readme_path: str | Path | None = None,
+        static_review: dict[str, Any] | None = None,
+        apply_improvement: ApplyImprovement,
+        analyze_improvements: AnalyzeImprovements | None = None,
+        read_project_state: ReadProjectState | None = None,
+        on_progress: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
+        self._log_agent(
+            "autonomous_iteration_started",
+            input_summary={"goal": goal, "project_path": str(project_path), "written_files": len(written_files)},
+            success=None,
+        )
+        try:
+            result = self._run_project_pipeline_impl(
+                goal=goal,
+                project_path=project_path,
+                written_files=written_files,
+                run_command=run_command,
+                readme_path=readme_path,
+                static_review=static_review,
+                apply_improvement=apply_improvement,
+                analyze_improvements=analyze_improvements,
+                read_project_state=read_project_state,
+                on_progress=on_progress,
+            )
+        except Exception as exc:
+            self._log_agent(
+                "autonomous_iteration_failed",
+                input_summary={"goal": goal, "project_path": str(project_path)},
+                success=False,
+                error=str(exc),
+            )
+            raise
+        self._log_agent(
+            "autonomous_iteration_completed",
+            input_summary={"goal": goal, "project_path": str(project_path)},
+            output_summary={
+                "success": result.get("success"),
+                "completed_improvements": result.get("completed_improvements"),
+                "failure_stage": result.get("failure_stage"),
+            },
+            success=bool(result.get("success")),
+        )
+        return result
+
+    def _run_project_pipeline_impl(
         self,
         *,
         goal: str,
@@ -104,6 +174,21 @@ class AutonomousIterationAgent:
             )
             project_states.append(project_state)
             self._notify(on_progress, "project_state", {"state": project_state, "iteration": completed_improvements})
+            memory_context = self._load_context(
+                goal=goal,
+                project_path=project_path,
+                iteration=completed_improvements,
+            )
+            project_state.memory_context = memory_context
+            self._notify(
+                on_progress,
+                "context_loader",
+                {
+                    "context": memory_context,
+                    "state": project_state,
+                    "iteration": completed_improvements,
+                },
+            )
 
             if current.validation_passed:
                 improvement_report = self._analyze_improvements(
@@ -121,7 +206,12 @@ class AutonomousIterationAgent:
                     },
                 )
 
-                goals = self._make_goals(project_state, current, improvement_report, completed_improvements)
+                goals = self._run_goal_maker(
+                    project_state,
+                    current,
+                    improvement_report,
+                    completed_improvements,
+                )
                 selected_goal = goals[0]
                 iteration_goals.extend(goals)
                 self._notify(
@@ -130,20 +220,35 @@ class AutonomousIterationAgent:
                     {"goals": goals, "selected_goal": selected_goal, "iteration": completed_improvements},
                 )
 
-                tasks = self._design_tasks(project_state, selected_goal, improvement_report, completed_improvements)
+                tasks = self._run_task_designer(
+                    project_state,
+                    selected_goal,
+                    improvement_report,
+                    completed_improvements,
+                )
                 designed_tasks.extend(tasks)
                 self._notify(
                     on_progress,
                     "task_designer",
                     {"tasks": tasks, "selected_goal": selected_goal, "iteration": completed_improvements},
                 )
-                self._notify(on_progress, "decomposition", {"tasks": tasks, "iteration": completed_improvements})
+                decomposition = self._run_task_decomposer(tasks)
+                self._notify(
+                    on_progress,
+                    "decomposition",
+                    {
+                        "tasks": tasks,
+                        "iteration": completed_improvements,
+                        **decomposition,
+                    },
+                )
 
-                actions = self._actions_from_tasks(tasks)
+                actions = decomposition["actions"]
                 improvement_report = {
                     **improvement_report,
                     "selected_goal": selected_goal.model_dump(),
                     "designed_tasks": [task.model_dump() for task in tasks],
+                    "task_difficulty": decomposition["difficulty"],
                     "next_iteration_goal": selected_goal.title,
                     "must_implement_next": selected_goal.acceptance_criteria,
                 }
@@ -183,7 +288,14 @@ class AutonomousIterationAgent:
                 },
             )
 
-            iteration_result = apply_improvement(attempts_used, current, actions, improvement_report, is_repair)
+            iteration_result = self._run_task_executor(
+                apply_improvement,
+                attempts_used,
+                current,
+                actions,
+                improvement_report,
+                is_repair,
+            )
             if not iteration_result.success:
                 failure_context = self._failure_context(
                     iteration_result,
@@ -326,6 +438,91 @@ class AutonomousIterationAgent:
     def run(self, **kwargs) -> dict[str, Any]:
         """Backward-compatible entry point."""
         return self.run_project_pipeline(**kwargs)
+
+    def _load_context(
+        self,
+        *,
+        goal: str,
+        project_path: str | Path,
+        iteration: int,
+    ) -> dict[str, Any]:
+        """Context Loader agent function with safe fallback."""
+        try:
+            return self.pipeline.load_context(goal, project_path, iteration)
+        except Exception as exc:
+            return {
+                "error": f"Context Loader failed: {type(exc).__name__}: {str(exc)[:300]}",
+                "system_prompt": "",
+                "dialog_context": [],
+                "related_memories": [],
+                "related_files": [],
+                "environment_context": [],
+                "prompt_text": "",
+            }
+
+    def _run_goal_maker(
+        self,
+        project_state: ProjectStateSnapshot,
+        evaluation: EvaluationResult,
+        improvement_report: dict[str, Any],
+        completed_iteration: int,
+    ) -> list[ImprovementGoal]:
+        """Goal Maker agent function."""
+        return self.pipeline.make_goals(project_state, evaluation, improvement_report, completed_iteration)
+
+    def _run_task_designer(
+        self,
+        project_state: ProjectStateSnapshot,
+        goal: ImprovementGoal,
+        improvement_report: dict[str, Any],
+        completed_iteration: int,
+    ) -> list[DesignedImprovementTask]:
+        """Task Designer agent function."""
+        return self.pipeline.design_tasks(project_state, goal, improvement_report, completed_iteration)
+
+    def _run_task_decomposer(self, tasks: list[DesignedImprovementTask]) -> dict[str, Any]:
+        """Task Decomposer agent function with a lightweight difficulty score."""
+        return self.pipeline.decompose_tasks(tasks)
+
+    def _run_task_executor(
+        self,
+        apply_improvement: ApplyImprovement,
+        iteration: int,
+        evaluation: EvaluationResult,
+        actions: list[str],
+        improvement_report: dict[str, Any],
+        is_repair: bool,
+    ) -> IterationResult:
+        """Task Executor agent function."""
+        return self.pipeline.execute_task(
+            apply_improvement,
+            iteration,
+            evaluation,
+            actions,
+            improvement_report,
+            is_repair,
+        )
+
+    def _evaluate_task_difficulty(self, tasks: list[DesignedImprovementTask]) -> dict[str, Any]:
+        """Estimate task difficulty from observable task structure."""
+        target_file_count = sum(len(task.target_files) for task in tasks)
+        acceptance_criteria_count = sum(len(task.acceptance_criteria) for task in tasks)
+        risk_note_count = sum(len(task.risk_notes) for task in tasks)
+        score = len(tasks) + target_file_count + acceptance_criteria_count + (risk_note_count * 2)
+        if score >= 8:
+            level = "high"
+        elif score >= 4:
+            level = "medium"
+        else:
+            level = "low"
+        return {
+            "level": level,
+            "score": score,
+            "task_count": len(tasks),
+            "target_file_count": target_file_count,
+            "acceptance_criteria_count": acceptance_criteria_count,
+            "risk_note_count": risk_note_count,
+        }
 
     def _read_project_state(
         self,
@@ -679,6 +876,30 @@ class AutonomousIterationAgent:
     def _notify(self, callback: ProgressCallback | None, event: str, payload: dict[str, Any]) -> None:
         if callback:
             callback(event, payload)
+
+    def _log_agent(
+        self,
+        event_type: str,
+        *,
+        success: bool | None,
+        input_summary: Any | None = None,
+        output_summary: Any | None = None,
+        error: str | None = None,
+    ) -> None:
+        if not self.logger or not hasattr(self.logger, "log_structured_event"):
+            return
+        self.logger.log_structured_event(
+            source_type="agent",
+            source_name="autonomous_iteration.agents.iteration_agent",
+            phase="autonomous_iteration",
+            event_type=event_type,
+            session_id="unknown",
+            turn_id=1,
+            success=success,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            error=error,
+        )
 
 
 class IterativeImprovementController(AutonomousIterationAgent):

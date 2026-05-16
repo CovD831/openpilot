@@ -9,19 +9,73 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from agents.evaluation_models import EvaluationResult
+from autonomous_iteration.models import EvaluationResult
 
 
 class ProjectEvaluatorAgent:
     """Validate whether a generated project can run without blocking bugs."""
 
-    def __init__(self, llm_client: Any | None = None, smoke_timeout_seconds: int = 2):
+    def __init__(
+        self,
+        llm_client: Any | None = None,
+        smoke_timeout_seconds: int = 2,
+        logger: Any | None = None,
+        session_id_getter: Callable[[], str | None] | None = None,
+    ):
         self.llm_client = llm_client
         self.smoke_timeout_seconds = smoke_timeout_seconds
+        self.logger = logger
+        self.session_id_getter = session_id_getter or (lambda: None)
 
     def evaluate_project(
+        self,
+        *,
+        goal: str,
+        project_path: str | Path,
+        written_files: list[str],
+        run_command: str = "",
+        readme_path: str | Path | None = None,
+        static_review: dict[str, Any] | None = None,
+        iteration: int = 0,
+    ) -> EvaluationResult:
+        self._log_agent(
+            "project_evaluation_started",
+            input_summary={"goal": goal, "project_path": str(project_path), "iteration": iteration},
+            success=None,
+        )
+        try:
+            result = self._evaluate_project_impl(
+                goal=goal,
+                project_path=project_path,
+                written_files=written_files,
+                run_command=run_command,
+                readme_path=readme_path,
+                static_review=static_review,
+                iteration=iteration,
+            )
+        except Exception as exc:
+            self._log_agent(
+                "project_evaluation_failed",
+                input_summary={"goal": goal, "project_path": str(project_path), "iteration": iteration},
+                success=False,
+                error=str(exc),
+            )
+            raise
+        self._log_agent(
+            "project_evaluation_completed",
+            input_summary={"goal": goal, "project_path": str(project_path), "iteration": iteration},
+            output_summary={
+                "validation_passed": result.validation_passed,
+                "errors": len(result.validation_errors),
+                "warnings": len(result.warnings),
+            },
+            success=result.validation_passed,
+        )
+        return result
+
+    def _evaluate_project_impl(
         self,
         *,
         goal: str,
@@ -407,3 +461,27 @@ class ProjectEvaluatorAgent:
                 result.append(value)
                 seen.add(value)
         return result
+
+    def _log_agent(
+        self,
+        event_type: str,
+        *,
+        success: bool | None,
+        input_summary: Any | None = None,
+        output_summary: Any | None = None,
+        error: str | None = None,
+    ) -> None:
+        if not self.logger or not hasattr(self.logger, "log_structured_event"):
+            return
+        self.logger.log_structured_event(
+            source_type="agent",
+            source_name="autonomous_iteration.agents.project_evaluator",
+            phase="project_evaluation",
+            event_type=event_type,
+            session_id=self.session_id_getter() or "unknown",
+            turn_id=1,
+            success=success,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            error=error,
+        )

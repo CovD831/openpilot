@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+import json
+
+from autonomous_iteration.improvement_context import ImprovementContextHelper
+from core.openpilot_log import OpenPilotLogger
+
+
+def test_improvement_context_target_file_and_product_fit(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    app.write_text("import curses\n", encoding="utf-8")
+    helper = ImprovementContextHelper(
+        environment_context_getter=lambda path: {"run_command": "python app.py"} if path else {}
+    )
+
+    target = helper.select_iteration_target_file([str(app)], ["Improve app.py"])
+    judgment = helper.infer_product_judgment(
+        original_goal="Build a snake game",
+        project_path=tmp_path,
+        written_files=[str(app)],
+    )
+    rubric = helper.quality_rubric_for_product(judgment)
+    context = helper.build_prompt_context(
+        original_goal="Build a snake game",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        tool_task="Improve game",
+        code_context="print('small')",
+    )
+
+    assert target == app
+    assert judgment["project_type"] == "interactive_game"
+    assert judgment["preferred_stack"] == "pygame"
+    assert judgment["current_runtime"] == "terminal_curses"
+    assert helper.fallback_should_prefer_pygame({"product_judgment": judgment}) is True
+    assert any("pygame" in item for item in rubric)
+    assert context["project_context"]["environment"]["run_command"] == "python app.py"
+    assert helper.prompt_context_layer_summary(context)["code_context_chars"] == len("print('small')")
+
+
+def test_improvement_context_structured_logs_are_jsonl(tmp_path) -> None:
+    log_file = tmp_path / "context.jsonl"
+    logger = OpenPilotLogger(log_file)
+    helper = ImprovementContextHelper(logger=logger, session_id_getter=lambda: "session")
+
+    judgment = helper.infer_product_judgment(
+        original_goal="Build a terminal tool",
+        project_path=None,
+        written_files=[],
+    )
+    helper.quality_rubric_for_product(judgment)
+
+    events = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines()]
+
+    assert events
+    assert {event["payload"]["source_type"] for event in events} == {"function"}
+    assert all(event["payload"]["phase"] == "improvement_context" for event in events)

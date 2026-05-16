@@ -7,7 +7,7 @@ import time
 from typing import Any, Callable
 
 from core.graph import Graph
-from agents.task_models import (
+from execution.task_models import (
     Task,
     TaskStatus,
     Agent,

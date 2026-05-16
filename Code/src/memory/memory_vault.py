@@ -96,11 +96,13 @@ class MemoryVault:
             type=memory_type.value,
             data={
                 "content": content,
+                "semantic_info": embedding,
                 "tags": tags or [],
                 "confidence": confidence,
                 "embedding": embedding,
                 "recall_frequency": 0.0,
-                "usage_count": 0
+                "usage_count": 0,
+                "last_updated_timestamp": datetime.now(timezone.utc).isoformat(),
             },
             metadata=metadata or {}
         )
@@ -259,10 +261,12 @@ class MemoryVault:
             if content is not None:
                 node.data["content"] = content
                 node.data["embedding"] = memory.embedding
+                node.data["semantic_info"] = memory.embedding
             if tags is not None:
                 node.data["tags"] = tags
             if confidence is not None:
                 node.data["confidence"] = confidence
+            node.data["last_updated_timestamp"] = memory.timestamp
             node.updated_at = memory.timestamp
 
         # Re-relate if content changed

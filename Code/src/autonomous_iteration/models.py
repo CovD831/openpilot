@@ -49,6 +49,7 @@ class ProjectStateSnapshot(BaseModel):
     readme_summary: str = ""
     run_command: str = ""
     memory_records: list[dict] = Field(default_factory=list)
+    memory_context: dict = Field(default_factory=dict)
     validation_context: dict = Field(default_factory=dict)
     safe_target_files: list[str] = Field(default_factory=list)
 

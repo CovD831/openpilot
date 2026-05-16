@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Callable
 
 from core.graph import Graph, GraphNode, GraphEdge, GraphType
 from core.llm import LLMClient, LLMMessage, LLMRequest
-from agents.task_models import (
+from execution.task_models import (
     Task,
     TaskStatus,
     TaskPriority,
@@ -23,7 +23,9 @@ class TaskDecomposer:
         self,
         llm_client: LLMClient,
         max_decomposition_depth: int = 3,
-        min_subtask_complexity: float = 0.1
+        min_subtask_complexity: float = 0.1,
+        logger: Any | None = None,
+        session_id_getter: Callable[[], str | None] | None = None,
     ):
         """Initialize task decomposer.
 
@@ -35,6 +37,8 @@ class TaskDecomposer:
         self.llm_client = llm_client
         self.max_decomposition_depth = max_decomposition_depth
         self.min_subtask_complexity = min_subtask_complexity
+        self.logger = logger
+        self.session_id_getter = session_id_getter or (lambda: None)
 
     def should_decompose(self, task: Task, current_depth: int = 0) -> bool:
         """Determine if a task should be decomposed.
@@ -60,6 +64,35 @@ class TaskDecomposer:
         return complexity > self.min_subtask_complexity
 
     def decompose(
+        self,
+        task_description: str,
+        context: dict[str, Any] | None = None,
+        parent_task_id: str | None = None
+    ) -> TaskDecompositionResult:
+        self._log_agent(
+            "task_decomposition_started",
+            input_summary={"task_description": task_description, "context_keys": list((context or {}).keys())},
+            success=None,
+        )
+        try:
+            result = self._decompose_impl(task_description, context, parent_task_id)
+        except Exception as exc:
+            self._log_agent(
+                "task_decomposition_failed",
+                input_summary={"task_description": task_description},
+                success=False,
+                error=str(exc),
+            )
+            raise
+        self._log_agent(
+            "task_decomposition_completed",
+            input_summary={"task_description": task_description},
+            output_summary={"subtask_count": len(result.subtasks), "estimated_effort": result.estimated_total_effort},
+            success=True,
+        )
+        return result
+
+    def _decompose_impl(
         self,
         task_description: str,
         context: dict[str, Any] | None = None,
@@ -478,3 +511,27 @@ Guidelines:
         lines.append(f"\nReady to start: {len(ready_tasks)} tasks")
 
         return "\n".join(lines)
+
+    def _log_agent(
+        self,
+        event_type: str,
+        *,
+        success: bool | None,
+        input_summary: Any | None = None,
+        output_summary: Any | None = None,
+        error: str | None = None,
+    ) -> None:
+        if not self.logger or not hasattr(self.logger, "log_structured_event"):
+            return
+        self.logger.log_structured_event(
+            source_type="agent",
+            source_name="execution.agents.task_decomposer",
+            phase="task_decomposition",
+            event_type=event_type,
+            session_id=self.session_id_getter() or "unknown",
+            turn_id=1,
+            success=success,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            error=error,
+        )
