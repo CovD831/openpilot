@@ -89,9 +89,9 @@ class IterationDashboardAdapter:
 
     def dashboard_iteration_stage_nodes(self, iteration_id: str) -> list[dict[str, Any]]:
         return [
-            {"id": f"{iteration_id}_context_loader", "description": "Context Loader", "status": "pending", "kind": "agent"},
-            {"id": f"{iteration_id}_project_state", "description": "Read Project State", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_environment", "description": "Environment Setup", "status": "pending", "kind": "agent"},
+            {"id": f"{iteration_id}_project_state", "description": "Read Project State", "status": "pending", "kind": "agent"},
+            {"id": f"{iteration_id}_context_loader", "description": "Context Loader", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_goal_maker", "description": "Goal Maker", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_task_designer", "description": "Task Designer", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_decomposition", "description": "Task Decomposer", "status": "pending", "kind": "agent"},
@@ -259,6 +259,7 @@ class IterationDashboardAdapter:
         if event == "iteration_started":
             iteration = payload["iteration"]
             iteration_id = self.ensure_dashboard_iteration(iteration)
+            self.ensure_pre_execution_stages_completed()
             self.set_dashboard_task_status(iteration_id, "running")
             self.set_dashboard_task_status(self.dashboard_stage_id("execution"), "running")
             self.set_dashboard_task_status(self.dashboard_stage_id("evaluation"), "pending")
@@ -441,6 +442,35 @@ class IterationDashboardAdapter:
             },
             current_task_id=parent_task_id,
         )
+
+    def find_dashboard_node(self, node_id: str | None) -> dict[str, Any] | None:
+        if not self.enhanced_ui or not node_id:
+            return None
+
+        def find(nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+            for node in nodes:
+                if node.get("id") == node_id:
+                    return node
+                child = find(node.get("children") or [])
+                if child is not None:
+                    return child
+            return None
+
+        return find(self.enhanced_ui.task_graph_state.get("tasks") or [])
+
+    def ensure_pre_execution_stages_completed(self) -> None:
+        for stage_key in ("goal_maker", "task_designer", "decomposition"):
+            stage_id = self.dashboard_stage_id(stage_key)
+            node = self.find_dashboard_node(stage_id)
+            if not node or node.get("status") != "pending":
+                continue
+            self.append_dashboard_stage_child(
+                stage_key,
+                child_id="repair_path_prepared",
+                description="Repair path prepared",
+                kind="result",
+            )
+            self.set_dashboard_task_status(stage_id, "completed")
 
     def update_dashboard_node(
         self,

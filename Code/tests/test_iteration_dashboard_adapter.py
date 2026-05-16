@@ -34,6 +34,7 @@ def test_iteration_dashboard_stage_helpers_update_nested_graph() -> None:
     adapter = IterationDashboardAdapter(autopilot)
 
     iteration_id = adapter.ensure_dashboard_iteration(1)
+    stage_order = [child["description"] for child in autopilot.enhanced_ui.task_graph_state["tasks"][0]["children"]]
     adapter.append_dashboard_stage_child(
         "execution",
         child_id="action_1",
@@ -47,6 +48,15 @@ def test_iteration_dashboard_stage_helpers_update_nested_graph() -> None:
     execution_node = next(child for child in tasks[0]["children"] if child["id"] == "iteration_1_execution")
 
     assert iteration_id == "iteration_1"
+    assert stage_order[:7] == [
+        "Environment Setup",
+        "Read Project State",
+        "Context Loader",
+        "Goal Maker",
+        "Task Designer",
+        "Task Decomposer",
+        "Task Executor",
+    ]
     assert execution_node["status"] == "running"
     assert execution_node["children"][0]["description"] == "Apply polish"
 
@@ -123,3 +133,23 @@ def test_iteration_dashboard_core_event_sequence_does_not_raise() -> None:
         "Iteration 1",
     ]
     assert titles[-1] == "Iteration 1 failed"
+
+
+def test_iteration_started_completes_missing_pre_execution_stages() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    adapter.ensure_dashboard_iteration(1)
+    adapter.handle_iteration_progress(
+        "iteration_started",
+        {"iteration": 1, "actions": ["Fix the runtime error reported by the smoke test."]},
+    )
+
+    children = autopilot.enhanced_ui.task_graph_state["tasks"][0]["children"]
+    by_description = {child["description"]: child for child in children}
+
+    assert by_description["Goal Maker"]["status"] == "completed"
+    assert by_description["Task Designer"]["status"] == "completed"
+    assert by_description["Task Decomposer"]["status"] == "completed"
+    assert by_description["Task Executor"]["status"] == "running"
+    assert by_description["Goal Maker"]["children"][0]["description"] == "Repair path prepared"

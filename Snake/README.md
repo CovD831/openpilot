@@ -1,0 +1,47 @@
+# Snake
+
+## Overview
+
+帮我在'/Users/yanning/Projects/openpilot/Snake'生成一个贪吃蛇项目
+
+Recent Improvements:
+- Rewrite main.py to use pygame, implementing complete game loop, snake movement, food generation, collision detection, scoring, and game-over screen.
+- Fix the validation failure: Fix the runtime error reported by the smoke test.
+
+## Requirements
+
+- Virtual Environment: .venv
+- Python Executable: /Users/yanning/Projects/openpilot/Snake/.venv/bin/python
+- Python Version: 3.11.15
+- Dependencies: pygame
+
+## Setup
+
+```bash
+python -m venv .venv
+```
+
+```bash
+.venv/bin/pip install pygame
+```
+
+```bash
+.venv/bin/python --version
+```
+
+## Run
+
+```bash
+.venv/bin/python main.py
+```
+
+## Files
+
+- `main.py`
+
+## Troubleshooting
+
+- If the run command fails because a package is missing, run the setup command first.
+- If you use a virtual environment or Conda environment, activate it before running the project.
+- Run commands from this project directory unless the command says otherwise.
+- Terminal or GUI games should be run in a real interactive terminal/window, not from a captured non-interactive smoke test.

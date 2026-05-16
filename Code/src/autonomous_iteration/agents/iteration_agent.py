@@ -254,10 +254,46 @@ class AutonomousIterationAgent:
                 }
                 is_repair = False
             else:
-                goals = []
-                tasks = []
-                improvement_report = {}
-                actions = self._select_repair_actions(current)
+                selected_goal = self._repair_goal(current)
+                goals = [selected_goal]
+                iteration_goals.extend(goals)
+                self._notify(
+                    on_progress,
+                    "goal_maker",
+                    {"goals": goals, "selected_goal": selected_goal, "iteration": completed_improvements, "repair": True},
+                )
+
+                tasks = [self._repair_task(selected_goal, project_state, current)]
+                designed_tasks.extend(tasks)
+                self._notify(
+                    on_progress,
+                    "task_designer",
+                    {"tasks": tasks, "selected_goal": selected_goal, "iteration": completed_improvements, "repair": True},
+                )
+
+                decomposition = self._run_task_decomposer(tasks)
+                self._notify(
+                    on_progress,
+                    "decomposition",
+                    {
+                        "tasks": tasks,
+                        "iteration": completed_improvements,
+                        "repair": True,
+                        **decomposition,
+                    },
+                )
+                actions = decomposition["actions"]
+                improvement_report = {
+                    "repair": True,
+                    "summary": current.summary,
+                    "validation_errors": current.validation_errors,
+                    "recommended_actions": self._select_repair_actions(current),
+                    "selected_goal": selected_goal.model_dump(),
+                    "designed_tasks": [task.model_dump() for task in tasks],
+                    "task_difficulty": decomposition["difficulty"],
+                    "next_iteration_goal": selected_goal.title,
+                    "must_implement_next": selected_goal.acceptance_criteria,
+                }
                 is_repair = True
 
             if attempts_used >= self.max_iteration_attempts:
@@ -691,6 +727,36 @@ class AutonomousIterationAgent:
             target_files=project_state.safe_target_files[:1],
             acceptance_criteria=goal.acceptance_criteria,
             risk_notes=[],
+        )
+
+    def _repair_goal(self, evaluation: EvaluationResult) -> ImprovementGoal:
+        repair_actions = self._select_repair_actions(evaluation)
+        title = repair_actions[0] if repair_actions else "Fix the blocking validation failure."
+        criteria = repair_actions or evaluation.validation_errors or ["The project passes the failing validation path."]
+        return ImprovementGoal(
+            id=f"repair_goal_{uuid.uuid4().hex[:8]}",
+            title=title,
+            category="robustness",
+            rationale=evaluation.summary,
+            acceptance_criteria=criteria,
+            priority="high",
+        )
+
+    def _repair_task(
+        self,
+        goal: ImprovementGoal,
+        project_state: ProjectStateSnapshot,
+        evaluation: EvaluationResult,
+    ) -> DesignedImprovementTask:
+        target_files = project_state.safe_target_files[:1] or project_state.written_files[:1]
+        risk_notes = evaluation.validation_errors[:3] or evaluation.warnings[:3]
+        return DesignedImprovementTask(
+            id=f"repair_task_{uuid.uuid4().hex[:8]}",
+            goal_id=goal.id,
+            description=f"Fix the validation failure: {goal.title}",
+            target_files=target_files,
+            acceptance_criteria=goal.acceptance_criteria,
+            risk_notes=risk_notes,
         )
 
     def _actions_from_tasks(self, tasks: list[DesignedImprovementTask]) -> list[str]:
