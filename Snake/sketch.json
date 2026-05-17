@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "directory": "/Users/yanning/Projects/openpilot/Snake",
+  "files": {
+    "README.md": {
+      "name": "README.md",
+      "path": "/Users/yanning/Projects/openpilot/Snake/README.md",
+      "suffix": ".md",
+      "description": ".md file named README.md. Preview: # Snake ## Overview 帮我在'/Users/yanning/Projects/openpilot/Snake'中写一个贪吃蛇 Recent Improvements: - Rewrite main.py to use pygame: replace tkinter with pygame for the game window, game loop, event handling (arrow keys, R to restart, Q to quit), snake rendering (green body, yellow head), red food square, score display, and game-over overlay with final score. No tkinter or curses imports. - Fix the validation failure: Fix the runtime error reported by the smoke test. - Fix the validation failure: Fix the runtime error reported by the smoke test. - Fix the validation failure: Fix the runtime error rep",
+      "function_description": ".md file named README.md. Preview: # Snake ## Overview 帮我在'/Users/yanning/Projects/openpilot/Snake'中写一个贪吃蛇 Recent Improvements: - Rewrite main.py to use pygame: replace tkinter with pygame for the game window, game loop, event handling (arrow keys, R to restart, Q to quit), snake rendering (green body, yellow head), red food square, score display, and game-over overlay with final score. No tkinter or curses imports. - Fix the validation failure: Fix the runtime error reported by the smoke test. - Fix the validation failure: Fix the runtime error reported by the smoke test. - Fix the validation failure: Fix the runtime error rep",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "readme",
+          "md",
+          "file",
+          "named",
+          "preview",
+          "snake",
+          "overview",
+          "帮我在",
+          "users",
+          "yanning",
+          "projects",
+          "openpilot",
+          "中写一个贪吃蛇",
+          "recent",
+          "improvements",
+          "rewrite",
+          "main",
+          "py",
+          "to",
+          "use",
+          "pygame",
+          "replace",
+          "tkinter",
+          "with"
+        ]
+      },
+      "mtime": 1779023921.3759654,
+      "size": 1424
+    },
+    "main.py": {
+      "name": "main.py",
+      "path": "/Users/yanning/Projects/openpilot/Snake/main.py",
+      "suffix": ".py",
+      "description": ".py file named main.py. Preview: import os import sys import random # Prevent pygame import from hanging in headless CI environments. # Set dummy SDL driver if no display is available (non-Windows). if sys.platform != 'win32' and 'DISPLAY' not in os.environ: os.environ['SDL_VIDEODRIVER'] = 'dummy' try: import pygame except ImportError: print(\"Error: pygame is not installed.\", file=sys.stderr) print(\"Install it using: pip install pygame\", file=sys.stderr) sys.exit(1) # --- Constants --- CELL = 20 COLS, ROWS = 20, 20 GRID_WIDTH = COLS * CELL GRID_HEIGHT = ROWS * CELL INFO_HEIGHT = 40 WIN_WIDTH = GRID_WIDTH WIN_HEIGHT = GRID_HEI",
+      "function_description": ".py file named main.py. Preview: import os import sys import random # Prevent pygame import from hanging in headless CI environments. # Set dummy SDL driver if no display is available (non-Windows). if sys.platform != 'win32' and 'DISPLAY' not in os.environ: os.environ['SDL_VIDEODRIVER'] = 'dummy' try: import pygame except ImportError: print(\"Error: pygame is not installed.\", file=sys.stderr) print(\"Install it using: pip install pygame\", file=sys.stderr) sys.exit(1) # --- Constants --- CELL = 20 COLS, ROWS = 20, 20 GRID_WIDTH = COLS * CELL GRID_HEIGHT = ROWS * CELL INFO_HEIGHT = 40 WIN_WIDTH = GRID_WIDTH WIN_HEIGHT = GRID_HEI",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "main",
+          "py",
+          "file",
+          "named",
+          "preview",
+          "import",
+          "os",
+          "sys",
+          "random",
+          "prevent",
+          "pygame",
+          "from",
+          "hanging",
+          "in",
+          "headless",
+          "ci",
+          "environments",
+          "set",
+          "dummy",
+          "sdl",
+          "driver",
+          "if",
+          "no",
+          "display"
+        ]
+      },
+      "mtime": 1779023920.8689904,
+      "size": 6154
+    }
+  }
+}
