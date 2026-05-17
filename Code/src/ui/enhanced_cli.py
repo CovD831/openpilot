@@ -38,6 +38,10 @@ def run_enhanced_cli(
     """Run OpenPilot with enhanced UI."""
     console = console or Console()
 
+    from ui.environment_guard import block_project_venv
+    if block_project_venv(console):
+        return 2
+
     # Initialize enhanced UI
     enhanced_ui = EnhancedUI(console)
     enhanced_ui.show_banner()
@@ -263,6 +267,16 @@ def _run_interactive_mode(
                     _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options)
                     continue
 
+                # Handle agent generator command
+                if user_input.strip().startswith("/agent"):
+                    parts = user_input.strip().split(maxsplit=1)
+                    if len(parts) < 2:
+                        ui.console.print("[red]Usage:[/red] /agent <task>")
+                        continue
+                    task = parts[1]
+                    _execute_agent_generator(task, ui, llm_client)
+                    continue
+
                 # Handle goal execution
                 if not user_input.startswith("/"):
                     _execute_goal_interactive(user_input, ui, tracker, llm_client, logger, runtime_options)
@@ -410,3 +424,19 @@ def _execute_autopilot(
         ui.show_error("Autopilot execution failed", str(e))
         import traceback
         traceback.print_exc()
+
+
+def _execute_agent_generator(task: str, ui: EnhancedUI, llm_client = None) -> None:
+    """Generate a reusable Python agent from an interactive task."""
+    from pathlib import Path
+
+    from agent_generator.runner import run_agent_generator
+    from ui.environment_guard import agent_generator_llm_error_message, block_project_venv
+
+    if block_project_venv(ui.console):
+        return
+    output_dir = Path(__file__).resolve().parents[2] / "generated_agents"
+    try:
+        run_agent_generator(task, console=ui.console, output_dir=output_dir, llm_client=llm_client)
+    except Exception as e:
+        ui.show_error("Agent generation failed", agent_generator_llm_error_message(e))

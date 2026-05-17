@@ -45,6 +45,14 @@ class CommandRegistry:
                 category=CommandCategory.EXECUTION,
                 requires_args=True
             ),
+            Command(
+                name="/agent",
+                aliases=[],
+                description="Generate a reusable Python agent from an interactive pipeline",
+                usage="/agent <task>",
+                category=CommandCategory.EXECUTION,
+                requires_args=True
+            ),
 
             # System
             Command(
@@ -148,6 +156,7 @@ class CommandRegistry:
         lines.append("  - Type '/' to see command suggestions")
         lines.append("  - Use arrow keys to navigate command history")
         lines.append("  - Press Tab for command completion")
+        lines.append("  - Use /agent <task> to build a reusable generated agent")
         lines.append("  - Type any text without '/' to run modern autopilot")
 
         return "\n".join(lines)
