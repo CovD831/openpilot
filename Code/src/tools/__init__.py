@@ -14,4 +14,5 @@ __all__ = [
     "tool_executor",
     "tool_selection",
     "tool_registry",
+    "web_searcher",
 ]

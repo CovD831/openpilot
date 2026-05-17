@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import sys
+from types import SimpleNamespace
 
 from core.openpilot_log import OpenPilotLogger
 from tools.code_reviewer import code_reviewer_executor
 from tools.builtin_tools import register_builtin_tools
+from tools.web_searcher import web_searcher_executor
 from tools.tool_executor import ToolExecutor
 from core.tool_contracts import (
     PermissionLevel,
@@ -22,19 +24,41 @@ def _registered_registry() -> ToolRegistry:
     return registry
 
 
+class FakeCleanupLLM:
+    def __init__(self, payload: dict | None = None, *, fail: bool = False) -> None:
+        self.payload = payload or {
+            "research_summary": "Clean summary",
+            "key_points": ["Useful fact"],
+            "source_notes": [{"url": "https://example.com/alpha", "note": "Primary source"}],
+            "follow_up_queries": ["openpilot follow up"],
+        }
+        self.fail = fail
+        self.requests = []
+
+    def complete(self, request):
+        self.requests.append(request)
+        if self.fail:
+            raise RuntimeError("llm unavailable")
+        return SimpleNamespace(
+            parsed_json=self.payload,
+            content=json.dumps(self.payload),
+        )
+
+
 def test_builtin_tools_register_expected_contracts() -> None:
     registry = _registered_registry()
 
     names = {tool.name for tool in registry.list_all()}
     removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 10
+    assert len(names) == 11
     assert {
         "command_executor",
         "embedder",
         "file_reader",
         "file_writer",
         "multi_file_reader",
+        "web_searcher",
     }.issubset(names)
     assert removed_directory_tool not in names
     assert "autonomy_tool" not in names
@@ -395,6 +419,271 @@ def test_command_executor_automatic_runs_low_risk_command() -> None:
     assert result.output["stdout"].strip() == "ok"
     assert result.output["stderr"] == ""
     assert result.output["exit_code"] == 0
+
+
+def test_web_searcher_requires_query() -> None:
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="search-missing-query",
+                tool_name="web_searcher",
+                reason="capability_match",
+                input_params={},
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert not result.success
+    assert result.error is not None
+    assert result.error.error_type == "InvalidInput"
+    assert "query" in result.error.error_message
+
+
+def test_web_searcher_parses_duckduckgo_html_without_network() -> None:
+    html = """
+    <html>
+      <body>
+        <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Falpha&amp;rut=abc">Alpha Result</a>
+        <a class="result__snippet">Alpha snippet with details.</a>
+        <a class="result__a" href="https://docs.example.org/beta">Beta Result</a>
+        <div class="result__snippet">Beta snippet.</div>
+      </body>
+    </html>
+    """
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        assert "q=openpilot+research" in url
+        assert timeout == 7
+        return html
+
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="search-web",
+                tool_name="web_searcher",
+                reason="capability_match",
+                input_params={
+                    "query": "openpilot research",
+                    "max_results": 1,
+                    "max_pages": 0,
+                    "timeout": 7,
+                    "llm_cleanup": False,
+                    "_http_get": fake_http_get,
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert result.output["provider"] == "duckduckgo_html"
+    assert result.output["count"] == 1
+    assert result.output["llm_cleanup"] is False
+    assert result.output["results"][0] == {
+        "rank": 1,
+        "title": "Alpha Result",
+        "url": "https://example.com/alpha",
+        "snippet": "Alpha snippet with details.",
+        "source_domain": "example.com",
+    }
+    assert result.output["warnings"] == []
+
+
+def test_web_searcher_empty_results_return_warning_without_failure() -> None:
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="search-empty",
+                tool_name="web_searcher",
+                reason="capability_match",
+                input_params={
+                    "query": "nothing",
+                    "llm_cleanup": False,
+                    "_http_get": lambda url, timeout: "<html><body>No results</body></html>",
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert result.output["count"] == 0
+    assert result.output["results"] == []
+    assert result.output["warnings"]
+
+
+def test_web_searcher_network_errors_are_reported() -> None:
+    def failing_http_get(url: str, timeout: int) -> str:
+        raise OSError("network down")
+
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="search-network-failure",
+                tool_name="web_searcher",
+                reason="capability_match",
+                input_params={
+                    "query": "openpilot",
+                    "_http_get": failing_http_get,
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert not result.success
+    assert result.error is not None
+    assert "Search request failed" in result.error.error_message
+
+
+def test_web_searcher_fetches_pages_and_cleans_with_llm_without_network() -> None:
+    search_html = """
+    <a class="result__a" href="https://example.com/alpha">Alpha Result</a>
+    <a class="result__snippet">Alpha snippet.</a>
+    <a class="result__a" href="https://example.org/beta">Beta Result</a>
+    <a class="result__snippet">Beta snippet.</a>
+    """
+    pages = {
+        "https://example.com/alpha": """
+        <html><head><title>Alpha Page</title><script>ignore()</script></head>
+        <body><nav>menu</nav><main><h1>Alpha heading</h1>
+        <p>Alpha useful paragraph with enough detail for extraction.</p>
+        <p>Alpha useful paragraph with enough detail for extraction.</p></main></body></html>
+        """,
+        "https://example.org/beta": """
+        <html><head><title>Beta Page</title></head>
+        <body><article><p>Beta useful paragraph with distinct research details.</p></article></body></html>
+        """,
+    }
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        if "duckduckgo.com" in url:
+            return search_html
+        return pages[url]
+
+    fake_llm = FakeCleanupLLM()
+    result = web_searcher_executor(
+        {
+            "query": "openpilot research",
+            "max_results": 2,
+            "max_pages": 2,
+            "max_page_chars": 500,
+            "_http_get": fake_http_get,
+            "_llm_client": fake_llm,
+        }
+    )
+
+    assert result["llm_cleanup"] is True
+    assert len(fake_llm.requests) == 1
+    assert len(result["pages"]) == 2
+    assert result["pages"][0]["title"] == "Alpha Page"
+    assert result["pages"][0]["fetch_success"] is True
+    assert "menu" not in result["pages"][0]["content_excerpt"]
+    assert "Alpha useful paragraph" in result["pages"][0]["content_excerpt"]
+    assert result["research_summary"] == "Clean summary"
+    assert result["key_points"] == ["Useful fact"]
+    assert result["source_notes"] == [{"url": "https://example.com/alpha", "note": "Primary source"}]
+    assert result["follow_up_queries"] == ["openpilot follow up"]
+
+
+def test_web_searcher_max_pages_zero_skips_page_fetch_and_cleanup() -> None:
+    html = '<a class="result__a" href="https://example.com/a">A</a><a class="result__snippet">A snippet</a>'
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        assert "duckduckgo.com" in url
+        return html
+
+    fake_llm = FakeCleanupLLM()
+    result = web_searcher_executor(
+        {
+            "query": "openpilot",
+            "max_pages": 0,
+            "_http_get": fake_http_get,
+            "_llm_client": fake_llm,
+        }
+    )
+
+    assert result["count"] == 1
+    assert result["pages"] == []
+    assert result["llm_cleanup"] is False
+    assert fake_llm.requests == []
+
+
+def test_web_searcher_llm_cleanup_false_skips_llm() -> None:
+    html = '<a class="result__a" href="https://example.com/a">A</a><a class="result__snippet">A snippet</a>'
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        if "duckduckgo.com" in url:
+            return html
+        return "<html><body><p>Readable page content with useful details.</p></body></html>"
+
+    fake_llm = FakeCleanupLLM()
+    result = web_searcher_executor(
+        {
+            "query": "openpilot",
+            "llm_cleanup": False,
+            "_http_get": fake_http_get,
+            "_llm_client": fake_llm,
+        }
+    )
+
+    assert result["pages"][0]["fetch_success"] is True
+    assert result["llm_cleanup"] is False
+    assert result["research_summary"] == ""
+    assert result["key_points"] == []
+    assert fake_llm.requests == []
+
+
+def test_web_searcher_page_fetch_failure_is_nonfatal() -> None:
+    html = '<a class="result__a" href="https://example.com/a">A</a><a class="result__snippet">A snippet</a>'
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        if "duckduckgo.com" in url:
+            return html
+        raise OSError("page down")
+
+    result = web_searcher_executor(
+        {
+            "query": "openpilot",
+            "llm_cleanup": False,
+            "_http_get": fake_http_get,
+        }
+    )
+
+    assert result["pages"][0]["fetch_success"] is False
+    assert result["pages"][0]["error"] == "page down"
+    assert any("Failed to fetch https://example.com/a" in warning for warning in result["warnings"])
+
+
+def test_web_searcher_llm_cleanup_failure_is_reported() -> None:
+    html = '<a class="result__a" href="https://example.com/a">A</a><a class="result__snippet">A snippet</a>'
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        if "duckduckgo.com" in url:
+            return html
+        return "<html><body><p>Readable page content with useful details.</p></body></html>"
+
+    try:
+        web_searcher_executor(
+            {
+                "query": "openpilot",
+                "_http_get": fake_http_get,
+                "_llm_client": FakeCleanupLLM(fail=True),
+            }
+        )
+    except RuntimeError as exc:
+        assert "LLM cleanup failed" in str(exc)
+    else:
+        raise AssertionError("Expected LLM cleanup failure")
 
 
 def test_embedder_uses_injected_service_without_network() -> None:

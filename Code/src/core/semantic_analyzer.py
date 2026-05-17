@@ -115,7 +115,7 @@ code_execution, shell_execution, email, calendar, database, network.
 
 Allowed preferred_tool values:
 multi_file_reader, llm_summarizer, file_writer, command_executor,
-code_generator, code_reviewer, code_executor, readme_tool,
+code_generator, code_reviewer, code_executor, readme_tool, web_searcher,
 unsupported_file_mutation.
 
 Use these operation_type values when appropriate:
@@ -157,6 +157,11 @@ Code Generation Policy:
   * capability: "file_read"
   * operation_type: "read_reports"
   * preferred_tool: "multi_file_reader"
+- If the step needs internet research, latest information, source discovery, or
+  web search results, classify as:
+  * capability: "web_search"
+  * operation_type: "other"
+  * preferred_tool: "web_searcher"
 
 Important policy:
 - If the step wants to move, rename, archive, or reorganize original files and

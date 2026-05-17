@@ -962,6 +962,177 @@
         "memory"
       ],
       "audit_required": true
+    },
+    {
+      "tool_name": "web_searcher",
+      "display_name": "Web Searcher",
+      "function": "Search the public web, fetch result pages, and clean research content with an LLM",
+      "version": "1.1.0",
+      "capabilities": [
+        "web_search",
+        "network",
+        "llm_call"
+      ],
+      "permission_level": "medium",
+      "input_schema": [
+        {
+          "name": "query",
+          "type": "string",
+          "description": "Search query",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "max_results",
+          "type": "integer",
+          "description": "Maximum number of results to return, clamped to 1-10",
+          "required": false,
+          "default": 5
+        },
+        {
+          "name": "region",
+          "type": "string",
+          "description": "DuckDuckGo region code",
+          "required": false,
+          "default": "wt-wt"
+        },
+        {
+          "name": "time_range",
+          "type": "string",
+          "description": "Time range: all, day, week, month, or year",
+          "required": false,
+          "default": "all"
+        },
+        {
+          "name": "safe_search",
+          "type": "string",
+          "description": "Safe search: off, moderate, or strict",
+          "required": false,
+          "default": "moderate"
+        },
+        {
+          "name": "timeout",
+          "type": "integer",
+          "description": "HTTP timeout in seconds",
+          "required": false,
+          "default": 10
+        },
+        {
+          "name": "max_pages",
+          "type": "integer",
+          "description": "Maximum result pages to fetch and clean, clamped to 0-5",
+          "required": false,
+          "default": 3
+        },
+        {
+          "name": "max_page_chars",
+          "type": "integer",
+          "description": "Maximum extracted text characters per page, clamped to 500-12000",
+          "required": false,
+          "default": 4000
+        },
+        {
+          "name": "llm_cleanup",
+          "type": "boolean",
+          "description": "Use an LLM to remove noise and organize fetched content",
+          "required": false,
+          "default": true
+        },
+        {
+          "name": "cleanup_instruction",
+          "type": "string",
+          "description": "Additional instructions for organizing the research result",
+          "required": false,
+          "default": "Remove navigation, ads, duplicates, and unsupported claims. Organize facts by source and keep the answer concise."
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Structured web search results, fetched pages, and cleaned research summary",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Search provider used"
+          },
+          "results": {
+            "type": "array",
+            "description": "Search result records"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of returned results"
+          },
+          "fetched_at": {
+            "type": "string",
+            "description": "UTC timestamp"
+          },
+          "warnings": {
+            "type": "array",
+            "description": "Non-fatal warnings"
+          },
+          "pages": {
+            "type": "array",
+            "description": "Fetched page excerpts and status"
+          },
+          "llm_cleanup": {
+            "type": "boolean",
+            "description": "Whether LLM cleanup was executed"
+          },
+          "research_summary": {
+            "type": "string",
+            "description": "Cleaned research summary"
+          },
+          "key_points": {
+            "type": "array",
+            "description": "Important facts extracted from sources"
+          },
+          "source_notes": {
+            "type": "array",
+            "description": "Source-specific notes"
+          },
+          "follow_up_queries": {
+            "type": "array",
+            "description": "Suggested follow-up searches"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "invalid_input",
+          "description": "Search parameters are invalid",
+          "recovery_strategy": "Provide a non-empty query and supported search options"
+        },
+        {
+          "error_type": "network_error",
+          "description": "Search provider request failed",
+          "recovery_strategy": "Retry later or narrow the query"
+        },
+        {
+          "error_type": "parse_error",
+          "description": "Search response could not be parsed",
+          "recovery_strategy": "Retry later or use another provider"
+        },
+        {
+          "error_type": "llm_error",
+          "description": "LLM cleanup failed",
+          "recovery_strategy": "Disable llm_cleanup or check LLM provider configuration"
+        }
+      ],
+      "timeout_seconds": 30,
+      "max_retries": 1,
+      "tags": [
+        "web",
+        "search",
+        "research",
+        "internet",
+        "network",
+        "llm"
+      ],
+      "audit_required": true
     }
   ]
 }
