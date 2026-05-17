@@ -114,7 +114,7 @@ file_read, file_write, file_delete, llm_call, web_search, web_request,
 code_execution, shell_execution, email, calendar, database, network.
 
 Allowed preferred_tool values:
-directory_lister, multi_file_reader, llm_summarizer, file_writer,
+multi_file_reader, llm_summarizer, file_writer, command_executor,
 code_generator, code_reviewer, code_executor, readme_tool,
 unsupported_file_mutation.
 
@@ -148,6 +148,15 @@ Code Generation Policy:
   * capability: "file_write"
   * operation_type: "generate_readme"
   * preferred_tool: "readme_tool"
+- If the step only needs to list, find, or inspect directory entries without
+  reading file contents, classify as:
+  * capability: "shell_execution"
+  * operation_type: "other"
+  * preferred_tool: "command_executor"
+- If the step needs to read multiple matching files from a directory, classify as:
+  * capability: "file_read"
+  * operation_type: "read_reports"
+  * preferred_tool: "multi_file_reader"
 
 Important policy:
 - If the step wants to move, rename, archive, or reorganize original files and

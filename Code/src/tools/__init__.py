@@ -7,7 +7,7 @@ The package initializer stays lightweight to avoid circular imports.
 
 __all__ = [
     "builtin_tools",
-    "code",
+    "code_models",
     "command_tool",
     "embedder",
     "executor_models",

@@ -88,23 +88,22 @@ MULTI_FILE_READER_DEFINITION = ToolDefinition(
 
 def multi_file_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
     """Read multiple files and combine them into one text payload."""
-    from tools.directory_lister import directory_lister_executor
-
     file_paths = params.get("file_paths") or params.get("files")
     if not file_paths:
-        directory_path = params.get("directory_path")
-        if not directory_path:
+        directory_path_value = params.get("directory_path")
+        if not directory_path_value:
             raise ValueError("multi_file_reader requires file_paths or directory_path")
+        directory_path = Path(directory_path_value)
+        if not directory_path.exists():
+            raise FileNotFoundError(f"Directory not found: {directory_path}")
+        if not directory_path.is_dir():
+            raise NotADirectoryError(f"Not a directory: {directory_path}")
+
         pattern = params.get("pattern", "*完成报告*.md")
-        directory_result = directory_lister_executor(
-            {
-                "directory_path": directory_path,
-                "pattern": pattern,
-                "recursive": params.get("recursive", False),
-                "max_files": params.get("max_files", 100),
-            }
-        )
-        file_paths = directory_result["files"]
+        recursive = params.get("recursive", False)
+        max_files = params.get("max_files", 100)
+        iterator = directory_path.rglob(pattern) if recursive else directory_path.glob(pattern)
+        file_paths = sorted(str(path) for path in iterator if path.is_file())[:max_files]
 
     encoding = params.get("encoding", "utf-8")
     max_total_chars = params.get("max_total_chars", 50000)

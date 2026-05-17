@@ -25,16 +25,17 @@ def test_builtin_tools_register_expected_contracts() -> None:
     registry = _registered_registry()
 
     names = {tool.name for tool in registry.list_all()}
+    removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 11
+    assert len(names) == 10
     assert {
         "command_executor",
         "embedder",
         "file_reader",
         "file_writer",
-        "directory_lister",
         "multi_file_reader",
     }.issubset(names)
+    assert removed_directory_tool not in names
     assert "autonomy_tool" not in names
     assert "project_environment_tool" not in names
     assert "memory_context" not in names
@@ -218,6 +219,39 @@ def test_file_reader_returns_placeholder_for_binary_files(tmp_path) -> None:
     assert result.output["file_type"] == "binary"
     assert result.output["encoding"] == "binary"
     assert result.output["lines_read"] == 0
+
+
+def test_multi_file_reader_scans_directory_with_glob(tmp_path) -> None:
+    first = tmp_path / "alpha完成报告.md"
+    second = tmp_path / "beta完成报告.md"
+    ignored = tmp_path / "notes.txt"
+    first.write_text("alpha", encoding="utf-8")
+    second.write_text("beta", encoding="utf-8")
+    ignored.write_text("ignored", encoding="utf-8")
+
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="read-matching-files",
+                tool_name="multi_file_reader",
+                reason="capability_match",
+                input_params={
+                    "directory_path": str(tmp_path),
+                    "pattern": "*完成报告.md",
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert result.output["count"] == 2
+    assert result.output["files"] == [str(first), str(second)]
+    assert "alpha" in result.output["content"]
+    assert "beta" in result.output["content"]
+    assert "ignored" not in result.output["content"]
 
 
 def test_tool_executor_records_output_schema_warnings() -> None:

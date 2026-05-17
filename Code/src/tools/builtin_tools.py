@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from tools.file_reader import FILE_READER_DEFINITION, file_reader_executor
-from tools.directory_lister import DIRECTORY_LISTER_DEFINITION, directory_lister_executor
 from tools.multi_file_reader import MULTI_FILE_READER_DEFINITION, multi_file_reader_executor
 from tools.file_writer import FILE_WRITER_DEFINITION, file_writer_executor
 from tools.llm_summarizer import LLM_SUMMARIZER_DEFINITION, llm_summarizer_executor
@@ -19,9 +18,6 @@ __all__ = [
     # File Reader
     "FILE_READER_DEFINITION",
     "file_reader_executor",
-    # Directory Lister
-    "DIRECTORY_LISTER_DEFINITION",
-    "directory_lister_executor",
     # Multi File Reader
     "MULTI_FILE_READER_DEFINITION",
     "multi_file_reader_executor",
@@ -60,7 +56,6 @@ def register_builtin_tools(registry) -> None:
         registry: ToolRegistry instance
     """
     registry.register(FILE_READER_DEFINITION, file_reader_executor)
-    registry.register(DIRECTORY_LISTER_DEFINITION, directory_lister_executor)
     registry.register(MULTI_FILE_READER_DEFINITION, multi_file_reader_executor)
     registry.register(FILE_WRITER_DEFINITION, file_writer_executor)
     registry.register(LLM_SUMMARIZER_DEFINITION, llm_summarizer_executor)
