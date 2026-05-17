@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from execution.task_models import TaskStatus
+from autonomous_iteration.task_models import TaskStatus
 
 
 class AutopilotSessionRunner:
@@ -487,7 +487,7 @@ class AutopilotSessionRunner:
             return
         logger.log_structured_event(
             source_type="module",
-            source_name="execution.session_runner",
+            source_name="autonomous_iteration.session_runner",
             phase="session_execution",
             event_type=event_type,
             session_id=getattr(self.runtime, "session_id", None) or "unknown",

@@ -10,10 +10,10 @@ from autonomous_iteration.models import EvaluationResult
 from autonomous_iteration.agents.iteration_agent import AutonomousIterationAgent
 from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
 from core.openpilot_log import OpenPilotLogger
-from execution.agents.orchestrator import AgentOrchestrator
-from execution.agents.task_decomposer import TaskDecomposer
-from execution.intelligent_autopilot import IntelligentAutopilot
-from execution.task_models import TaskDecompositionResult
+from autonomous_iteration.agents.execution_orchestrator import AgentOrchestrator
+from autonomous_iteration.agents.execution_task_decomposer import TaskDecomposer
+from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+from autonomous_iteration.task_models import TaskDecompositionResult
 
 
 class FakeLLM:
@@ -37,10 +37,10 @@ def test_module_owned_paths_replace_global_agents_package() -> None:
     sys.modules.pop("agents", None)
     sys.modules.pop(".".join(["agents", "task_models"]), None)
 
-    assert importlib.import_module("execution.task_models").TaskDecompositionResult is TaskDecompositionResult
+    assert importlib.import_module("autonomous_iteration.task_models").TaskDecompositionResult is TaskDecompositionResult
     assert importlib.import_module("autonomous_iteration.models").EvaluationResult is EvaluationResult
-    assert importlib.import_module("execution.agents.task_decomposer").TaskDecomposer is TaskDecomposer
-    assert importlib.import_module("execution.agents.orchestrator").AgentOrchestrator is AgentOrchestrator
+    assert importlib.import_module("autonomous_iteration.agents.execution_task_decomposer").TaskDecomposer is TaskDecomposer
+    assert importlib.import_module("autonomous_iteration.agents.execution_orchestrator").AgentOrchestrator is AgentOrchestrator
     assert importlib.import_module("autonomous_iteration.agents.project_evaluator").ProjectEvaluatorAgent is ProjectEvaluatorAgent
     assert importlib.import_module("autonomous_iteration.agents.iteration_agent").AutonomousIterationAgent is AutonomousIterationAgent
 
@@ -48,6 +48,8 @@ def test_module_owned_paths_replace_global_agents_package() -> None:
         importlib.import_module("agents")
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module(".".join(["agents", "task_models"]))
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("execution")
 
 
 def test_intelligent_autopilot_constructs_module_owned_agents(tmp_path) -> None:
@@ -98,6 +100,6 @@ def test_module_owned_agents_emit_structured_agent_logs(tmp_path) -> None:
         for payload in payloads
         if payload.get("source_type") == "agent"
     }
-    assert "execution.agents.task_decomposer" in agent_sources
+    assert "autonomous_iteration.agents.execution_task_decomposer" in agent_sources
     assert "autonomous_iteration.agents.project_evaluator" in agent_sources
     assert "autonomous_iteration.agents.iteration_agent" in agent_sources

@@ -10,7 +10,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from rich.console import Console
 
@@ -19,7 +19,7 @@ from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
 from core.llm import LLMClient
 from core.semantic_analyzer import SemanticAnalyzer
 from memory.memory_store import MemoryStore
-from execution.task_models import (
+from autonomous_iteration.task_models import (
     Task,
     TaskStatus,
     TaskPriority,
@@ -27,26 +27,25 @@ from execution.task_models import (
     TaskExecutionResult
 )
 from autonomous_iteration.models import EvaluationResult, IterationResult
-from tools.tool_orchestration_models import (
+from tools.tool_selection import (
     ToolSelection,
 )
 from tools.tool_registry import ToolRegistry
 from tools.tool_executor import ToolExecutor
-from tools.tool_orchestrator import ToolOrchestrator
 from core.openpilot_log import OpenPilotLogger
 from core.exceptions import ErrorCategory, classify_error
 from autonomous_iteration.improvement_context import ImprovementContextHelper
 from autonomous_iteration.runner import AutonomousIterationRunner
 from autonomous_iteration.task_executor import AutonomousTaskExecutor
-from execution.agents.orchestrator import AgentOrchestrator
-from execution.agents.task_decomposer import TaskDecomposer
-from execution.agents.tool_planning_executor import ToolPlanningTaskExecutor
-from execution.console_presenter import ConsolePresenter
-from execution.iteration_dashboard import IterationDashboardAdapter
-from execution.project_iteration import ProjectIterationHelper
-from execution.session_runner import AutopilotSessionRunner
-from execution.task_runner import ExecutionTaskRunner
-from execution.tool_io import ExecutionToolIO
+from autonomous_iteration.agents.execution_orchestrator import AgentOrchestrator
+from autonomous_iteration.agents.execution_task_decomposer import TaskDecomposer
+from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskExecutor
+from ui.console_presenter import ConsolePresenter
+from ui.iteration_dashboard import IterationDashboardAdapter
+from autonomous_iteration.project_iteration import ProjectIterationHelper
+from autonomous_iteration.session_runner import AutopilotSessionRunner
+from autonomous_iteration.task_runner import ExecutionTaskRunner
+from autonomous_iteration.tool_io import ExecutionToolIO
 
 
 class IntelligentAutopilot:
@@ -163,7 +162,7 @@ class IntelligentAutopilot:
             self.memory_context_builder = None
             self.logger.log_structured_event(
                 source_type="module",
-                source_name="execution.intelligent_autopilot.memory_context_builder",
+                source_name="autonomous_iteration.intelligent_autopilot.memory_context_builder",
                 phase="initialization",
                 event_type="module_failed",
                 session_id="unknown",
@@ -196,12 +195,6 @@ class IntelligentAutopilot:
         else:
             self.tool_executor = ToolExecutor(self.tool_registry, logger=self.logger)
 
-        # Initialize tool orchestrator
-        self.tool_orchestrator = ToolOrchestrator(
-            self.tool_registry,
-            self.llm_client
-        )
-
         self.tool_io = ExecutionToolIO(self.logger, lambda: self.session_id)
         self.project_iteration = ProjectIterationHelper(self.logger, lambda: self.session_id)
         self.iteration_dashboard = IterationDashboardAdapter(self, self.logger, lambda: self.session_id)
@@ -229,44 +222,13 @@ class IntelligentAutopilot:
     def _register_contextual_tools(self) -> None:
         """Register tool wrappers that can reuse this autopilot's runtime context."""
         from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
-        from tools.project_improvement_tool import (
-            PROJECT_IMPROVEMENT_TOOL_DEFINITION,
-            PROJECT_STATE_READER_DEFINITION,
-            project_improvement_tool_executor,
-            project_state_reader_executor,
-        )
-        from tools.env_tools import PROJECT_ENVIRONMENT_TOOL_DEFINITION, project_environment_tool_executor
 
         def execute_code_generator(params: dict[str, Any]) -> dict[str, Any]:
             return code_generator_executor({**params, "_llm_client": self.llm_client})
 
-        def execute_project_improvement(params: dict[str, Any]) -> dict[str, Any]:
-            return project_improvement_tool_executor({**params, "_llm_client": self.llm_client})
-
-        def execute_project_state_reader(params: dict[str, Any]) -> dict[str, Any]:
-            return project_state_reader_executor({**params, "_memory_store": self.memory_store})
-
-        def execute_project_environment(params: dict[str, Any]) -> dict[str, Any]:
-            return project_environment_tool_executor({**params, "_memory_store": self.memory_store})
-
         self.tool_registry.register(
             CODE_GENERATOR_DEFINITION,
             execute_code_generator,
-            allow_override=True,
-        )
-        self.tool_registry.register(
-            PROJECT_IMPROVEMENT_TOOL_DEFINITION,
-            execute_project_improvement,
-            allow_override=True,
-        )
-        self.tool_registry.register(
-            PROJECT_STATE_READER_DEFINITION,
-            execute_project_state_reader,
-            allow_override=True,
-        )
-        self.tool_registry.register(
-            PROJECT_ENVIRONMENT_TOOL_DEFINITION,
-            execute_project_environment,
             allow_override=True,
         )
 
@@ -927,18 +889,18 @@ class IntelligentAutopilot:
                 details=f"Project: {project_path}\nVirtual environment: .venv",
                 status="running",
             )
-        result = self._execute_fast_tool(
+        input_params = {
+            "project_path": str(project_path),
+            "written_files": written_files,
+            "entry_files": entry_files,
+            "run_command": run_command,
+            "env_name": ".venv",
+            "install": True,
+        }
+        result = self._execute_project_environment_agent_tool(
             task=task,
             step_id=step_id,
-            tool_name="project_environment_tool",
-            input_params={
-                "project_path": str(project_path),
-                "written_files": written_files,
-                "entry_files": entry_files,
-                "run_command": run_command,
-                "env_name": ".venv",
-                "install": True,
-            },
+            input_params=input_params,
             parent_task_id=parent_task_id,
         )
         if result.get("success") and isinstance(result.get("result"), dict):
@@ -984,6 +946,249 @@ class IntelligentAutopilot:
             )
         return result
 
+    def _execute_project_environment_agent_tool(
+        self,
+        *,
+        task: Task,
+        step_id: str,
+        input_params: dict[str, Any],
+        parent_task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Run the environment manager's agent-local tool without public registry selection."""
+        from memory.agents.project_environment_tool import project_environment_tool_executor
+
+        tool_name = "project_environment_tool"
+        started = time.monotonic()
+        if self.enhanced_ui:
+            self._set_dashboard_tool_status(
+                parent_task_id=parent_task_id,
+                tool_id=step_id,
+                tool_name=tool_name,
+                status="running",
+            )
+            param_lines = "\n".join(f"{key}: {value}" for key, value in input_params.items())
+            self.enhanced_ui.set_current_task_state(
+                title=f"Tool: {tool_name}",
+                details=f"Task: {task.description}\nStep: {step_id}\n{param_lines}",
+                status="running",
+            )
+
+        self.logger.log_event(
+            "tool_execution_start",
+            {
+                "task_id": task.id,
+                "step_id": step_id,
+                "tool": tool_name,
+                "timeout_override": None,
+                "params": self._sanitize_tool_params(input_params),
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+
+        success = False
+        output: dict[str, Any] | None = None
+        error: str | None = None
+        error_type: str | None = None
+        try:
+            output = project_environment_tool_executor({**input_params, "_memory_store": self.memory_store})
+            success = True
+        except Exception as exc:
+            error = str(exc)
+            error_type = exc.__class__.__name__
+
+        duration_seconds = time.monotonic() - started
+        status = "completed" if success else "failed"
+        result = {
+            "tool": tool_name,
+            "params": self._sanitize_tool_params(input_params),
+            "result": output,
+            "success": success,
+            "error": error,
+            "error_type": error_type,
+            "status": status,
+            "duration_seconds": duration_seconds,
+            "step_id": step_id,
+            "timeout_override": None,
+            "attempts_used": 1,
+            "retry_count": 0,
+            "retry_history": [],
+        }
+
+        if self.enhanced_ui:
+            self._set_dashboard_tool_status(
+                parent_task_id=parent_task_id,
+                tool_id=step_id,
+                tool_name=tool_name,
+                status=status,
+            )
+            self.enhanced_ui.set_current_task_state(
+                title=f"Tool: {tool_name}",
+                details="Tool returned successfully" if success else (error or "Project environment sync failed."),
+                status=status,
+            )
+
+        self.logger.log_event(
+            "tool_executed",
+            {
+                "task_id": task.id,
+                "step_id": step_id,
+                "tool": tool_name,
+                "success": success,
+                "status": status,
+                "error_type": error_type,
+                "error": error,
+                "duration_seconds": duration_seconds,
+                "attempts_used": 1,
+                "retry_count": 0,
+                "output": self._summarize_tool_output(output),
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        return result
+
+    def _execute_project_state_reader_agent_tool(
+        self,
+        *,
+        task: Task,
+        step_id: str,
+        input_params: dict[str, Any],
+        parent_task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Run the autonomous-iteration project state reader without public registry selection."""
+        from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
+
+        return self._execute_module_owned_tool(
+            task=task,
+            step_id=step_id,
+            tool_name="project_state_reader",
+            input_params=input_params,
+            executor=lambda params: project_state_reader_executor({**params, "_memory_store": self.memory_store}),
+            parent_task_id=parent_task_id,
+        )
+
+    def _execute_project_improvement_agent_tool(
+        self,
+        *,
+        task: Task,
+        step_id: str,
+        input_params: dict[str, Any],
+        parent_task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Run the autonomous-iteration improvement analyzer without public registry selection."""
+        from autonomous_iteration.tool.project_improvement_tool import project_improvement_tool_executor
+
+        return self._execute_module_owned_tool(
+            task=task,
+            step_id=step_id,
+            tool_name="project_improvement_tool",
+            input_params=input_params,
+            executor=lambda params: project_improvement_tool_executor({**params, "_llm_client": self.llm_client}),
+            parent_task_id=parent_task_id,
+        )
+
+    def _execute_module_owned_tool(
+        self,
+        *,
+        task: Task,
+        step_id: str,
+        tool_name: str,
+        input_params: dict[str, Any],
+        executor: Callable[[dict[str, Any]], dict[str, Any]],
+        parent_task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Run a module-owned tool and return the same envelope as registry-backed tools."""
+        started = time.monotonic()
+        if self.enhanced_ui:
+            self._set_dashboard_tool_status(
+                parent_task_id=parent_task_id,
+                tool_id=step_id,
+                tool_name=tool_name,
+                status="running",
+            )
+            param_lines = "\n".join(f"{key}: {value}" for key, value in input_params.items())
+            self.enhanced_ui.set_current_task_state(
+                title=f"Tool: {tool_name}",
+                details=f"Task: {task.description}\nStep: {step_id}\n{param_lines}",
+                status="running",
+            )
+
+        self.logger.log_event(
+            "tool_execution_start",
+            {
+                "task_id": task.id,
+                "step_id": step_id,
+                "tool": tool_name,
+                "timeout_override": None,
+                "params": self._sanitize_tool_params(input_params),
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+
+        success = False
+        output: dict[str, Any] | None = None
+        error: str | None = None
+        error_type: str | None = None
+        try:
+            output = executor(input_params)
+            success = True
+        except Exception as exc:
+            error = str(exc)
+            error_type = exc.__class__.__name__
+
+        duration_seconds = time.monotonic() - started
+        status = "completed" if success else "failed"
+        result = {
+            "tool": tool_name,
+            "params": self._sanitize_tool_params(input_params),
+            "result": output,
+            "success": success,
+            "error": error,
+            "error_type": error_type,
+            "status": status,
+            "duration_seconds": duration_seconds,
+            "step_id": step_id,
+            "timeout_override": None,
+            "attempts_used": 1,
+            "retry_count": 0,
+            "retry_history": [],
+        }
+
+        if self.enhanced_ui:
+            self._set_dashboard_tool_status(
+                parent_task_id=parent_task_id,
+                tool_id=step_id,
+                tool_name=tool_name,
+                status=status,
+            )
+            self.enhanced_ui.set_current_task_state(
+                title=f"Tool: {tool_name}",
+                details="Tool returned successfully" if success else (error or f"{tool_name} failed."),
+                status=status,
+            )
+
+        self.logger.log_event(
+            "tool_executed",
+            {
+                "task_id": task.id,
+                "step_id": step_id,
+                "tool": tool_name,
+                "success": success,
+                "status": status,
+                "error_type": error_type,
+                "error": error,
+                "duration_seconds": duration_seconds,
+                "attempts_used": 1,
+                "retry_count": 0,
+                "output": self._summarize_tool_output(output),
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        return result
+
     def _readme_environment_context(self, environment_payload: dict[str, Any]) -> dict[str, Any]:
         return self.project_iteration.readme_environment_context(environment_payload)
 
@@ -1027,10 +1232,9 @@ class IntelligentAutopilot:
             description=f"Analyze project improvements after iteration {completed_iteration}",
             priority=TaskPriority.MEDIUM,
         )
-        tool_result = self._execute_fast_tool(
+        tool_result = self._execute_project_improvement_agent_tool(
             task=task,
             step_id=f"iteration_{completed_iteration}_project_improvement_tool",
-            tool_name="project_improvement_tool",
             input_params={
                 "project_path": str(project_path),
                 "goal": goal,

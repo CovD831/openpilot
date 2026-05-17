@@ -13,4 +13,5 @@ __all__ = [
     "memory_vault",
     "project_manager",
     "short_memory",
+    "tool",
 ]

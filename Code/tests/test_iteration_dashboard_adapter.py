@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from autonomous_iteration.models import IterationResult
-from execution.iteration_dashboard import IterationDashboardAdapter
+from ui.iteration_dashboard import IterationDashboardAdapter
 
 
 class FakeUI:

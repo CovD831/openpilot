@@ -550,7 +550,7 @@ class IterationDashboardAdapter:
         session_id = self.session_id_getter() if self.session_id_getter else "unknown"
         self.logger.log_structured_event(
             source_type="agent",
-            source_name=f"execution.iteration_dashboard.{source_name}",
+            source_name=f"ui.iteration_dashboard.{source_name}",
             phase="iteration_dashboard",
             event_type="agent_completed",
             session_id=session_id or "unknown",

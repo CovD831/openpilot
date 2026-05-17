@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ValidationError
 from core.exceptions import InvalidLLMResponseError
 from core.llm import LLMMessage, LLMRequest, LLMResponse
 from core.semantic_types import RiskLevel, STANDARD_RESOURCES, TaskType
-from tools.tool_models import ToolCapability
+from core.tool_contracts import ToolCapability
 
 
 class CompletionClient(Protocol):
@@ -115,7 +115,7 @@ code_execution, shell_execution, email, calendar, database, network.
 
 Allowed preferred_tool values:
 directory_lister, multi_file_reader, llm_summarizer, file_writer,
-code_generator, code_reviewer, code_executor, readme_tool, project_improvement_tool,
+code_generator, code_reviewer, code_executor, readme_tool,
 unsupported_file_mutation.
 
 Use these operation_type values when appropriate:

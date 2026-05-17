@@ -5,7 +5,7 @@ from pathlib import Path
 from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.runner import AutonomousIterationRunner
 from core.openpilot_log import OpenPilotLogger
-from execution.intelligent_autopilot import IntelligentAutopilot
+from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 
 
 class FakeIterationAgent:

@@ -7,10 +7,7 @@ from memory.memory_models import MemoryRecord, MemoryType
 from memory.memory_store import MemoryStore
 from memory.project_manager import ProjectManager
 from memory.short_memory import ShortMemory
-from tools.builtin_tools import register_builtin_tools
-from tools.tool_executor import ToolExecutor
-from tools.tool_orchestration_models import ToolSelection
-from tools.tool_registry import ToolRegistry
+from memory.tool.memory_context_tool import memory_context_executor
 
 
 def test_project_manager_updates_sketch_and_searches_by_content(tmp_path) -> None:
@@ -108,32 +105,20 @@ def test_memory_context_tool_returns_stable_context_without_llm(tmp_path) -> Non
     short_memory = ShortMemory(repo_path=tmp_path)
     short_memory.add_message("user", "Build a pygame demo.")
 
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    executor = ToolExecutor(registry)
-    try:
-        result = executor.execute_single(
-            ToolSelection(
-                step_id="memory-context",
-                tool_name="memory_context",
-                reason="capability_match",
-                input_params={
-                    "query": "pygame demo",
-                    "project_path": str(project),
-                    "_memory_store": store,
-                    "_short_memory": short_memory,
-                    "_project_manager": ProjectManager(project),
-                    "system_prompt": "Tool caller fixed prompt.",
-                },
-            )
-        )
-    finally:
-        executor.shutdown()
+    result = memory_context_executor(
+        {
+            "query": "pygame demo",
+            "project_path": str(project),
+            "_memory_store": store,
+            "_short_memory": short_memory,
+            "_project_manager": ProjectManager(project),
+            "system_prompt": "Tool caller fixed prompt.",
+        }
+    )
 
-    assert result.success
-    assert result.output["system_prompt"] == "Tool caller fixed prompt."
-    assert result.output["dialog_context"][0]["content"] == "Build a pygame demo."
-    assert result.output["related_memories"][0]["id"] == "memory-1"
-    assert result.output["related_files"][0]["name"] == "README.md"
-    assert result.output["prompt_text"].startswith("## System Prompt\nTool caller fixed prompt.")
-    assert "## Related Files" in result.output["prompt_text"]
+    assert result["system_prompt"] == "Tool caller fixed prompt."
+    assert result["dialog_context"][0]["content"] == "Build a pygame demo."
+    assert result["related_memories"][0]["id"] == "memory-1"
+    assert result["related_files"][0]["name"] == "README.md"
+    assert result["prompt_text"].startswith("## System Prompt\nTool caller fixed prompt.")
+    assert "## Related Files" in result["prompt_text"]

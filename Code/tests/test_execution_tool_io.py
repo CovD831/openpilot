@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from execution.intelligent_autopilot import IntelligentAutopilot
-from execution.tool_io import ExecutionToolIO
-from tools.tool_models import ToolDefinition, ToolInputSchema, ToolOutputSchema
-from tools.tool_orchestration_models import ToolSelection
+from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+from autonomous_iteration.tool_io import ExecutionToolIO
+from core.tool_contracts import ToolDefinition, ToolInputSchema, ToolOutputSchema
+from tools.tool_selection import ToolSelection
 
 
 class FakeLLM:

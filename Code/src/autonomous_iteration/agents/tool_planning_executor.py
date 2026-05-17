@@ -7,9 +7,9 @@ import time
 from datetime import datetime
 from typing import Any
 
-from execution.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
+from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.llm import LLMMessage, LLMRequest
-from tools.tool_orchestration_models import ToolSelection
+from tools.tool_selection import ToolSelection
 
 
 class ToolPlanningTaskExecutor:
@@ -148,7 +148,7 @@ Output ONLY valid JSON in this format:
 Important:
 - For code generation tasks, use code_generator to generate code, then file_writer to save it
 - For completed project/code deliveries, use readme_tool after file_writer to create README.md with run instructions
-- Autopilot will run hard validation and project_improvement_tool after project delivery; only call project_improvement_tool yourself when explicitly asked to analyze improvements
+- Autopilot will run hard validation and autonomous-iteration improvement analysis after project delivery
 - Provide actual values for all parameters, do not use null or placeholders
 - If you need to pass output from one tool to another, generate the content directly in the first tool
 """
@@ -347,7 +347,7 @@ Important:
             return
         logger.log_structured_event(
             source_type="agent",
-            source_name="execution.agents.tool_planning_executor",
+            source_name="autonomous_iteration.agents.tool_planning_executor",
             phase="task_execution",
             event_type=event_type,
             session_id=self._session_id(),

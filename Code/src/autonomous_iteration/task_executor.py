@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from autonomous_iteration.models import EvaluationResult, IterationResult
-from execution.task_models import Task, TaskPriority
+from autonomous_iteration.task_models import Task, TaskPriority
 
 
 class AutonomousTaskExecutor:

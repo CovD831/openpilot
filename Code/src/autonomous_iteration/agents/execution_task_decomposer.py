@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from core.graph import Graph, GraphNode, GraphEdge, GraphType
 from core.llm import LLMClient, LLMMessage, LLMRequest
-from execution.task_models import (
+from autonomous_iteration.task_models import (
     Task,
     TaskStatus,
     TaskPriority,
@@ -525,7 +525,7 @@ Guidelines:
             return
         self.logger.log_structured_event(
             source_type="agent",
-            source_name="execution.agents.task_decomposer",
+            source_name="autonomous_iteration.agents.execution_task_decomposer",
             phase="task_decomposition",
             event_type=event_type,
             session_id=self.session_id_getter() or "unknown",

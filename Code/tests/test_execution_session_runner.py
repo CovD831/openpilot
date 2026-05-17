@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 from rich.console import Console
 
-from execution.task_models import Task, TaskDecompositionResult, TaskExecutionResult, TaskStatus
+from autonomous_iteration.task_models import Task, TaskDecompositionResult, TaskExecutionResult, TaskStatus
 from core.openpilot_log import OpenPilotLogger
-from execution.session_runner import AutopilotSessionRunner
+from autonomous_iteration.session_runner import AutopilotSessionRunner
 
 
 class FakeSemantic:
@@ -173,7 +173,7 @@ def test_session_runner_standard_returns_existing_result_shape(tmp_path) -> None
 
 
 def test_session_runner_enhanced_returns_existing_result_shape(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("execution.session_runner.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("autonomous_iteration.session_runner.time.sleep", lambda seconds: None)
     runtime = FakeRuntime(tmp_path)
     runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
     runner = AutopilotSessionRunner(runtime)

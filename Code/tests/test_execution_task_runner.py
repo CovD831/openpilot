@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from rich.console import Console
 
-from execution.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskPriority, TaskStatus
+from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskPriority, TaskStatus
 from core.openpilot_log import OpenPilotLogger
-from execution.task_runner import ExecutionTaskRunner
+from autonomous_iteration.task_runner import ExecutionTaskRunner
 
 
 class FakeTaskDecomposer:

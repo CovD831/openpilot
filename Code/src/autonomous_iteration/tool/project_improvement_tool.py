@@ -8,7 +8,7 @@ from typing import Any
 
 from core.llm import LLMMessage, LLMRequest
 from memory.memory_models import MemoryType
-from tools.tool_models import (
+from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,

@@ -6,12 +6,12 @@ import sys
 from core.openpilot_log import OpenPilotLogger
 from tools.builtin_tools import register_builtin_tools
 from tools.tool_executor import ToolExecutor
-from tools.tool_models import (
+from core.tool_contracts import (
     PermissionLevel,
     ToolDefinition,
     ToolOutputSchema,
 )
-from tools.tool_orchestration_models import ToolSelection
+from tools.tool_selection import ToolSelection
 from tools.tool_registry import ToolRegistry
 
 
@@ -26,25 +26,25 @@ def test_builtin_tools_register_expected_contracts() -> None:
 
     names = {tool.name for tool in registry.list_all()}
 
-    assert len(names) == 16
+    assert len(names) == 11
     assert {
         "command_executor",
         "embedder",
-        "memory_context",
         "file_reader",
         "file_writer",
         "directory_lister",
         "multi_file_reader",
-        "project_environment_tool",
-        "project_state_reader",
-        "project_improvement_tool",
-        "autonomy_tool",
     }.issubset(names)
+    assert "autonomy_tool" not in names
+    assert "project_environment_tool" not in names
+    assert "memory_context" not in names
+    assert "project_state_reader" not in names
+    assert "project_improvement_tool" not in names
 
 
 def test_core_imports_remain_available() -> None:
     from core.openpilot_log import OpenPilotLogger as ImportedLogger
-    from execution.intelligent_autopilot import IntelligentAutopilot
+    from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
     from memory.memory_store import MemoryStore
     from tools.tool_executor import ToolExecutor as ImportedToolExecutor
 
@@ -104,8 +104,120 @@ def test_tool_executor_reads_file_and_applies_defaults(tmp_path) -> None:
     assert result.success
     assert result.output["content"] == "hello openpilot"
     assert result.output["encoding"] == "utf-8"
+    assert result.output["file_type"] == "data"
+    assert result.output["truncated"] is False
     assert selection.input_params["encoding"] == "utf-8"
     assert selection.input_params["max_size_mb"] == 10
+
+
+def test_file_reader_supports_sample_mode(tmp_path) -> None:
+    target = tmp_path / "sample.log"
+    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="sample-file",
+                tool_name="file_reader",
+                reason="capability_match",
+                input_params={
+                    "file_path": str(target),
+                    "read_mode": "sample",
+                    "max_lines": 2,
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert result.output["content"] == "one\ntwo\n"
+    assert result.output["lines_read"] == 2
+    assert result.output["total_lines"] == 3
+    assert result.output["truncated"] is True
+    assert result.output["metadata"]["read_mode"] == "sample"
+
+
+def test_file_reader_supports_tail_mode(tmp_path) -> None:
+    target = tmp_path / "tail.log"
+    target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="tail-file",
+                tool_name="file_reader",
+                reason="capability_match",
+                input_params={
+                    "file_path": str(target),
+                    "read_mode": "tail",
+                    "max_lines": 2,
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert result.output["content"] == "two\nthree\n"
+    assert result.output["lines_read"] == 2
+    assert result.output["total_lines"] == 3
+    assert result.output["truncated"] is True
+    assert result.output["metadata"]["read_mode"] == "tail"
+
+
+def test_file_reader_adaptive_mode_samples_log_files(tmp_path) -> None:
+    target = tmp_path / "events.log"
+    target.write_text("first\nsecond\nthird\n", encoding="utf-8")
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="adaptive-file",
+                tool_name="file_reader",
+                reason="capability_match",
+                input_params={
+                    "file_path": str(target),
+                    "read_mode": "adaptive",
+                    "max_lines": 2,
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert result.output["file_type"] == "log"
+    assert result.output["content"] == "first\nsecond\n"
+    assert result.output["truncated"] is True
+    assert result.output["metadata"]["read_mode"] == "adaptive"
+
+
+def test_file_reader_returns_placeholder_for_binary_files(tmp_path) -> None:
+    target = tmp_path / "image.png"
+    target.write_bytes(b"\x89PNG\r\n\x1a\n")
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="binary-file",
+                tool_name="file_reader",
+                reason="capability_match",
+                input_params={"file_path": str(target)},
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert result.output["content"] == "[Binary file - content not displayed]"
+    assert result.output["file_type"] == "binary"
+    assert result.output["encoding"] == "binary"
+    assert result.output["lines_read"] == 0
 
 
 def test_tool_executor_records_output_schema_warnings() -> None:

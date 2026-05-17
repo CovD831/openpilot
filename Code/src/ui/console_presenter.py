@@ -154,7 +154,7 @@ class ConsolePresenter:
             return
         self.logger.log_structured_event(
             source_type="function",
-            source_name="execution.console_presenter",
+            source_name="ui.console_presenter",
             phase="presentation",
             event_type=event_type,
             session_id=self.session_id_getter() or "unknown",

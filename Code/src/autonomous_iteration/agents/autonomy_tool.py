@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.autonomy_models import AutonomyDecision, AutonomyLevel, ConfidenceFactors
-from tools.tool_models import (
+from autonomous_iteration.agents.autonomy_models import AutonomyDecision, AutonomyLevel, ConfidenceFactors
+from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,

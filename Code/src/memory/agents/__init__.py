@@ -5,6 +5,7 @@ from __future__ import annotations
 __all__ = [
     "context_manager",
     "memory_vault_agent",
+    "project_environment_tool",
     "project_manager_agent",
     "virtual_environment_manager",
 ]

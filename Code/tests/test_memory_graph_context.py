@@ -9,10 +9,7 @@ from memory.context_builder import MemoryContextBuilder
 from memory.memory_models import MemoryRecord, MemoryType
 from memory.memory_store import MemoryStore
 from memory.memory_vault import MemoryVault
-from tools.builtin_tools import register_builtin_tools
-from tools.tool_executor import ToolExecutor
-from tools.tool_orchestration_models import ToolSelection
-from tools.tool_registry import ToolRegistry
+from memory.tool.memory_context_tool import memory_context_executor
 
 
 class FakeEmbeddingService:
@@ -153,25 +150,13 @@ def test_memory_context_tool_accepts_injected_memory_vault_agent(tmp_path) -> No
         tags=["tool", "pygame"],
         confidence=0.9,
     )
-    registry = ToolRegistry()
-    register_builtin_tools(registry)
-    executor = ToolExecutor(registry)
-    try:
-        result = executor.execute_single(
-            ToolSelection(
-                step_id="memory-context",
-                tool_name="memory_context",
-                reason="capability_match",
-                input_params={
-                    "query": "pygame",
-                    "project_path": str(tmp_path),
-                    "_memory_vault_agent": agent,
-                },
-            )
-        )
-    finally:
-        executor.shutdown()
+    result = memory_context_executor(
+        {
+            "query": "pygame",
+            "project_path": str(tmp_path),
+            "_memory_vault_agent": agent,
+        }
+    )
 
-    assert result.success
-    assert result.output["related_memories"][0]["id"] == memory_id
-    assert "Tool graph memory" in result.output["prompt_text"]
+    assert result["related_memories"][0]["id"] == memory_id
+    assert "Tool graph memory" in result["prompt_text"]

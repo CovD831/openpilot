@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.tool_models import (
+from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,

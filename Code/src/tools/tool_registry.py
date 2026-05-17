@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from core.exceptions import OpenPilotError
-from tools.tool_models import ToolCapability, ToolDefinition, PermissionLevel
+from core.tool_contracts import ToolCapability, ToolDefinition, PermissionLevel
 
 
 class ToolRegistryError(OpenPilotError):

@@ -127,7 +127,7 @@ class ProjectIterationHelper:
         session_id = self.session_id_getter() if self.session_id_getter else "unknown"
         self.logger.log_structured_event(
             source_type="module",
-            source_name=f"execution.project_iteration.{source_name}",
+            source_name=f"autonomous_iteration.project_iteration.{source_name}",
             phase="project_iteration",
             event_type="module_completed" if success else "module_failed",
             session_id=session_id or "unknown",

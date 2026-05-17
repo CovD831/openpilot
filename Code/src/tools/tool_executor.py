@@ -11,19 +11,19 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime
 from typing import Any, Optional
 
-from execution.executor_models import (
+from tools.executor_models import (
     ExecutionContext,
     ExecutionError,
     ExecutionResult,
     ExecutionStatus,
     ParallelExecutionResult,
 )
-from tools.tool_orchestration_models import (
+from tools.tool_selection import (
     ParallelExecutionGroup,
     ToolSelection,
 )
 from tools.tool_registry import ToolRegistry
-from tools.tool_models import ToolDefinition
+from core.tool_contracts import ToolDefinition
 from core.exceptions import classify_error, is_retryable_error, extract_error_context
 
 

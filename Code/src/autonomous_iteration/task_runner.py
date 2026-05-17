@@ -6,7 +6,7 @@ from typing import Any
 
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
-from execution.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
+from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 
 
 class ExecutionTaskRunner:
@@ -390,7 +390,7 @@ class ExecutionTaskRunner:
             return
         logger.log_structured_event(
             source_type="module",
-            source_name="execution.task_runner",
+            source_name="autonomous_iteration.task_runner",
             phase="task_execution",
             event_type=event_type,
             session_id=getattr(self.runtime, "session_id", None) or "unknown",

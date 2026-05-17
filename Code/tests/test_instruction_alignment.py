@@ -20,7 +20,7 @@ from memory.memory_models import MemoryRecord, MemoryType
 from memory.memory_store import MemoryStore
 from tools.builtin_tools import register_builtin_tools
 from tools.tool_executor import ToolExecutor
-from tools.tool_orchestration_models import ToolSelection
+from tools.tool_selection import ToolSelection
 from tools.tool_registry import ToolRegistry
 
 

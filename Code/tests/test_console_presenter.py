@@ -4,9 +4,9 @@ from datetime import datetime, timedelta
 
 from rich.console import Console
 
-from execution.task_models import Task, TaskDecompositionResult, TaskPriority, TaskStatus
+from autonomous_iteration.task_models import Task, TaskDecompositionResult, TaskPriority, TaskStatus
 from core.openpilot_log import OpenPilotLogger
-from execution.console_presenter import ConsolePresenter
+from ui.console_presenter import ConsolePresenter
 
 
 def _decomposition() -> TaskDecompositionResult:

@@ -2,10 +2,10 @@
 
 ## Overview
 
-帮我在'/Users/yanning/Projects/openpilot/Snake'生成一个贪吃蛇项目
+帮我在'/Users/yanning/Projects/openpilot/Snake'中做一个贪吃蛇
 
 Recent Improvements:
-- Rewrite main.py to use pygame, implementing complete game loop, snake movement, food generation, collision detection, scoring, and game-over screen.
+- Rewrite main.py to use pygame: create a standalone window with snake movement (arrow keys), red food square, score display, and game-over screen with R/Q for restart/quit
 - Fix the validation failure: Fix the runtime error reported by the smoke test.
 - Fix the validation failure: Fix the runtime error reported by the smoke test.
 - Fix the validation failure: Fix the runtime error reported by the smoke test.

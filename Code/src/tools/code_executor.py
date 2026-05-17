@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.tool_models import (
+from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
@@ -86,8 +86,8 @@ def code_executor_executor(params: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Dictionary with success, output, error, exit_code
     """
-    from execution.code_executor import CodeExecutor
-    from execution.code_models import CodeLanguage, GeneratedCode
+    from tools.code.code_executor import CodeExecutor
+    from tools.code.code_models import CodeLanguage, GeneratedCode
     import uuid
 
     code = params["code"]

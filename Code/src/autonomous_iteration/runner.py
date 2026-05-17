@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from autonomous_iteration.models import EvaluationResult, IterationResult
-from execution.task_models import Task, TaskPriority
+from autonomous_iteration.task_models import Task, TaskPriority
 
 
 class AutonomousIterationRunner:
@@ -201,10 +201,22 @@ class AutonomousIterationRunner:
             "memory_query": f"{goal} autonomous iteration {iteration}",
             "validation_context": evaluation.model_dump(),
         }
-        result = self.autopilot._execute_fast_tool(
+        execute_reader = getattr(self.autopilot, "_execute_project_state_reader_agent_tool", None)
+        if execute_reader is None:
+            from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
+
+            fallback = project_state_reader_executor({**params, "_memory_store": self.autopilot.memory_store})
+            self._log(
+                "project_state_read",
+                {"iteration": iteration},
+                {"source": "direct", "success": bool(fallback)},
+                success=bool(fallback),
+            )
+            return fallback
+
+        result = execute_reader(
             task=task,
             step_id=f"iteration_{iteration}_project_state_reader",
-            tool_name="project_state_reader",
             input_params=params,
             parent_task_id=self.autopilot._dashboard_stage_id("project_state"),
         )
@@ -212,7 +224,7 @@ class AutonomousIterationRunner:
             self._log("project_state_read", {"iteration": iteration}, {"source": "tool", "success": True})
             return result["result"]
 
-        from tools.project_improvement_tool import project_state_reader_executor
+        from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
 
         fallback = project_state_reader_executor({**params, "_memory_store": self.autopilot.memory_store})
         self._log(

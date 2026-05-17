@@ -120,7 +120,7 @@ def _run_once_mode(
     runtime_options: OpenPilotRuntimeOptions,
 ) -> int:
     """Run a single goal and exit."""
-    from execution.intelligent_autopilot import IntelligentAutopilot
+    from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
     from core.llm import LLMClient
 
     ui.console.print()
@@ -342,7 +342,7 @@ def _execute_autopilot(
     runtime_options: OpenPilotRuntimeOptions | None = None,
 ):
     """Execute goal using intelligent autopilot with enhanced UI."""
-    from execution.intelligent_autopilot import IntelligentAutopilot
+    from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
     from core.llm import LLMClient
 
     ui.console.print()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.tool_orchestration_models import ToolSelection
+from tools.tool_selection import ToolSelection
 
 
 class ExecutionToolIO:
@@ -242,7 +242,7 @@ class ExecutionToolIO:
         session_id = self.session_id_getter() if self.session_id_getter else "unknown"
         self.logger.log_structured_event(
             source_type="function",
-            source_name=f"execution.tool_io.{source_name}",
+            source_name=f"autonomous_iteration.tool_io.{source_name}",
             phase="execution_tool_io",
             event_type="function_completed",
             session_id=session_id or "unknown",

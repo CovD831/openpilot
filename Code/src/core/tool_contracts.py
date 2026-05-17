@@ -1,4 +1,4 @@
-"""Tool models for OpenPilot Phase 2."""
+"""Cross-module tool protocol contracts."""
 
 from __future__ import annotations
 

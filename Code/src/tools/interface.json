@@ -1,0 +1,1055 @@
+{
+  "schema_version": "1.0",
+  "source": "Code/src/tools/builtin_tools.py",
+  "tools": [
+    {
+      "tool_name": "file_reader",
+      "display_name": "File Reader",
+      "function": "Read contents from a local file",
+      "version": "1.0.0",
+      "capabilities": [
+        "file_read"
+      ],
+      "permission_level": "low",
+      "input_schema": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "description": "Absolute or relative path to the file",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "encoding",
+          "type": "string",
+          "description": "File encoding (default: utf-8)",
+          "required": false,
+          "default": "utf-8"
+        },
+        {
+          "name": "max_size_mb",
+          "type": "integer",
+          "description": "Maximum file size in MB (default: 10)",
+          "required": false,
+          "default": 10
+        },
+        {
+          "name": "read_mode",
+          "type": "string",
+          "description": "Read mode: full, adaptive, sample, or tail",
+          "required": false,
+          "default": "full"
+        },
+        {
+          "name": "max_lines",
+          "type": "integer",
+          "description": "Maximum number of lines for adaptive, sample, or tail modes",
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "offset",
+          "type": "integer",
+          "description": "Line offset for adaptive or sample modes",
+          "required": false,
+          "default": 0
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "File contents and metadata",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "File contents"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "description": "File size in bytes"
+          },
+          "encoding": {
+            "type": "string",
+            "description": "File encoding used"
+          },
+          "file_type": {
+            "type": "string",
+            "description": "Detected file type"
+          },
+          "lines_read": {
+            "type": "integer",
+            "description": "Number of lines returned"
+          },
+          "total_lines": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Total line count when known"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether content was truncated"
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Additional read metadata"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "file_not_found",
+          "description": "File does not exist",
+          "recovery_strategy": "Check file path and try again"
+        },
+        {
+          "error_type": "permission_denied",
+          "description": "No permission to read file",
+          "recovery_strategy": "Check file permissions"
+        },
+        {
+          "error_type": "file_too_large",
+          "description": "File exceeds maximum size",
+          "recovery_strategy": "Increase max_size_mb or read file in chunks"
+        },
+        {
+          "error_type": "encoding_error",
+          "description": "Cannot decode file with specified encoding",
+          "recovery_strategy": "Try different encoding (e.g., latin-1, gbk)"
+        }
+      ],
+      "timeout_seconds": 30,
+      "max_retries": 2,
+      "tags": [
+        "file",
+        "read",
+        "local",
+        "io"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "directory_lister",
+      "display_name": "Directory Lister",
+      "function": "List local files in a directory using a glob pattern",
+      "version": "1.0.0",
+      "capabilities": [
+        "file_read"
+      ],
+      "permission_level": "low",
+      "input_schema": [
+        {
+          "name": "directory_path",
+          "type": "string",
+          "description": "Absolute or relative directory path",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "pattern",
+          "type": "string",
+          "description": "Glob pattern for files",
+          "required": false,
+          "default": "*完成报告*.md"
+        },
+        {
+          "name": "recursive",
+          "type": "boolean",
+          "description": "Search recursively",
+          "required": false,
+          "default": false
+        },
+        {
+          "name": "max_files",
+          "type": "integer",
+          "description": "Maximum number of files to return",
+          "required": false,
+          "default": 100
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Matched file paths and metadata",
+        "properties": {
+          "directory_path": {
+            "type": "string",
+            "description": "Directory searched"
+          },
+          "pattern": {
+            "type": "string",
+            "description": "Glob pattern used"
+          },
+          "files": {
+            "type": "array",
+            "description": "Matched file paths"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of matched files"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether results were truncated"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "directory_not_found",
+          "description": "Directory does not exist",
+          "recovery_strategy": "Check directory path and try again"
+        },
+        {
+          "error_type": "not_a_directory",
+          "description": "Path exists but is not a directory",
+          "recovery_strategy": "Provide a directory path"
+        }
+      ],
+      "timeout_seconds": 30,
+      "max_retries": 2,
+      "tags": [
+        "directory",
+        "list",
+        "file",
+        "local",
+        "io"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "multi_file_reader",
+      "display_name": "Multi File Reader",
+      "function": "Read and combine contents from multiple local files",
+      "version": "1.0.0",
+      "capabilities": [
+        "file_read"
+      ],
+      "permission_level": "low",
+      "input_schema": [
+        {
+          "name": "file_paths",
+          "type": "array",
+          "description": "List of file paths to read",
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "directory_path",
+          "type": "string",
+          "description": "Directory to scan if file_paths is omitted",
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "pattern",
+          "type": "string",
+          "description": "Glob pattern used with directory_path",
+          "required": false,
+          "default": "*完成报告*.md"
+        },
+        {
+          "name": "encoding",
+          "type": "string",
+          "description": "File encoding",
+          "required": false,
+          "default": "utf-8"
+        },
+        {
+          "name": "max_total_chars",
+          "type": "integer",
+          "description": "Maximum combined content length",
+          "required": false,
+          "default": 50000
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Combined file contents and metadata",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Combined file contents"
+          },
+          "files": {
+            "type": "array",
+            "description": "Read file paths"
+          },
+          "count": {
+            "type": "integer",
+            "description": "Number of files read"
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "Whether content was truncated"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "file_not_found",
+          "description": "One or more files do not exist",
+          "recovery_strategy": "Check file paths and retry"
+        },
+        {
+          "error_type": "encoding_error",
+          "description": "Cannot decode a file with specified encoding",
+          "recovery_strategy": "Try a different encoding"
+        }
+      ],
+      "timeout_seconds": 60,
+      "max_retries": 2,
+      "tags": [
+        "file",
+        "read",
+        "batch",
+        "local",
+        "io"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "file_writer",
+      "display_name": "File Writer",
+      "function": "Write contents to a local file",
+      "version": "1.0.0",
+      "capabilities": [
+        "file_write"
+      ],
+      "permission_level": "medium",
+      "input_schema": [
+        {
+          "name": "file_path",
+          "type": "string",
+          "description": "Absolute or relative path to the file",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "description": "Content to write to file",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "encoding",
+          "type": "string",
+          "description": "File encoding (default: utf-8)",
+          "required": false,
+          "default": "utf-8"
+        },
+        {
+          "name": "create_dirs",
+          "type": "boolean",
+          "description": "Create parent directories if they don't exist",
+          "required": false,
+          "default": true
+        },
+        {
+          "name": "overwrite",
+          "type": "boolean",
+          "description": "Overwrite file if it exists",
+          "required": false,
+          "default": true
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Write result and metadata",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Path to written file"
+          },
+          "bytes_written": {
+            "type": "integer",
+            "description": "Number of bytes written"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "Whether file was newly created"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "permission_denied",
+          "description": "No permission to write file",
+          "recovery_strategy": "Check file/directory permissions"
+        },
+        {
+          "error_type": "file_exists",
+          "description": "File exists and overwrite=False",
+          "recovery_strategy": "Set overwrite=True or choose different path"
+        },
+        {
+          "error_type": "disk_full",
+          "description": "Not enough disk space",
+          "recovery_strategy": "Free up disk space or write to different location"
+        }
+      ],
+      "timeout_seconds": 30,
+      "max_retries": 2,
+      "tags": [
+        "file",
+        "write",
+        "local",
+        "io"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "llm_summarizer",
+      "display_name": "LLM Summarizer",
+      "function": "Generate summary or analysis using LLM",
+      "version": "1.0.0",
+      "capabilities": [
+        "llm_call"
+      ],
+      "permission_level": "low",
+      "input_schema": [
+        {
+          "name": "text",
+          "type": "string",
+          "description": "Text to summarize or analyze",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "instruction",
+          "type": "string",
+          "description": "Instruction for the LLM (e.g., 'Summarize in 3 sentences')",
+          "required": false,
+          "default": "Summarize the following text concisely."
+        },
+        {
+          "name": "max_tokens",
+          "type": "integer",
+          "description": "Maximum tokens in response",
+          "required": false,
+          "default": 500
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "LLM response and metadata",
+        "properties": {
+          "summary": {
+            "type": "string",
+            "description": "Generated summary"
+          },
+          "tokens_used": {
+            "type": "integer",
+            "description": "Number of tokens used"
+          },
+          "model": {
+            "type": "string",
+            "description": "Model used"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "llm_timeout",
+          "description": "LLM request timed out",
+          "recovery_strategy": "Retry with shorter text or higher timeout"
+        },
+        {
+          "error_type": "llm_error",
+          "description": "LLM returned error",
+          "recovery_strategy": "Check LLM configuration and API key"
+        },
+        {
+          "error_type": "text_too_long",
+          "description": "Input text exceeds model context limit",
+          "recovery_strategy": "Split text into chunks or use longer context model"
+        }
+      ],
+      "timeout_seconds": 60,
+      "max_retries": 3,
+      "tags": [
+        "llm",
+        "summarize",
+        "analysis",
+        "text"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "code_generator",
+      "display_name": "Code Generator",
+      "function": "Generate code using LLM based on task description",
+      "version": "1.0.0",
+      "capabilities": [
+        "code_execution",
+        "llm_call"
+      ],
+      "permission_level": "medium",
+      "input_schema": [
+        {
+          "name": "task_description",
+          "type": "string",
+          "description": "Description of the code to generate",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "language",
+          "type": "string",
+          "description": "Programming language (python, shell, bash)",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "context",
+          "type": "string",
+          "description": "Additional context or requirements",
+          "required": false,
+          "default": ""
+        },
+        {
+          "name": "prompt_context",
+          "type": "object",
+          "description": "Structured upper-layer Prompt Context from the autonomous agent",
+          "required": false,
+          "default": {}
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Generated code and metadata",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Generated code"
+          },
+          "language": {
+            "type": "string",
+            "description": "Programming language"
+          },
+          "explanation": {
+            "type": "string",
+            "description": "Code explanation"
+          },
+          "imports": {
+            "type": "array",
+            "description": "List of imported modules"
+          },
+          "functions": {
+            "type": "array",
+            "description": "List of function names"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "llm_timeout",
+          "description": "LLM request timed out",
+          "recovery_strategy": "Retry with simpler task description"
+        },
+        {
+          "error_type": "llm_error",
+          "description": "LLM returned error",
+          "recovery_strategy": "Check LLM configuration and API key"
+        },
+        {
+          "error_type": "invalid_language",
+          "description": "Unsupported programming language",
+          "recovery_strategy": "Use python, shell, or bash"
+        }
+      ],
+      "timeout_seconds": 300,
+      "max_retries": 2,
+      "tags": [
+        "code",
+        "generation",
+        "llm",
+        "programming"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "code_reviewer",
+      "display_name": "Code Reviewer",
+      "function": "Review code quality and suggest improvements using LLM",
+      "version": "1.0.0",
+      "capabilities": [
+        "code_execution",
+        "llm_call"
+      ],
+      "permission_level": "low",
+      "input_schema": [
+        {
+          "name": "code",
+          "type": "string",
+          "description": "Code to review",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "language",
+          "type": "string",
+          "description": "Programming language (python, shell, bash)",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "prompt_context",
+          "type": "object",
+          "description": "Structured upper-layer Prompt Context for product-fit review",
+          "required": false,
+          "default": {}
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Code review results",
+        "properties": {
+          "review": {
+            "type": "string",
+            "description": "Overall review summary"
+          },
+          "issues": {
+            "type": "array",
+            "description": "List of issues found"
+          },
+          "suggestions": {
+            "type": "array",
+            "description": "Improvement suggestions"
+          },
+          "approved": {
+            "type": "boolean",
+            "description": "Whether code is approved"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "llm_timeout",
+          "description": "LLM request timed out",
+          "recovery_strategy": "Retry with shorter code snippet"
+        },
+        {
+          "error_type": "llm_error",
+          "description": "LLM returned error",
+          "recovery_strategy": "Check LLM configuration and API key"
+        }
+      ],
+      "timeout_seconds": 60,
+      "max_retries": 2,
+      "tags": [
+        "code",
+        "review",
+        "quality",
+        "llm"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "code_executor",
+      "display_name": "Code Executor",
+      "function": "Execute code in a sandboxed environment",
+      "version": "1.0.0",
+      "capabilities": [
+        "code_execution"
+      ],
+      "permission_level": "high",
+      "input_schema": [
+        {
+          "name": "code",
+          "type": "string",
+          "description": "Code to execute",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "language",
+          "type": "string",
+          "description": "Programming language (python, shell, bash)",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "timeout",
+          "type": "integer",
+          "description": "Execution timeout in seconds (default: 30)",
+          "required": false,
+          "default": 30
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Code execution results",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether execution succeeded"
+          },
+          "output": {
+            "type": "string",
+            "description": "Execution output (stdout)"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message (if failed)"
+          },
+          "exit_code": {
+            "type": "integer",
+            "description": "Process exit code"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "execution_timeout",
+          "description": "Code execution timed out",
+          "recovery_strategy": "Increase timeout or optimize code"
+        },
+        {
+          "error_type": "execution_error",
+          "description": "Code execution failed",
+          "recovery_strategy": "Review code for errors and fix"
+        },
+        {
+          "error_type": "permission_denied",
+          "description": "Insufficient permissions to execute code",
+          "recovery_strategy": "Check execution permissions"
+        }
+      ],
+      "timeout_seconds": 60,
+      "max_retries": 1,
+      "tags": [
+        "code",
+        "execution",
+        "sandbox",
+        "runtime"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "readme_tool",
+      "display_name": "README Tool",
+      "function": "Generate a README.md with setup and run instructions for a created project",
+      "version": "1.0.0",
+      "capabilities": [
+        "file_write"
+      ],
+      "permission_level": "medium",
+      "input_schema": [
+        {
+          "name": "project_path",
+          "type": "string",
+          "description": "Path to the project directory where README.md should be created",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "project_summary",
+          "type": "string",
+          "description": "Short description of the project or original user goal",
+          "required": false,
+          "default": ""
+        },
+        {
+          "name": "written_files",
+          "type": "array",
+          "description": "Files created for this project",
+          "required": false,
+          "default": []
+        },
+        {
+          "name": "entry_files",
+          "type": "array",
+          "description": "Preferred runnable entry files",
+          "required": false,
+          "default": []
+        },
+        {
+          "name": "environment",
+          "type": "object",
+          "description": "Optional environment context such as Python version, conda env, or package notes",
+          "required": false,
+          "default": {}
+        },
+        {
+          "name": "run_command",
+          "type": "string",
+          "description": "Explicit command to run the project",
+          "required": false,
+          "default": ""
+        },
+        {
+          "name": "setup_commands",
+          "type": "array",
+          "description": "Explicit setup commands",
+          "required": false,
+          "default": []
+        },
+        {
+          "name": "test_command",
+          "type": "string",
+          "description": "Optional command to test the project",
+          "required": false,
+          "default": ""
+        },
+        {
+          "name": "overwrite",
+          "type": "boolean",
+          "description": "Overwrite README.md if it already exists",
+          "required": false,
+          "default": true
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "README write result and inferred commands",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Path to README.md"
+          },
+          "bytes_written": {
+            "type": "integer",
+            "description": "Number of bytes written"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "Whether README.md was newly created"
+          },
+          "run_command": {
+            "type": "string",
+            "description": "Command to run the project"
+          },
+          "setup_commands": {
+            "type": "array",
+            "description": "Setup commands"
+          },
+          "sections": {
+            "type": "array",
+            "description": "README sections generated"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "permission_denied",
+          "description": "No permission to write README.md",
+          "recovery_strategy": "Check project directory permissions"
+        },
+        {
+          "error_type": "file_exists",
+          "description": "README.md exists and overwrite=False",
+          "recovery_strategy": "Set overwrite=True or choose a different project directory"
+        },
+        {
+          "error_type": "invalid_input",
+          "description": "Project path is missing or invalid",
+          "recovery_strategy": "Provide a valid project_path"
+        }
+      ],
+      "timeout_seconds": 30,
+      "max_retries": 1,
+      "tags": [
+        "readme",
+        "documentation",
+        "project",
+        "instructions"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "command_executor",
+      "display_name": "Command Executor",
+      "function": "Execute or dry-run a shell command with risk assessment",
+      "version": "1.0.0",
+      "capabilities": [
+        "shell_execution"
+      ],
+      "permission_level": "high",
+      "input_schema": [
+        {
+          "name": "command",
+          "type": "string",
+          "description": "Shell command to execute or dry-run",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "mode",
+          "type": "string",
+          "description": "Execution mode: dry_run, interactive, or automatic",
+          "required": false,
+          "default": "dry_run"
+        },
+        {
+          "name": "timeout",
+          "type": "integer",
+          "description": "Command timeout in seconds",
+          "required": false,
+          "default": 30
+        },
+        {
+          "name": "cwd",
+          "type": "string",
+          "description": "Working directory for command execution",
+          "required": false,
+          "default": null
+        },
+        {
+          "name": "env",
+          "type": "object",
+          "description": "Environment variables for command execution",
+          "required": false,
+          "default": null
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Command execution result and risk assessment",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Command that was evaluated"
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Whether the command succeeded"
+          },
+          "stdout": {
+            "type": "string",
+            "description": "Standard output"
+          },
+          "stderr": {
+            "type": "string",
+            "description": "Standard error"
+          },
+          "exit_code": {
+            "type": "integer",
+            "description": "Process exit code"
+          },
+          "duration": {
+            "type": "number",
+            "description": "Execution duration in seconds"
+          },
+          "risk_assessment": {
+            "type": "object",
+            "description": "Risk details"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "invalid_input",
+          "description": "Command parameters are invalid",
+          "recovery_strategy": "Provide a non-empty command and a valid execution mode"
+        },
+        {
+          "error_type": "execution_timeout",
+          "description": "Command timed out",
+          "recovery_strategy": "Increase timeout or run a narrower command"
+        },
+        {
+          "error_type": "execution_error",
+          "description": "Command returned an error or could not be launched",
+          "recovery_strategy": "Review stderr, cwd, environment variables, and command syntax"
+        }
+      ],
+      "timeout_seconds": 60,
+      "max_retries": 1,
+      "tags": [
+        "command",
+        "shell",
+        "execution",
+        "risk"
+      ],
+      "audit_required": true
+    },
+    {
+      "tool_name": "embedder",
+      "display_name": "Embedder",
+      "function": "Embed text into a semantic vector",
+      "version": "1.0.0",
+      "capabilities": [
+        "llm_call"
+      ],
+      "permission_level": "medium",
+      "input_schema": [
+        {
+          "name": "query",
+          "type": "string",
+          "description": "Text to embed",
+          "required": true,
+          "default": null
+        },
+        {
+          "name": "provider",
+          "type": "string",
+          "description": "Embedding provider",
+          "required": false,
+          "default": "openai"
+        },
+        {
+          "name": "model",
+          "type": "string",
+          "description": "Embedding model name",
+          "required": false,
+          "default": "text-embedding-3-small"
+        },
+        {
+          "name": "use_cache",
+          "type": "boolean",
+          "description": "Use cached embeddings when available",
+          "required": false,
+          "default": true
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Embedding vector and metadata",
+        "properties": {
+          "embedding": {
+            "type": "array",
+            "description": "Embedding vector"
+          },
+          "dimension": {
+            "type": "integer",
+            "description": "Embedding vector dimension"
+          },
+          "model": {
+            "type": "string",
+            "description": "Embedding model used"
+          },
+          "provider": {
+            "type": "string",
+            "description": "Embedding provider used"
+          },
+          "cached": {
+            "type": "boolean",
+            "description": "Whether the embedding was found in cache"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "empty_query",
+          "description": "Query text is empty",
+          "recovery_strategy": "Provide non-empty text to embed"
+        },
+        {
+          "error_type": "embedding_error",
+          "description": "Embedding generation failed",
+          "recovery_strategy": "Check embedding provider configuration, API key, and model name"
+        }
+      ],
+      "timeout_seconds": 60,
+      "max_retries": 1,
+      "tags": [
+        "embedding",
+        "semantic",
+        "vector",
+        "memory"
+      ],
+      "audit_required": true
+    }
+  ]
+}

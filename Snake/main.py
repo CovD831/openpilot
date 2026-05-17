@@ -1,242 +1,208 @@
+#!/usr/bin/env python3
+"""
+贪吃蛇游戏 - 使用 Pygame 实现
+独立窗口，方向键控制，红色食物，得分显示，游戏结束画面（R/Q重新开始/退出）
+支持 --test 用于快速测试（2秒后自动退出）
+在非交互式终端中自动启用测试模式，避免 CI 或无终端环境挂起。
+"""
+
+import argparse
 import pygame
 import random
 import sys
-import os
+import time
 
-# --- Constants ---
+# 常量
 CELL_SIZE = 20
-CELL_COUNT = 20
-WINDOW_SIZE = CELL_SIZE * CELL_COUNT
-MOVE_INTERVAL = 200
-FPS = 60
+GRID_WIDTH = 30
+GRID_HEIGHT = 20
+WINDOW_WIDTH = GRID_WIDTH * CELL_SIZE
+WINDOW_HEIGHT = GRID_HEIGHT * CELL_SIZE
+FPS = 10  # 游戏速度（帧率）
+AUTO_QUIT_DELAY = 5   # 游戏结束后未操作时自动退出等待秒数
+TEST_DURATION = 2.0   # 测试模式自动退出时间（秒）
 
+# 颜色 (R, G, B)
 BLACK = (0, 0, 0)
-GREEN = (0, 255, 0)
-LIGHT_GREEN = (144, 238, 144)
-DARK_GREEN = (0, 100, 0)
-RED = (255, 0, 0)
-DARK_RED = (139, 0, 0)
 WHITE = (255, 255, 255)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
+DARK_GREEN = (0, 150, 0)
 
-MOVE_EVENT = pygame.USEREVENT + 1
+# 方向常量
+UP = (0, -1)
+DOWN = (0, 1)
+LEFT = (-1, 0)
+RIGHT = (1, 0)
 
 
 class SnakeGame:
-    """Main game class.  Takes an optional pre‑created screen and a headless flag."""
-
-    def __init__(self, screen=None, headless=False):
-        self.headless = headless
-
-        if screen is not None:
-            # interactive mode – screen provided by main()
-            self.screen = screen
-        else:
-            # headless or fallback – use a dummy surface
-            self.screen = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
-            self.headless = True
-
-        self.font = pygame.font.Font(None, 24)
-        self.big_font = pygame.font.Font(None, 36)
+    def __init__(self, test_mode=False):
+        self.test_mode = test_mode
+        pygame.init()
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("贪吃蛇 - Snake")
         self.clock = pygame.time.Clock()
-        self.reset()
+        self.font = pygame.font.Font(None, 36)
+        self.reset_game()
 
-    def reset(self):
-        """Reset game to initial state."""
-        self.direction = (1, 0)
-        self.next_direction = (1, 0)
-        self.snake = [(CELL_COUNT // 2 - i, CELL_COUNT // 2) for i in range(3)]
+    def reset_game(self):
+        """重置游戏状态"""
+        # 蛇：初始三个节点，方向向右
+        self.snake = [(GRID_WIDTH // 2, GRID_HEIGHT // 2),
+                      (GRID_WIDTH // 2 - 1, GRID_HEIGHT // 2),
+                      (GRID_WIDTH // 2 - 2, GRID_HEIGHT // 2)]
+        self.direction = RIGHT
         self.score = 0
         self.game_over = False
-        self.food = None
-        self.spawn_food()
-        if not self.headless:
-            pygame.time.set_timer(MOVE_EVENT, MOVE_INTERVAL)
+        self.game_over_time = None   # 记录 game over 发生的时刻
+        self.food = self.new_food()
+        self.start_time = time.time()   # 用于测试模式自动退出
 
-    def spawn_food(self):
-        """Place food on a random empty cell."""
-        occupied = set(self.snake)
+    def new_food(self):
+        """生成一个不在蛇身上的食物位置"""
         while True:
-            x = random.randint(0, CELL_COUNT - 1)
-            y = random.randint(0, CELL_COUNT - 1)
-            if (x, y) not in occupied:
-                self.food = (x, y)
-                break
+            fx = random.randint(0, GRID_WIDTH - 1)
+            fy = random.randint(0, GRID_HEIGHT - 1)
+            if (fx, fy) not in self.snake:
+                return (fx, fy)
 
-    def handle_key(self, key):
-        """Process a key press."""
-        if key == pygame.K_r:
-            self.reset()
-            return
-        if key == pygame.K_q:
-            self.quit()
-            return
+    def handle_input(self):
+        """处理键盘事件"""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.KEYDOWN:
+                if self.game_over:
+                    if event.key == pygame.K_r:
+                        self.reset_game()
+                    elif event.key == pygame.K_q:
+                        return False
+                else:
+                    # 方向控制（箭头键或 WASD）
+                    if event.key in (pygame.K_UP, pygame.K_w) and self.direction != DOWN:
+                        self.direction = UP
+                    elif event.key in (pygame.K_DOWN, pygame.K_s) and self.direction != UP:
+                        self.direction = DOWN
+                    elif event.key in (pygame.K_LEFT, pygame.K_a) and self.direction != RIGHT:
+                        self.direction = LEFT
+                    elif event.key in (pygame.K_RIGHT, pygame.K_d) and self.direction != LEFT:
+                        self.direction = RIGHT
+        return True
+
+    def update(self):
+        """更新游戏逻辑"""
         if self.game_over:
             return
-        dir_map = {
-            pygame.K_UP: (0, -1),
-            pygame.K_DOWN: (0, 1),
-            pygame.K_LEFT: (-1, 0),
-            pygame.K_RIGHT: (1, 0),
-        }
-        if key in dir_map:
-            new_dir = dir_map[key]
-            if new_dir[0] != -self.direction[0] or new_dir[1] != -self.direction[1]:
-                self.next_direction = new_dir
 
-    def move(self):
-        """Advance the snake one step."""
-        if self.game_over:
-            return
-        self.direction = self.next_direction
+        # 计算新蛇头
         head_x, head_y = self.snake[0]
-        new_head = (head_x + self.direction[0], head_y + self.direction[1])
+        dx, dy = self.direction
+        new_head = (head_x + dx, head_y + dy)
 
+        # 碰撞检测：撞墙或自身
+        if (new_head[0] < 0 or new_head[0] >= GRID_WIDTH or
+            new_head[1] < 0 or new_head[1] >= GRID_HEIGHT or
+            new_head in self.snake):
+            self.game_over = True
+            self.game_over_time = time.time()
+            return
+
+        # 移动蛇
+        self.snake.insert(0, new_head)
+
+        # 检查是否吃到食物
         if new_head == self.food:
-            self.snake.insert(0, new_head)
             self.score += 1
-            self.spawn_food()
+            self.food = self.new_food()
         else:
-            self.snake.insert(0, new_head)
             self.snake.pop()
 
-        head = self.snake[0]
-        if (head[0] < 0 or head[0] >= CELL_COUNT or
-            head[1] < 0 or head[1] >= CELL_COUNT or
-            head in self.snake[1:]):
-            self.game_over = True
-            if not self.headless:
-                pygame.time.set_timer(MOVE_EVENT, 0)
-
     def draw(self):
-        """Render the current state to the screen (no‑op in headless mode)."""
-        if self.screen is None:
-            return
+        """绘制画面"""
         self.screen.fill(BLACK)
 
-        if not self.game_over:
-            for i, (x, y) in enumerate(self.snake):
-                color = GREEN if i == 0 else LIGHT_GREEN
-                rect = pygame.Rect(x * CELL_SIZE, y * CELL_SIZE, CELL_SIZE, CELL_SIZE)
-                pygame.draw.rect(self.screen, color, rect)
-                pygame.draw.rect(self.screen, DARK_GREEN, rect, 1)
-            if self.food:
-                fx, fy = self.food
-                centre = (fx * CELL_SIZE + CELL_SIZE // 2,
-                          fy * CELL_SIZE + CELL_SIZE // 2)
-                pygame.draw.circle(self.screen, RED, centre, CELL_SIZE // 2)
-                pygame.draw.circle(self.screen, DARK_RED, centre, CELL_SIZE // 2, 1)
-            score_surf = self.font.render(f"Score: {self.score}", True, WHITE)
-            self.screen.blit(score_surf, (10, 10))
-        else:
-            lines = [
-                "Game Over",
-                f"Final Score: {self.score}",
-                "",
-                "Press R to restart",
-                "Press Q to quit",
-            ]
-            y = WINDOW_SIZE // 2 - 60
-            for line in lines:
-                text_surf = self.big_font.render(line, True, WHITE)
-                text_rect = text_surf.get_rect(center=(WINDOW_SIZE // 2, y))
-                self.screen.blit(text_surf, text_rect)
-                y += 40
+        # 绘制网格线
+        for x in range(0, WINDOW_WIDTH, CELL_SIZE):
+            pygame.draw.line(self.screen, (40, 40, 40), (x, 0), (x, WINDOW_HEIGHT))
+        for y in range(0, WINDOW_HEIGHT, CELL_SIZE):
+            pygame.draw.line(self.screen, (40, 40, 40), (0, y), (WINDOW_WIDTH, y))
 
-        if not self.headless:
-            pygame.display.flip()
+        # 绘制蛇
+        for i, segment in enumerate(self.snake):
+            rect = pygame.Rect(segment[0]*CELL_SIZE, segment[1]*CELL_SIZE, CELL_SIZE, CELL_SIZE)
+            if i == 0:
+                pygame.draw.rect(self.screen, GREEN, rect)    # 蛇头绿色
+            else:
+                pygame.draw.rect(self.screen, DARK_GREEN, rect) # 身体深绿
 
-    def quit(self):
-        """Cleanly exit the application."""
-        pygame.quit()
-        sys.exit()
+        # 绘制食物（红色方块）
+        food_rect = pygame.Rect(self.food[0]*CELL_SIZE, self.food[1]*CELL_SIZE, CELL_SIZE, CELL_SIZE)
+        pygame.draw.rect(self.screen, RED, food_rect)
+
+        # 绘制分数
+        score_text = self.font.render(f"Score: {self.score}", True, WHITE)
+        self.screen.blit(score_text, (10, 10))
+
+        # 如果游戏结束，绘制结束画面
+        if self.game_over:
+            overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))   # 半透明黑色
+            self.screen.blit(overlay, (0, 0))
+
+            game_over_text = self.font.render("Game Over!", True, WHITE)
+            score_text2 = self.font.render(f"Final Score: {self.score}", True, WHITE)
+            restart_text = self.font.render("Press R to restart, Q to quit", True, WHITE)
+
+            # 居中显示
+            self.screen.blit(game_over_text, (WINDOW_WIDTH//2 - game_over_text.get_width()//2,
+                                              WINDOW_HEIGHT//2 - 60))
+            self.screen.blit(score_text2, (WINDOW_WIDTH//2 - score_text2.get_width()//2,
+                                           WINDOW_HEIGHT//2 - 20))
+            self.screen.blit(restart_text, (WINDOW_WIDTH//2 - restart_text.get_width()//2,
+                                            WINDOW_HEIGHT//2 + 20))
+
+        pygame.display.flip()
 
     def run(self):
-        """Main game loop (interactive mode only)."""
+        """主游戏循环"""
         running = True
         while running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self.quit()
-                elif event.type == pygame.KEYDOWN:
-                    self.handle_key(event.key)
-                elif event.type == MOVE_EVENT:
-                    self.move()
+            running = self.handle_input()
+            self.update()
             self.draw()
+            # 游戏结束后无操作自动退出
+            if self.game_over and self.game_over_time is not None:
+                if time.time() - self.game_over_time > AUTO_QUIT_DELAY:
+                    running = False
+            # 测试模式：到达指定时间后自动退出
+            if self.test_mode and time.time() - self.start_time > TEST_DURATION:
+                running = False
             self.clock.tick(FPS)
-        # Should never reach here, but cleanup anyway.
         pygame.quit()
         sys.exit()
 
 
 def main():
-    """Entry point.
+    parser = argparse.ArgumentParser(description="贪吃蛇游戏")
+    parser.add_argument('--test', action='store_true',
+                        help='测试模式：运行2秒后自动退出')
+    args = parser.parse_args()
 
-    Detects headless / CI / non-interactive environments and runs a quick
-    simulation to validate the game, then exits.  On a real display with an
-    interactive terminal it launches the classic snake GUI.
-    """
-    # ------------------------------------------------------------------
-    # Environment detection – allow user overrides
-    # ------------------------------------------------------------------
-    # Explicit test flag forces dummy driver (and thus headless)
-    is_test = '--test' in sys.argv
+    # 非交互式终端（如CI环境）中自动启用测试模式以免挂起
+    test_mode = args.test or not sys.stdin.isatty()
 
-    # SNAKE_HEADLESS=1 / SNAKE_INTERACTIVE=1 override all heuristics
-    env_headless = os.environ.get('SNAKE_HEADLESS', '').lower() in ('1', 'true', 'yes')
-    env_interactive = os.environ.get('SNAKE_INTERACTIVE', '').lower() in ('1', 'true', 'yes')
-
-    # Common CI environment variables
-    ci_detected = bool(os.environ.get('CI')) or \
-                  bool(os.environ.get('GITHUB_ACTIONS')) or \
-                  bool(os.environ.get('GITLAB_CI')) or \
-                  bool(os.environ.get('JENKINS_URL')) or \
-                  bool(os.environ.get('TRAVIS'))
-
-    # If we are running in a CI or are told to be headless, force dummy driver
-    if is_test or ci_detected or env_headless:
-        if 'SDL_VIDEODRIVER' not in os.environ:      # don't override explicit setting
-            os.environ['SDL_VIDEODRIVER'] = 'dummy'
-
-    # ---------- pygame initialisation ----------
-    pygame.init()
-
-    # ---------- display availability ----------
-    headless = False
-    screen = None
-
+    # 检查显示是否可用（避免无头系统上崩溃）
     try:
-        screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
-        pygame.display.set_caption("贪吃蛇")
-        # If the video driver is 'dummy' there is no real display
-        if pygame.display.get_driver() == 'dummy':
-            headless = True
-            screen = None
-    except pygame.error:
-        headless = True
-
-    # ---------- decide final mode ----------
-    # If we still have a real display but the environment is clearly
-    # non-interactive (CI, test flag, env_headless, …, minus env_interactive),
-    # discard the display and go headless.
-    if not headless and not env_interactive:
-        if is_test or ci_detected or env_headless:
-            headless = True
-            screen = None
-
-    # ---------- create the game ----------
-    game = SnakeGame(screen, headless)
-
-    # ---------- headless / validation path ----------
-    if headless or is_test:
-        for _ in range(10):
-            game.move()
-        print(f"Test completed — final score: {game.score}")
+        pygame.display.set_mode((1, 1))
         pygame.quit()
-        sys.exit(0)
+    except pygame.error:
+        print("错误：无法初始化显示。请确保有可用的图形环境。")
+        sys.exit(1)
 
-    # ---------- interactive path ----------
+    game = SnakeGame(test_mode=test_mode)
     game.run()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

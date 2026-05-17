@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from execution.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
+from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.openpilot_log import OpenPilotLogger
-from execution.agents.tool_planning_executor import ToolPlanningTaskExecutor
-from execution.intelligent_autopilot import IntelligentAutopilot
-from execution.tool_io import ExecutionToolIO
+from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskExecutor
+from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+from autonomous_iteration.tool_io import ExecutionToolIO
 
 
 class FakeLLM:
@@ -101,7 +101,7 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
         for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert any(payload.get("source_type") == "agent" for payload in payloads)
-    assert any(payload.get("source_name") == "execution.agents.tool_planning_executor" for payload in payloads)
+    assert any(payload.get("source_name") == "autonomous_iteration.agents.tool_planning_executor" for payload in payloads)
 
 
 def test_tool_planning_executor_invalid_or_empty_plan_returns_failed_result(tmp_path) -> None:

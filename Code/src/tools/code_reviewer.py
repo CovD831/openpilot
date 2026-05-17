@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.tool_models import (
+from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
@@ -81,8 +81,8 @@ def code_reviewer_executor(params: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Dictionary with review, issues, suggestions, approved
     """
-    from execution.code_reviewer import CodeReviewer
-    from execution.code_models import CodeLanguage, GeneratedCode
+    from tools.code.code_reviewer import CodeReviewer
+    from tools.code.code_models import CodeLanguage, GeneratedCode
     import uuid
 
     code = params["code"]

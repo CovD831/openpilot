@@ -29,7 +29,7 @@ from autonomous_iteration.models import (
     ProjectStateSnapshot,
 )
 from memory.memory_models import MemoryRecord, MemoryType
-from tools.project_improvement_tool import project_state_reader_executor
+from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
 
 
 ApplyImprovement = Callable[[int, EvaluationResult, list[str], dict[str, Any], bool], IterationResult]

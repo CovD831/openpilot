@@ -7,7 +7,7 @@ from memory.agents.virtual_environment_manager import (
     EnvironmentManager as MemoryEnvironmentManager,
     VirtualEnvironmentManager,
 )
-from tools.env_tools import EnvironmentManager, project_environment_tool_executor
+from memory.agents.project_environment_tool import EnvironmentManager, project_environment_tool_executor
 
 
 class FakeEnvironmentManager:
