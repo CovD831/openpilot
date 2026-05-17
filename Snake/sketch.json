@@ -6,8 +6,8 @@
       "name": "README.md",
       "path": "/Users/yanning/Projects/openpilot/Snake/README.md",
       "suffix": ".md",
-      "description": ".md file named README.md. Preview: # Snake ## Overview 帮我在'/Users/yanning/Projects/openpilot/Snake'生成一个贪吃蛇项目 Recent Improvements: - Rewrite main.py to use pygame, implementing complete game loop, snake movement, food generation, collision detection, scoring, and game-over screen. - Fix the validation failure: Fix the runtime error reported by the smoke test. ## Requirements - Virtual Environment: .venv - Python Executable: /Users/yanning/Projects/openpilot/Snake/.venv/bin/python - Python Version: 3.11.15 - Dependencies: pygame ## Setup ```bash python -m venv .venv ``` ```bash .venv/bin/pip install pygame ``` ```bash .venv/bin/p",
-      "function_description": ".md file named README.md. Preview: # Snake ## Overview 帮我在'/Users/yanning/Projects/openpilot/Snake'生成一个贪吃蛇项目 Recent Improvements: - Rewrite main.py to use pygame, implementing complete game loop, snake movement, food generation, collision detection, scoring, and game-over screen. - Fix the validation failure: Fix the runtime error reported by the smoke test. ## Requirements - Virtual Environment: .venv - Python Executable: /Users/yanning/Projects/openpilot/Snake/.venv/bin/python - Python Version: 3.11.15 - Dependencies: pygame ## Setup ```bash python -m venv .venv ``` ```bash .venv/bin/pip install pygame ``` ```bash .venv/bin/p",
+      "description": ".md file named README.md. Preview: # Snake ## Overview 帮我在'/Users/yanning/Projects/openpilot/Snake'生成一个贪吃蛇项目 Recent Improvements: - Rewrite main.py to use pygame, implementing complete game loop, snake movement, food generation, collision detection, scoring, and game-over screen. - Fix the validation failure: Fix the runtime error reported by the smoke test. - Fix the validation failure: Fix the runtime error reported by the smoke test. - Fix the validation failure: Fix the runtime error reported by the smoke test. ## Requirements - Virtual Environment: .venv - Python Executable: /Users/yanning/Projects/openpilot/Snake/.venv/bi",
+      "function_description": ".md file named README.md. Preview: # Snake ## Overview 帮我在'/Users/yanning/Projects/openpilot/Snake'生成一个贪吃蛇项目 Recent Improvements: - Rewrite main.py to use pygame, implementing complete game loop, snake movement, food generation, collision detection, scoring, and game-over screen. - Fix the validation failure: Fix the runtime error reported by the smoke test. - Fix the validation failure: Fix the runtime error reported by the smoke test. - Fix the validation failure: Fix the runtime error reported by the smoke test. ## Requirements - Virtual Environment: .venv - Python Executable: /Users/yanning/Projects/openpilot/Snake/.venv/bi",
       "semantic_info": {
         "kind": "keyword_fallback",
         "terms": [
@@ -37,15 +37,15 @@
           "game"
         ]
       },
-      "mtime": 1778949171.4350913,
-      "size": 1129
+      "mtime": 1778949814.6411822,
+      "size": 1289
     },
     "main.py": {
       "name": "main.py",
       "path": "/Users/yanning/Projects/openpilot/Snake/main.py",
       "suffix": ".py",
-      "description": ".py file named main.py. Preview: import pygame import random import sys import os # --- Constants --- CELL_SIZE = 20 CELL_COUNT = 20 WINDOW_SIZE = CELL_SIZE * CELL_COUNT MOVE_INTERVAL = 200 FPS = 60 BLACK = (0, 0, 0) GREEN = (0, 255, 0) LIGHT_GREEN = (144, 238, 144) DARK_GREEN = (0, 100, 0) RED = (255, 0, 0) DARK_RED = (139, 0, 0) WHITE = (255, 255, 255) MOVE_EVENT = pygame.USEREVENT + 1 class SnakeGame: \"\"\"Main game class. Automatically detects display capability.\"\"\" def __init__(self): pygame.init() self.headless = False try: self.screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE)) pygame.display.set_caption(\"贪吃蛇\")",
-      "function_description": ".py file named main.py. Preview: import pygame import random import sys import os # --- Constants --- CELL_SIZE = 20 CELL_COUNT = 20 WINDOW_SIZE = CELL_SIZE * CELL_COUNT MOVE_INTERVAL = 200 FPS = 60 BLACK = (0, 0, 0) GREEN = (0, 255, 0) LIGHT_GREEN = (144, 238, 144) DARK_GREEN = (0, 100, 0) RED = (255, 0, 0) DARK_RED = (139, 0, 0) WHITE = (255, 255, 255) MOVE_EVENT = pygame.USEREVENT + 1 class SnakeGame: \"\"\"Main game class. Automatically detects display capability.\"\"\" def __init__(self): pygame.init() self.headless = False try: self.screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE)) pygame.display.set_caption(\"贪吃蛇\")",
+      "description": ".py file named main.py. Preview: import pygame import random import sys import os # --- Constants --- CELL_SIZE = 20 CELL_COUNT = 20 WINDOW_SIZE = CELL_SIZE * CELL_COUNT MOVE_INTERVAL = 200 FPS = 60 BLACK = (0, 0, 0) GREEN = (0, 255, 0) LIGHT_GREEN = (144, 238, 144) DARK_GREEN = (0, 100, 0) RED = (255, 0, 0) DARK_RED = (139, 0, 0) WHITE = (255, 255, 255) MOVE_EVENT = pygame.USEREVENT + 1 class SnakeGame: \"\"\"Main game class.  Takes an optional pre‑created screen and a headless flag.\"\"\" def __init__(self, screen=None, headless=False): self.headless = headless if screen is not None: # interactive mode – screen provided by main()",
+      "function_description": ".py file named main.py. Preview: import pygame import random import sys import os # --- Constants --- CELL_SIZE = 20 CELL_COUNT = 20 WINDOW_SIZE = CELL_SIZE * CELL_COUNT MOVE_INTERVAL = 200 FPS = 60 BLACK = (0, 0, 0) GREEN = (0, 255, 0) LIGHT_GREEN = (144, 238, 144) DARK_GREEN = (0, 100, 0) RED = (255, 0, 0) DARK_RED = (139, 0, 0) WHITE = (255, 255, 255) MOVE_EVENT = pygame.USEREVENT + 1 class SnakeGame: \"\"\"Main game class.  Takes an optional pre‑created screen and a headless flag.\"\"\" def __init__(self, screen=None, headless=False): self.headless = headless if screen is not None: # interactive mode – screen provided by main()",
       "semantic_info": {
         "kind": "keyword_fallback",
         "terms": [
@@ -75,8 +75,8 @@
           "light_green"
         ]
       },
-      "mtime": 1778949170.8074148,
-      "size": 6182
+      "mtime": 1778949814.0599217,
+      "size": 8132
     }
   }
 }

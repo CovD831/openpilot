@@ -7,6 +7,8 @@
 Recent Improvements:
 - Rewrite main.py to use pygame, implementing complete game loop, snake movement, food generation, collision detection, scoring, and game-over screen.
 - Fix the validation failure: Fix the runtime error reported by the smoke test.
+- Fix the validation failure: Fix the runtime error reported by the smoke test.
+- Fix the validation failure: Fix the runtime error reported by the smoke test.
 
 ## Requirements
 

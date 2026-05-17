@@ -103,8 +103,11 @@ def test_iteration_dashboard_core_event_sequence_does_not_raise() -> None:
         "context_loader",
         {"iteration": 1, "context": {"related_memories": [1], "related_files": [1], "environment_context": []}},
     )
+    adapter.handle_iteration_progress("goal_maker_started", {"iteration": 1})
     adapter.handle_iteration_progress("goal_maker", {"iteration": 1, "selected_goal": Goal()})
+    adapter.handle_iteration_progress("task_designer_started", {"iteration": 1})
     adapter.handle_iteration_progress("task_designer", {"tasks": [Task()]})
+    adapter.handle_iteration_progress("decomposition_started", {"iteration": 1, "tasks": [Task()]})
     adapter.handle_iteration_progress("decomposition", {"tasks": [Task()], "difficulty": {"level": "low"}})
     adapter.handle_iteration_progress("iteration_started", {"iteration": 1, "actions": ["Update app.py"]})
     adapter.handle_iteration_progress(
@@ -128,11 +131,35 @@ def test_iteration_dashboard_core_event_sequence_does_not_raise() -> None:
     assert titles[:5] == [
         "Context Loader",
         "Goal Maker",
+        "Goal Maker",
         "Task Designer",
+        "Task Designer",
+    ]
+    assert titles[5:8] == [
+        "Task Decomposer",
         "Task Decomposer",
         "Iteration 1",
     ]
     assert titles[-1] == "Iteration 1 failed"
+
+
+def test_iteration_stage_started_events_show_running_agent() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    adapter.ensure_dashboard_iteration(1)
+    adapter.handle_iteration_progress("decomposition_started", {"iteration": 1})
+
+    children = autopilot.enhanced_ui.task_graph_state["tasks"][0]["children"]
+    by_description = {child["description"]: child for child in children}
+
+    assert by_description["Task Decomposer"]["status"] == "running"
+    assert autopilot.enhanced_ui.task_graph_state["current_task_id"] == "iteration_1_decomposition"
+    assert autopilot.enhanced_ui.current_states[-1] == {
+        "title": "Task Decomposer",
+        "details": "Breaking task into executable subtasks",
+        "status": "running",
+    }
 
 
 def test_iteration_started_completes_missing_pre_execution_stages() -> None:

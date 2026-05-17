@@ -206,6 +206,7 @@ class AutonomousIterationAgent:
                     },
                 )
 
+                self._notify(on_progress, "goal_maker_started", {"iteration": completed_improvements})
                 goals = self._run_goal_maker(
                     project_state,
                     current,
@@ -220,6 +221,7 @@ class AutonomousIterationAgent:
                     {"goals": goals, "selected_goal": selected_goal, "iteration": completed_improvements},
                 )
 
+                self._notify(on_progress, "task_designer_started", {"iteration": completed_improvements, "selected_goal": selected_goal})
                 tasks = self._run_task_designer(
                     project_state,
                     selected_goal,
@@ -232,6 +234,7 @@ class AutonomousIterationAgent:
                     "task_designer",
                     {"tasks": tasks, "selected_goal": selected_goal, "iteration": completed_improvements},
                 )
+                self._notify(on_progress, "decomposition_started", {"iteration": completed_improvements, "tasks": tasks})
                 decomposition = self._run_task_decomposer(tasks)
                 self._notify(
                     on_progress,
@@ -254,6 +257,7 @@ class AutonomousIterationAgent:
                 }
                 is_repair = False
             else:
+                self._notify(on_progress, "goal_maker_started", {"iteration": completed_improvements, "repair": True})
                 selected_goal = self._repair_goal(current)
                 goals = [selected_goal]
                 iteration_goals.extend(goals)
@@ -263,6 +267,7 @@ class AutonomousIterationAgent:
                     {"goals": goals, "selected_goal": selected_goal, "iteration": completed_improvements, "repair": True},
                 )
 
+                self._notify(on_progress, "task_designer_started", {"iteration": completed_improvements, "selected_goal": selected_goal, "repair": True})
                 tasks = [self._repair_task(selected_goal, project_state, current)]
                 designed_tasks.extend(tasks)
                 self._notify(
@@ -271,6 +276,7 @@ class AutonomousIterationAgent:
                     {"tasks": tasks, "selected_goal": selected_goal, "iteration": completed_improvements, "repair": True},
                 )
 
+                self._notify(on_progress, "decomposition_started", {"iteration": completed_improvements, "tasks": tasks, "repair": True})
                 decomposition = self._run_task_decomposer(tasks)
                 self._notify(
                     on_progress,

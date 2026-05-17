@@ -117,8 +117,11 @@ def test_autonomous_iteration_events_and_memory_context(tmp_path) -> None:
     assert result["project_state"].memory_context["related_memories"][0]["id"] == "memory-1"
     assert "context_loader" in events
     assert events.index("project_state") < events.index("context_loader")
+    assert events.index("goal_maker_started") < events.index("goal_maker")
     assert events.index("context_loader") < events.index("goal_maker")
+    assert events.index("task_designer_started") < events.index("task_designer")
     assert events.index("goal_maker") < events.index("task_designer")
+    assert events.index("decomposition_started") < events.index("decomposition")
     assert events.index("task_designer") < events.index("decomposition")
     assert events.index("decomposition") < events.index("iteration_started")
 
@@ -168,8 +171,11 @@ def test_autonomous_iteration_repair_path_reports_full_stage_chain(tmp_path) -> 
     assert reports[0]["designed_tasks"]
     assert reports[0]["task_difficulty"]
     assert events.index("project_state") < events.index("context_loader")
+    assert events.index("goal_maker_started") < events.index("goal_maker")
     assert events.index("context_loader") < events.index("goal_maker")
+    assert events.index("task_designer_started") < events.index("task_designer")
     assert events.index("goal_maker") < events.index("task_designer")
+    assert events.index("decomposition_started") < events.index("decomposition")
     assert events.index("task_designer") < events.index("decomposition")
     assert events.index("decomposition") < events.index("iteration_started")
 

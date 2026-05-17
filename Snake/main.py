@@ -22,18 +22,19 @@ MOVE_EVENT = pygame.USEREVENT + 1
 
 
 class SnakeGame:
-    """Main game class. Automatically detects display capability."""
+    """Main game class.  Takes an optional pre‑created screen and a headless flag."""
 
-    def __init__(self):
-        pygame.init()
-        self.headless = False
-        try:
-            self.screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
-            pygame.display.set_caption("贪吃蛇")
-        except pygame.error:
-            # No display available (e.g., headless environment)
-            self.headless = True
+    def __init__(self, screen=None, headless=False):
+        self.headless = headless
+
+        if screen is not None:
+            # interactive mode – screen provided by main()
+            self.screen = screen
+        else:
+            # headless or fallback – use a dummy surface
             self.screen = pygame.Surface((WINDOW_SIZE, WINDOW_SIZE))
+            self.headless = True
+
         self.font = pygame.font.Font(None, 24)
         self.big_font = pygame.font.Font(None, 36)
         self.clock = pygame.time.Clock()
@@ -83,7 +84,7 @@ class SnakeGame:
                 self.next_direction = new_dir
 
     def move(self):
-        """Advance the snake one step (called by timer or manually)."""
+        """Advance the snake one step."""
         if self.game_over:
             return
         self.direction = self.next_direction
@@ -107,7 +108,9 @@ class SnakeGame:
                 pygame.time.set_timer(MOVE_EVENT, 0)
 
     def draw(self):
-        """Render the current state to the screen (or dummy surface)."""
+        """Render the current state to the screen (no‑op in headless mode)."""
+        if self.screen is None:
+            return
         self.screen.fill(BLACK)
 
         if not self.game_over:
@@ -148,7 +151,7 @@ class SnakeGame:
         sys.exit()
 
     def run(self):
-        """Main game loop (used only when display is available)."""
+        """Main game loop (interactive mode only)."""
         running = True
         while running:
             for event in pygame.event.get():
@@ -166,24 +169,72 @@ class SnakeGame:
 
 
 def main():
-    """Entry point: if --test flag is given or no display, run a quick
-    headless simulation to validate the game logic without hanging."""
-    # Force dummy video driver if --test is passed (useful for CI/validation)
-    if '--test' in sys.argv:
-        os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
+    """Entry point.
 
-    game = SnakeGame()
+    Detects headless / CI / non-interactive environments and runs a quick
+    simulation to validate the game, then exits.  On a real display with an
+    interactive terminal it launches the classic snake GUI.
+    """
+    # ------------------------------------------------------------------
+    # Environment detection – allow user overrides
+    # ------------------------------------------------------------------
+    # Explicit test flag forces dummy driver (and thus headless)
+    is_test = '--test' in sys.argv
 
-    # If running in headless mode (no real display) or test flag given,
-    # execute a short automated simulation and exit.
-    if game.headless or '--test' in sys.argv:
+    # SNAKE_HEADLESS=1 / SNAKE_INTERACTIVE=1 override all heuristics
+    env_headless = os.environ.get('SNAKE_HEADLESS', '').lower() in ('1', 'true', 'yes')
+    env_interactive = os.environ.get('SNAKE_INTERACTIVE', '').lower() in ('1', 'true', 'yes')
+
+    # Common CI environment variables
+    ci_detected = bool(os.environ.get('CI')) or \
+                  bool(os.environ.get('GITHUB_ACTIONS')) or \
+                  bool(os.environ.get('GITLAB_CI')) or \
+                  bool(os.environ.get('JENKINS_URL')) or \
+                  bool(os.environ.get('TRAVIS'))
+
+    # If we are running in a CI or are told to be headless, force dummy driver
+    if is_test or ci_detected or env_headless:
+        if 'SDL_VIDEODRIVER' not in os.environ:      # don't override explicit setting
+            os.environ['SDL_VIDEODRIVER'] = 'dummy'
+
+    # ---------- pygame initialisation ----------
+    pygame.init()
+
+    # ---------- display availability ----------
+    headless = False
+    screen = None
+
+    try:
+        screen = pygame.display.set_mode((WINDOW_SIZE, WINDOW_SIZE))
+        pygame.display.set_caption("贪吃蛇")
+        # If the video driver is 'dummy' there is no real display
+        if pygame.display.get_driver() == 'dummy':
+            headless = True
+            screen = None
+    except pygame.error:
+        headless = True
+
+    # ---------- decide final mode ----------
+    # If we still have a real display but the environment is clearly
+    # non-interactive (CI, test flag, env_headless, …, minus env_interactive),
+    # discard the display and go headless.
+    if not headless and not env_interactive:
+        if is_test or ci_detected or env_headless:
+            headless = True
+            screen = None
+
+    # ---------- create the game ----------
+    game = SnakeGame(screen, headless)
+
+    # ---------- headless / validation path ----------
+    if headless or is_test:
         for _ in range(10):
             game.move()
         print(f"Test completed — final score: {game.score}")
         pygame.quit()
         sys.exit(0)
 
-    # Normal interactive GUI mode.
+    # ---------- interactive path ----------
     game.run()
 
 

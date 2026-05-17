@@ -142,6 +142,22 @@ class IterationDashboardAdapter:
             return
         self._log("handle_iteration_progress", {"event": event}, {"handled": True})
 
+        started_stage = {
+            "goal_maker_started": ("goal_maker", "Goal Maker", "Selecting improvement goal"),
+            "task_designer_started": ("task_designer", "Task Designer", "Designing concrete implementation tasks"),
+            "decomposition_started": ("decomposition", "Task Decomposer", "Breaking task into executable subtasks"),
+        }.get(event)
+        if started_stage is not None:
+            stage_key, title, details = started_stage
+            self.ensure_dashboard_iteration()
+            self.set_dashboard_task_status(self.dashboard_stage_id(stage_key), "running")
+            self.enhanced_ui.set_current_task_state(
+                title=title,
+                details=details,
+                status="running",
+            )
+            return
+
         if event == "context_loader":
             self.ensure_dashboard_iteration()
             self.set_dashboard_task_status(self.dashboard_stage_id("context_loader"), "completed")
