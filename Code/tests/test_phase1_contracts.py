@@ -4,6 +4,7 @@ import json
 import sys
 
 from core.openpilot_log import OpenPilotLogger
+from tools.code_reviewer import code_reviewer_executor
 from tools.builtin_tools import register_builtin_tools
 from tools.tool_executor import ToolExecutor
 from core.tool_contracts import (
@@ -252,6 +253,59 @@ def test_multi_file_reader_scans_directory_with_glob(tmp_path) -> None:
     assert "alpha" in result.output["content"]
     assert "beta" in result.output["content"]
     assert "ignored" not in result.output["content"]
+
+
+def test_code_reviewer_rejects_non_pygame_when_pygame_is_product_fit() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "print('hi')\n",
+            "language": "python",
+            "prompt_context": {
+                "product_judgment": {
+                    "preferred_stack": "pygame",
+                }
+            },
+        }
+    )
+
+    assert result["approved"] is False
+    assert any("standalone pygame GUI" in item for item in result["warnings"])
+    assert any("standalone pygame GUI" in item for item in result["suggestions"])
+
+
+def test_code_reviewer_rejects_curses_when_pygame_is_product_fit() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "import curses\n\ndef main(stdscr):\n    pass\n",
+            "language": "python",
+            "prompt_context": {
+                "product_judgment": {
+                    "preferred_stack": "pygame",
+                }
+            },
+        }
+    )
+
+    assert result["approved"] is False
+    assert any("terminal/curses to pygame" in item for item in result["warnings"])
+    assert any("terminal/curses to pygame" in item for item in result["suggestions"])
+
+
+def test_code_reviewer_allows_pygame_code_without_product_fit_warning() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "import pygame\npygame.init()\n",
+            "language": "python",
+            "prompt_context": {
+                "product_judgment": {
+                    "preferred_stack": "pygame",
+                }
+            },
+        }
+    )
+
+    assert not any("Product-fit rubric not satisfied" in item for item in result["warnings"])
+    assert not any("Product-fit rubric not satisfied" in item for item in result["suggestions"])
 
 
 def test_tool_executor_records_output_schema_warnings() -> None:

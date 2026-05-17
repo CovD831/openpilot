@@ -146,6 +146,25 @@ def code_reviewer_executor(params: dict[str, Any]) -> dict[str, Any]:
         raise Exception(f"Code review failed: {e}") from e
 
 
+def _product_fit_warnings(code: str, prompt_context: dict[str, Any]) -> list[str]:
+    product_judgment = prompt_context.get("product_judgment") or {}
+    if product_judgment.get("preferred_stack") != "pygame":
+        return []
+
+    lowered = code.lower()
+    if "pygame" in lowered:
+        return []
+
+    if "import curses" in lowered or "curses." in lowered or "stdscr" in lowered:
+        return [
+            "Product-fit rubric not satisfied: default Python snake game should migrate from terminal/curses to pygame unless terminal was requested."
+        ]
+
+    return [
+        "Product-fit rubric not satisfied: default Python snake game should use a standalone pygame GUI unless terminal was requested."
+    ]
+
+
 class CodeReviewer:
     """代码审查器"""
 

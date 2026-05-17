@@ -1,0 +1,341 @@
+{
+  "version": 1,
+  "directory": "/Users/yanning/Projects/openpilot/Plan",
+  "files": {
+    ".DS_Store": {
+      "name": ".DS_Store",
+      "path": "/Users/yanning/Projects/openpilot/Plan/.DS_Store",
+      "suffix": "",
+      "description": "plain file named .DS_Store",
+      "function_description": "plain file named .DS_Store",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "ds_store",
+          "plain",
+          "file",
+          "named"
+        ]
+      },
+      "mtime": 1779000295.0611055,
+      "size": 8196
+    },
+    "API.md": {
+      "name": "API.md",
+      "path": "/Users/yanning/Projects/openpilot/Plan/API.md",
+      "suffix": ".md",
+      "description": ".md file named API.md. Preview: # OpenPilot Personal Agent API Notes 本文件用于维护 OpenPilot Personal Agent 的模块接口、工具插件、记忆类型和权限边界。每次修改项目架构、工具调用方式或执行权限时，应同步更新本文档。 ## 1. System Modules ### Goal Understanding - Input: user goal, user constraints, optional files or context. - Output: structured task card. - Required fields: `goal`, `task_type`, `priority`, `risk_level`, `required_resources`, `expected_deliverables`. - Responsibility: identify intent, scope, constraints, permissions, and likely execution path. ### Planner - Input: structured task card, retrieved memory, available tools. - Output: ordered execution plan. - Required field",
+      "function_description": ".md file named API.md. Preview: # OpenPilot Personal Agent API Notes 本文件用于维护 OpenPilot Personal Agent 的模块接口、工具插件、记忆类型和权限边界。每次修改项目架构、工具调用方式或执行权限时，应同步更新本文档。 ## 1. System Modules ### Goal Understanding - Input: user goal, user constraints, optional files or context. - Output: structured task card. - Required fields: `goal`, `task_type`, `priority`, `risk_level`, `required_resources`, `expected_deliverables`. - Responsibility: identify intent, scope, constraints, permissions, and likely execution path. ### Planner - Input: structured task card, retrieved memory, available tools. - Output: ordered execution plan. - Required field",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "api",
+          "md",
+          "file",
+          "named",
+          "preview",
+          "openpilot",
+          "personal",
+          "agent",
+          "notes",
+          "本文件用于维护",
+          "的模块接口",
+          "工具插件",
+          "记忆类型和权限边界",
+          "每次修改项目架构",
+          "工具调用方式或执行权限时",
+          "应同步更新本文档",
+          "1",
+          "system",
+          "modules",
+          "goal",
+          "understanding",
+          "input",
+          "user",
+          "constraints"
+        ]
+      },
+      "mtime": 1778561194.8987477,
+      "size": 5646
+    },
+    "OpenPilot-执行优化总结.md": {
+      "name": "OpenPilot-执行优化总结.md",
+      "path": "/Users/yanning/Projects/openpilot/Plan/OpenPilot-执行优化总结.md",
+      "suffix": ".md",
+      "description": ".md file named OpenPilot-执行优化总结.md. Preview: # OpenPilot 执行优化总结 ## 修复的问题 ### 1. 超时错误消息 Bug ✅ **问题**: 超时错误显示 \"timeout of 0.0s\" 而不是实际超时时间 **修复**: - 修改 `ExecutionResult.mark_timeout()` 接受 `timeout_seconds` 参数 - 更新所有调用点传入实际超时值 **文件**: - `src/models/executor_models.py` (line 177-189) - `src/tools/tool_executor.py` (line 130, 228) **效果**: 现在显示 \"Execution exceeded timeout of 60s\" --- ### 2. 实时执行状态显示 ✅ **问题**: 执行步骤时只显示静止的进度条，看不到正在做什么 **修复**: - 为每个工具添加友好的显示名称（带图标） - 在进度条中显示 \"执行中...\" 和 \"重试中...\" 状态 **文件**: `src/execution/workflow_executor.py` **工具显示名称**: - 📁 列出目录 (directory_lister) - 📄 读取文件 (file_reader) - 📚 读取多个文件 (multi_file_reader) - 💾 写入文件 (fil",
+      "function_description": ".md file named OpenPilot-执行优化总结.md. Preview: # OpenPilot 执行优化总结 ## 修复的问题 ### 1. 超时错误消息 Bug ✅ **问题**: 超时错误显示 \"timeout of 0.0s\" 而不是实际超时时间 **修复**: - 修改 `ExecutionResult.mark_timeout()` 接受 `timeout_seconds` 参数 - 更新所有调用点传入实际超时值 **文件**: - `src/models/executor_models.py` (line 177-189) - `src/tools/tool_executor.py` (line 130, 228) **效果**: 现在显示 \"Execution exceeded timeout of 60s\" --- ### 2. 实时执行状态显示 ✅ **问题**: 执行步骤时只显示静止的进度条，看不到正在做什么 **修复**: - 为每个工具添加友好的显示名称（带图标） - 在进度条中显示 \"执行中...\" 和 \"重试中...\" 状态 **文件**: `src/execution/workflow_executor.py` **工具显示名称**: - 📁 列出目录 (directory_lister) - 📄 读取文件 (file_reader) - 📚 读取多个文件 (multi_file_reader) - 💾 写入文件 (fil",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "openpilot",
+          "执行优化总结",
+          "md",
+          "file",
+          "named",
+          "preview",
+          "修复的问题",
+          "1",
+          "超时错误消息",
+          "bug",
+          "问题",
+          "超时错误显示",
+          "timeout",
+          "of",
+          "0",
+          "0s",
+          "而不是实际超时时间",
+          "修复",
+          "修改",
+          "executionresult",
+          "mark_timeout",
+          "接受",
+          "timeout_seconds",
+          "参数"
+        ]
+      },
+      "mtime": 1778561194.8988638,
+      "size": 5192
+    },
+    "README.md": {
+      "name": "README.md",
+      "path": "/Users/yanning/Projects/openpilot/Plan/README.md",
+      "suffix": ".md",
+      "description": ".md file named README.md. Preview: # Plan ## Overview 帮我在'/Users/yanning/Projects/openpilot/Plan'做一个贪吃蛇 ## Requirements - Virtual Environment: .venv - Python Executable: /Users/yanning/Projects/openpilot/Plan/.venv/bin/python - Python Version: 3.11.15 - Dependencies: No third-party Python packages detected ## Setup ```bash python -m venv .venv ``` ```bash .venv/bin/python --version ``` ## Run ```bash .venv/bin/python main.py ``` ## Files - `main.py` ## Troubleshooting - If the run command fails because a package is missing, run the setup command first. - If you use a virtual environment or Conda environment, activate it before ",
+      "function_description": ".md file named README.md. Preview: # Plan ## Overview 帮我在'/Users/yanning/Projects/openpilot/Plan'做一个贪吃蛇 ## Requirements - Virtual Environment: .venv - Python Executable: /Users/yanning/Projects/openpilot/Plan/.venv/bin/python - Python Version: 3.11.15 - Dependencies: No third-party Python packages detected ## Setup ```bash python -m venv .venv ``` ```bash .venv/bin/python --version ``` ## Run ```bash .venv/bin/python main.py ``` ## Files - `main.py` ## Troubleshooting - If the run command fails because a package is missing, run the setup command first. - If you use a virtual environment or Conda environment, activate it before ",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "readme",
+          "md",
+          "file",
+          "named",
+          "preview",
+          "plan",
+          "overview",
+          "帮我在",
+          "users",
+          "yanning",
+          "projects",
+          "openpilot",
+          "做一个贪吃蛇",
+          "requirements",
+          "virtual",
+          "environment",
+          "venv",
+          "python",
+          "executable",
+          "bin",
+          "version",
+          "3",
+          "11",
+          "15"
+        ]
+      },
+      "mtime": 1779022796.7129176,
+      "size": 855
+    },
+    "claude-code-integration-plan.md": {
+      "name": "claude-code-integration-plan.md",
+      "path": "/Users/yanning/Projects/openpilot/Plan/claude-code-integration-plan.md",
+      "suffix": ".md",
+      "description": ".md file named claude-code-integration-plan.md. Preview: # OpenPilot 架构改进计划：引入 Claude Code 优秀实践 ## Context 用户希望在不破坏 OpenPilot 主体结构的前提下，从 Claude Code 源码中引入有价值的架构、函数和设计模式，以提升 OpenPilot 的代码质量、可维护性和功能完整性。 ### OpenPilot 当前状态 - **架构**：8 阶段工作流（目标理解 → 记忆检索 → 计划生成 → 工具编排 → 执行 → 验证 → 反思 → 日志） - **规模**：54 个 Python 文件，~13,590 行代码 - **核心模块**：LLM 客户端、任务规划器、工具系统、工作流执行器、记忆存储、验证系统 - **主要痛点**： 1. 日志不够详细，调试困难 2. 错误处理缺乏上下文信息 3. 内存管理可能无界增长 4. 缺少缓存机制，重复计算 5. 字符串处理不够健壮（CJK 支持） 6. 并发控制较弱 ### Claude Code 优势 - **成熟的工具系统**：40+ 专业工具，完善的权限管理 - **强大的错误处理**：分类、恢复、遥测安全 - **高效的缓存机制**：LRU、TTL、写穿透模式 - **优秀的字符串处理**：Grapheme-safe、CJK 支持、智能截断 - **完善的并发控制**：顺序执行、子 AbortController、超时管理 - ",
+      "function_description": ".md file named claude-code-integration-plan.md. Preview: # OpenPilot 架构改进计划：引入 Claude Code 优秀实践 ## Context 用户希望在不破坏 OpenPilot 主体结构的前提下，从 Claude Code 源码中引入有价值的架构、函数和设计模式，以提升 OpenPilot 的代码质量、可维护性和功能完整性。 ### OpenPilot 当前状态 - **架构**：8 阶段工作流（目标理解 → 记忆检索 → 计划生成 → 工具编排 → 执行 → 验证 → 反思 → 日志） - **规模**：54 个 Python 文件，~13,590 行代码 - **核心模块**：LLM 客户端、任务规划器、工具系统、工作流执行器、记忆存储、验证系统 - **主要痛点**： 1. 日志不够详细，调试困难 2. 错误处理缺乏上下文信息 3. 内存管理可能无界增长 4. 缺少缓存机制，重复计算 5. 字符串处理不够健壮（CJK 支持） 6. 并发控制较弱 ### Claude Code 优势 - **成熟的工具系统**：40+ 专业工具，完善的权限管理 - **强大的错误处理**：分类、恢复、遥测安全 - **高效的缓存机制**：LRU、TTL、写穿透模式 - **优秀的字符串处理**：Grapheme-safe、CJK 支持、智能截断 - **完善的并发控制**：顺序执行、子 AbortController、超时管理 - ",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "claude",
+          "code",
+          "integration",
+          "plan",
+          "md",
+          "file",
+          "named",
+          "preview",
+          "openpilot",
+          "架构改进计划",
+          "引入",
+          "优秀实践",
+          "context",
+          "用户希望在不破坏",
+          "主体结构的前提下",
+          "从",
+          "源码中引入有价值的架构",
+          "函数和设计模式",
+          "以提升",
+          "的代码质量",
+          "可维护性和功能完整性",
+          "当前状态",
+          "架构",
+          "8"
+        ]
+      },
+      "mtime": 1778561194.89902,
+      "size": 14968
+    },
+    "main.py": {
+      "name": "main.py",
+      "path": "/Users/yanning/Projects/openpilot/Plan/main.py",
+      "suffix": ".py",
+      "description": ".py file named main.py. Preview: #!/usr/bin/env python3 # -*- coding: utf-8 -*- \"\"\"A classic Snake game using Python's curses library.\"\"\" import curses import random import sys def place_food(snake, max_y, max_x): \"\"\"Generate a random food position inside the play area that is not on the snake.\"\"\" while True: y = random.randint(1, max_y - 2) x = random.randint(1, max_x - 2) if (y, x) not in snake: return (y, x) def game(stdscr): \"\"\"Run one full game of Snake. Return True to restart, False to quit.\"\"\" # Screen setup curses.curs_set(0)                # Hide cursor stdscr.timeout(150)               # Game speed (ms) max_y, max_x",
+      "function_description": ".py file named main.py. Preview: #!/usr/bin/env python3 # -*- coding: utf-8 -*- \"\"\"A classic Snake game using Python's curses library.\"\"\" import curses import random import sys def place_food(snake, max_y, max_x): \"\"\"Generate a random food position inside the play area that is not on the snake.\"\"\" while True: y = random.randint(1, max_y - 2) x = random.randint(1, max_x - 2) if (y, x) not in snake: return (y, x) def game(stdscr): \"\"\"Run one full game of Snake. Return True to restart, False to quit.\"\"\" # Screen setup curses.curs_set(0)                # Hide cursor stdscr.timeout(150)               # Game speed (ms) max_y, max_x",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "main",
+          "py",
+          "file",
+          "named",
+          "preview",
+          "usr",
+          "bin",
+          "env",
+          "python3",
+          "coding",
+          "utf",
+          "8",
+          "a",
+          "classic",
+          "snake",
+          "game",
+          "using",
+          "python",
+          "s",
+          "curses",
+          "library",
+          "import",
+          "random",
+          "sys"
+        ]
+      },
+      "mtime": 1779022791.1722045,
+      "size": 4135
+    },
+    "项目说明书.aux": {
+      "name": "项目说明书.aux",
+      "path": "/Users/yanning/Projects/openpilot/Plan/项目说明书.aux",
+      "suffix": ".aux",
+      "description": ".aux file named 项目说明书.aux",
+      "function_description": ".aux file named 项目说明书.aux",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "项目说明书",
+          "aux",
+          "file",
+          "named"
+        ]
+      },
+      "mtime": 1778999991.1326027,
+      "size": 12204
+    },
+    "项目说明书.log": {
+      "name": "项目说明书.log",
+      "path": "/Users/yanning/Projects/openpilot/Plan/项目说明书.log",
+      "suffix": ".log",
+      "description": ".log file named 项目说明书.log",
+      "function_description": ".log file named 项目说明书.log",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "项目说明书",
+          "log",
+          "file",
+          "named"
+        ]
+      },
+      "mtime": 1779000004.4290056,
+      "size": 33320
+    },
+    "项目说明书.out": {
+      "name": "项目说明书.out",
+      "path": "/Users/yanning/Projects/openpilot/Plan/项目说明书.out",
+      "suffix": ".out",
+      "description": ".out file named 项目说明书.out",
+      "function_description": ".out file named 项目说明书.out",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "项目说明书",
+          "out",
+          "file",
+          "named"
+        ]
+      },
+      "mtime": 1778999991.1334522,
+      "size": 5060
+    },
+    "项目说明书.pdf": {
+      "name": "项目说明书.pdf",
+      "path": "/Users/yanning/Projects/openpilot/Plan/项目说明书.pdf",
+      "suffix": ".pdf",
+      "description": ".pdf file named 项目说明书.pdf",
+      "function_description": ".pdf file named 项目说明书.pdf",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "项目说明书",
+          "pdf",
+          "file",
+          "named"
+        ]
+      },
+      "mtime": 1779000004.4163582,
+      "size": 18017367
+    },
+    "项目说明书.synctex.gz": {
+      "name": "项目说明书.synctex.gz",
+      "path": "/Users/yanning/Projects/openpilot/Plan/项目说明书.synctex.gz",
+      "suffix": ".gz",
+      "description": ".gz file named 项目说明书.synctex.gz",
+      "function_description": ".gz file named 项目说明书.synctex.gz",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "项目说明书",
+          "synctex",
+          "gz",
+          "file",
+          "named"
+        ]
+      },
+      "mtime": 1779000004.4288487,
+      "size": 182294
+    },
+    "项目说明书.tex": {
+      "name": "项目说明书.tex",
+      "path": "/Users/yanning/Projects/openpilot/Plan/项目说明书.tex",
+      "suffix": ".tex",
+      "description": ".tex file named 项目说明书.tex",
+      "function_description": ".tex file named 项目说明书.tex",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "项目说明书",
+          "tex",
+          "file",
+          "named"
+        ]
+      },
+      "mtime": 1778999909.2485259,
+      "size": 66683
+    },
+    "项目说明书.toc": {
+      "name": "项目说明书.toc",
+      "path": "/Users/yanning/Projects/openpilot/Plan/项目说明书.toc",
+      "suffix": ".toc",
+      "description": ".toc file named 项目说明书.toc",
+      "function_description": ".toc file named 项目说明书.toc",
+      "semantic_info": {
+        "kind": "keyword_fallback",
+        "terms": [
+          "项目说明书",
+          "toc",
+          "file",
+          "named"
+        ]
+      },
+      "mtime": 1778999991.1338344,
+      "size": 3728
+    }
+  }
+}
