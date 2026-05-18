@@ -138,8 +138,15 @@ def _render_processed_content(content: dict[str, Any]) -> str:
     lines = [
         f"[bold]Task:[/bold] {content.get('task', '')}",
         f"[bold]Processing Strategy:[/bold] {content.get('processing_strategy', '')}",
-        f"[bold]Output Format:[/bold] {content.get('output_format', '')}",
+        f"[bold]Output Format:[/bold] {content.get('result_format') or content.get('output_format', '')}",
     ]
+    result_text = str(content.get("result_text") or "").strip()
+    if result_text:
+        lines.extend(["", "[bold]Processed Result[/bold]", _truncate(result_text, 3600)])
+    warnings = _string_list(content.get("warnings"))
+    if warnings:
+        lines.extend(["", "[bold yellow]Warnings[/bold yellow]"])
+        lines.extend(f"- {_truncate(warning, 260)}" for warning in warnings[:4])
     artifacts = content.get("input_artifacts") or []
     if artifacts:
         lines.extend(["", "[bold]Input Data Used[/bold]"])

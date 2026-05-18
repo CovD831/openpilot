@@ -6,7 +6,7 @@ import json
 import re
 from pathlib import Path
 
-from agent_generator.models import GeneratedAgentSpec, PipelineSpec, Slot
+from agent_generator.models import DataArtifact, GeneratedAgentSpec, PipelineSpec, Slot
 
 
 def combine_pipelines(
@@ -14,6 +14,7 @@ def combine_pipelines(
     *,
     output_dir: str | Path | None = None,
     agent_name: str | None = None,
+    artifacts: list[DataArtifact] | None = None,
 ) -> GeneratedAgentSpec:
     """Combine pipelines and write a reusable Python agent module."""
     if not pipelines:
@@ -34,6 +35,7 @@ def combine_pipelines(
         task_summary=task_summary,
         slots=slots,
         pipelines=pipelines,
+        artifacts=artifacts or [],
         entry_function="run",
         dependencies=[],
         agent_file=str(agent_file),
@@ -70,27 +72,37 @@ runtime so private or one-off data does not need to be hardcoded.
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any
 
 
-AGENT_SPEC = {payload_json}
+AGENT_SPEC = json.loads({payload_json!r})
 
 
 def run(**slot_overrides: Any) -> dict[str, Any]:
-    """Return a replay-ready agent execution plan with applied slot overrides."""
+    """Return the generated result plus its replay-ready execution plan."""
     spec = deepcopy(AGENT_SPEC)
     slots = spec.get("slots", [])
     for slot in slots:
         name = slot.get("name")
         if name in slot_overrides:
             slot["value"] = slot_overrides[name]
+    artifacts = spec.get("artifacts", [])
+    result = ""
+    for artifact in artifacts:
+        if artifact.get("kind") != "processed":
+            continue
+        content = artifact.get("content") if isinstance(artifact.get("content"), dict) else {{}}
+        result = content.get("result_text") or result
 
     return {{
         "agent": spec.get("name"),
         "task_summary": spec.get("task_summary"),
+        "result": result,
         "slots": slots,
         "pipelines": spec.get("pipelines", []),
+        "artifacts": artifacts,
         "entry_function": spec.get("entry_function", "run"),
     }}
 '''

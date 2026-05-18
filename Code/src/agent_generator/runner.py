@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -14,6 +15,7 @@ from agent_generator.data_processor import process_data
 from agent_generator.models import GeneratedAgentSpec, PipelineSpec, Slot
 from agent_generator.pipeline_combiner import combine_pipelines
 from agent_generator.slot_generator import generate_slots
+from utils.input_utils import read_confirm, read_text
 
 
 def run_agent_generator(
@@ -23,6 +25,7 @@ def run_agent_generator(
     output_dir: str | Path | None = None,
     auto_approve: bool = False,
     llm_client = None,
+    logger: Any | None = None,
 ) -> GeneratedAgentSpec:
     """Run the interactive Agent Generator flow."""
     console = console or Console()
@@ -33,13 +36,38 @@ def run_agent_generator(
     console.print()
     console.print(Panel(cleaned_task, title="[bold green]Agent Generator[/bold green]", border_style="green"))
 
+    _log_agent_event(
+        logger,
+        phase="slot_generation",
+        event_type="info",
+        input_summary={"task": _truncate(cleaned_task, 240)},
+    )
     slots = generate_slots(cleaned_task, llm_client=llm_client)
+    _log_agent_event(
+        logger,
+        phase="slot_generation",
+        event_type="info",
+        success=True,
+        output_summary=_slot_summary(slots),
+    )
     _present_slots(slots, console)
     if _complete_empty_slots(slots, console, auto_approve):
         _present_slots(slots, console)
     slots = _review_slots(cleaned_task, slots, console, auto_approve, llm_client)
+    _log_agent_event(
+        logger,
+        phase="slot_approval",
+        event_type="info",
+        success=True,
+        output_summary=_slot_summary(slots),
+    )
 
-    collected_data, collection_pipeline = collect_data(cleaned_task, slots, llm_client=llm_client)
+    collected_data, collection_pipeline = collect_data(
+        cleaned_task,
+        slots,
+        llm_client=llm_client,
+        logger=logger,
+    )
     present_data(collected_data, console)
     collection_pipeline = _approve_or_retry_collection(
         cleaned_task,
@@ -49,9 +77,10 @@ def run_agent_generator(
         console,
         auto_approve,
         llm_client,
+        logger,
     )
 
-    processed_data, processing_pipeline = process_data(cleaned_task, slots, collected_data)
+    processed_data, processing_pipeline = process_data(cleaned_task, slots, collected_data, llm_client=llm_client)
     present_data(processed_data, console)
     processing_pipeline = _approve_or_retry_processing(
         cleaned_task,
@@ -61,6 +90,7 @@ def run_agent_generator(
         processed_data,
         console,
         auto_approve,
+        llm_client,
     )
 
     pipelines = [collection_pipeline, processing_pipeline]
@@ -68,7 +98,17 @@ def run_agent_generator(
     if not _confirm(console, "Generate reusable Python agent from these pipelines?", auto_approve, default=True):
         raise RuntimeError("agent generation cancelled by user")
 
-    spec = combine_pipelines(pipelines, output_dir=output_dir)
+    spec = combine_pipelines(pipelines, output_dir=output_dir, artifacts=[*collected_data, *processed_data])
+    _log_agent_event(
+        logger,
+        phase="agent_generation",
+        event_type="info",
+        success=True,
+        output_summary={
+            "agent_file": spec.agent_file,
+            "pipeline_count": len(pipelines),
+        },
+    )
     console.print()
     console.print("[bold green]Generated agent file:[/bold green] " + spec.agent_file)
     console.print(
@@ -144,11 +184,12 @@ def _approve_or_retry_collection(
     console: Console,
     auto_approve: bool,
     llm_client = None,
+    logger: Any | None = None,
 ) -> PipelineSpec:
     current_pipeline = pipeline
     while not _confirm(console, "Is the collected data satisfactory?", auto_approve, default=True):
         _add_feedback(slots, console, "collection")
-        revised_data, current_pipeline = collect_data(task, slots, llm_client=llm_client)
+        revised_data, current_pipeline = collect_data(task, slots, llm_client=llm_client, logger=logger)
         data[:] = revised_data
         present_data(data, console)
     return _mark_approved(current_pipeline)
@@ -162,11 +203,12 @@ def _approve_or_retry_processing(
     data,
     console: Console,
     auto_approve: bool,
+    llm_client = None,
 ) -> PipelineSpec:
     current_pipeline = pipeline
     while not _confirm(console, "Is the processed result satisfactory?", auto_approve, default=True):
         _add_feedback(slots, console, "processing")
-        revised_data, current_pipeline = process_data(task, slots, collected_data)
+        revised_data, current_pipeline = process_data(task, slots, collected_data, llm_client=llm_client)
         data[:] = revised_data
         present_data(data, console)
     return _mark_approved(current_pipeline)
@@ -182,7 +224,7 @@ def _mark_approved(pipeline: PipelineSpec) -> PipelineSpec:
 def _revise_slots(slots: list[Slot], console: Console) -> None:
     console.print("[dim]Enter slot revisions as name=value. Submit an empty line when done.[/dim]")
     while True:
-        revision = input("slot revision> ").strip()
+        revision = read_text("slot revision> ")
         if not revision:
             return
         if "=" not in revision:
@@ -200,28 +242,24 @@ def _complete_empty_slots(slots: list[Slot], console: Console, auto_approve: boo
     console.print("[yellow]Some generated slots are empty.[/yellow]")
     changed = False
     for slot in empty_slots:
-        prompt = f"Fill slot '{slot.name}' ({slot.description})?"
         if auto_approve:
-            console.print(f"[dim]{prompt} no[/dim]")
+            console.print(f"[dim]{slot.name} skipped[/dim]")
             slot.revision_notes.append("Left empty during auto-approved slot completion.")
             changed = True
             continue
-        if _confirm(console, prompt, auto_approve=False, default=False):
-            value = input(f"{slot.name}> ").strip()
-            if value:
-                slot.value = value
-                slot.revision_notes.append("Filled during empty-slot completion.")
-            else:
-                slot.revision_notes.append("User chose to keep this slot empty.")
-            changed = True
+        prompt = f"{slot.name} ({slot.description}) [Enter to skip]> "
+        value = read_text(prompt)
+        if value:
+            slot.value = value
+            slot.revision_notes.append("Filled during empty-slot completion.")
         else:
-            slot.revision_notes.append("User intentionally left this slot empty.")
-            changed = True
+            slot.revision_notes.append("User chose to keep this slot empty.")
+        changed = True
     return changed
 
 
 def _add_feedback(slots: list[Slot], console: Console, stage: str) -> None:
-    feedback = input(f"{stage} feedback> ").strip()
+    feedback = read_text(f"{stage} feedback> ")
     if not feedback:
         feedback = f"User requested {stage} revision."
     for slot in slots:
@@ -253,13 +291,56 @@ def _confirm(console: Console, prompt: str, auto_approve: bool, *, default: bool
         value = "yes" if default else "no"
         console.print(f"[dim]{prompt} {value}[/dim]")
         return default
-    suffix = "[Y/n]" if default else "[y/N]"
-    while True:
-        answer = input(f"{prompt} {suffix} ").strip().lower()
-        if not answer:
-            return default
-        if answer in {"y", "yes"}:
-            return True
-        if answer in {"n", "no"}:
-            return False
-        console.print("[yellow]Please answer y or n.[/yellow]")
+    return read_confirm(prompt, default=default)
+
+
+def _slot_summary(slots: list[Slot]) -> dict[str, Any]:
+    return {
+        "slot_count": len(slots),
+        "slots": [
+            {
+                "name": slot.name,
+                "kind": str(slot.kind),
+                "filled": not _is_empty_slot_value(slot.value),
+                "required": slot.required,
+            }
+            for slot in slots
+        ],
+    }
+
+
+def _log_agent_event(
+    logger: Any | None,
+    *,
+    phase: str,
+    event_type: str,
+    success: bool | None = None,
+    input_summary: Any | None = None,
+    output_summary: Any | None = None,
+    error: str | None = None,
+) -> None:
+    if not logger or not hasattr(logger, "log_structured_event"):
+        return
+    try:
+        logger.log_structured_event(
+            source_type="agent_generator",
+            source_name="runner",
+            phase=phase,
+            event_type=event_type,
+            session_id="agent_generator",
+            turn_id=1,
+            success=success,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            error=error,
+            metadata={},
+        )
+    except Exception:
+        pass
+
+
+def _truncate(value: str, limit: int) -> str:
+    cleaned = " ".join(str(value).split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 3)] + "..."

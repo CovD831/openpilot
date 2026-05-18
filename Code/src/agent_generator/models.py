@@ -98,6 +98,7 @@ class GeneratedAgentSpec(BaseModel):
     task_summary: str
     slots: list[Slot] = Field(default_factory=list)
     pipelines: list[PipelineSpec] = Field(default_factory=list)
+    artifacts: list[DataArtifact] = Field(default_factory=list)
     entry_function: str = "run"
     dependencies: list[str] = Field(default_factory=list)
     agent_file: str
