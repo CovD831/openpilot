@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -70,6 +71,72 @@ def is_socks_dependency_error(exc: BaseException) -> bool:
     return "socks proxy" in text and ("socksio" in text or "httpx[socks]" in text)
 
 
+def active_socks_proxy() -> str | None:
+    """Return the first configured SOCKS proxy URL from common env vars."""
+    for name in ("ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        value = os.environ.get(name)
+        if not value:
+            continue
+        lowered = value.lower()
+        if lowered.startswith(("socks://", "socks4://", "socks5://")):
+            return f"{name}={value}"
+    return None
+
+
+def socksio_available() -> bool:
+    """Return whether socksio can be imported in the active Python environment."""
+    try:
+        import socksio  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def socks_preflight_error_message() -> str | None:
+    """Return a targeted SOCKS dependency error before LLM/httpx calls."""
+    proxy = active_socks_proxy()
+    if not proxy or socksio_available():
+        return None
+
+    conda_env = os.environ.get("CONDA_DEFAULT_ENV") or "unknown"
+    return (
+        "SOCKS proxy is enabled but the active Python environment is missing socksio.\n\n"
+        f"Proxy: {proxy}\n"
+        f"Python: {sys.executable}\n"
+        f"Conda env: {conda_env}\n\n"
+        "httpx is already installed in many environments, but SOCKS proxy support needs the "
+        "separate socksio package.\n\n"
+        "Preferred fix:\n"
+        "conda install -n openpilot -c conda-forge socksio\n\n"
+        "Pip fallback if conda is unavailable:\n"
+        "python -m pip install socksio -i https://pypi.tuna.tsinghua.edu.cn/simple\n\n"
+        "After changing proxy settings, verify with:\n"
+        "env | grep -i proxy"
+    )
+
+
+def block_missing_socksio(console: Console) -> bool:
+    """Return True after rendering a SOCKS dependency error."""
+    message = socks_preflight_error_message()
+    if not message:
+        return False
+    console.print(
+        Panel(
+            message,
+            title="[bold red]Missing SOCKS Proxy Dependency[/bold red]",
+            border_style="red",
+        )
+    )
+    return True
+
+
+def raise_for_missing_socksio() -> None:
+    """Raise a RuntimeError when SOCKS proxy is active without socksio."""
+    message = socks_preflight_error_message()
+    if message:
+        raise RuntimeError(message)
+
+
 def agent_generator_llm_error_message(exc: BaseException) -> str:
     """Return a clearer Agent Generator LLM failure message when possible."""
     if not is_socks_dependency_error(exc):
@@ -83,11 +150,13 @@ def agent_generator_llm_error_message(exc: BaseException) -> str:
     )
     return (
         "Agent Generator could not call the LLM because SOCKS proxy support is missing. "
-        "You are likely running OpenPilot from a project .venv or an environment missing httpx[socks]."
+        "The missing concrete package is socksio; httpx may already be installed."
         f"{env_note}\n\n"
-        "Fix options:\n"
-        "1. deactivate\n"
-        "2. conda activate openpilot\n"
-        "3. pip install \"httpx[socks]>=0.24.0\"\n"
-        "4. openpilot run"
+        "Preferred fix:\n"
+        "conda install -n openpilot -c conda-forge socksio\n\n"
+        "Pip fallback:\n"
+        "python -m pip install socksio -i https://pypi.tuna.tsinghua.edu.cn/simple\n\n"
+        "Then rerun:\n"
+        "conda activate openpilot\n"
+        "openpilot run"
     )

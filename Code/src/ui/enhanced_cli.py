@@ -38,8 +38,10 @@ def run_enhanced_cli(
     """Run OpenPilot with enhanced UI."""
     console = console or Console()
 
-    from ui.environment_guard import block_project_venv
+    from ui.environment_guard import block_missing_socksio, block_project_venv
     if block_project_venv(console):
+        return 2
+    if block_missing_socksio(console):
         return 2
 
     # Initialize enhanced UI
@@ -274,7 +276,7 @@ def _run_interactive_mode(
                         ui.console.print("[red]Usage:[/red] /agent <task>")
                         continue
                     task = parts[1]
-                    _execute_agent_generator(task, ui, llm_client)
+                    _execute_agent_generator(task, ui, llm_client, logger)
                     continue
 
                 # Handle goal execution
@@ -426,17 +428,19 @@ def _execute_autopilot(
         traceback.print_exc()
 
 
-def _execute_agent_generator(task: str, ui: EnhancedUI, llm_client = None) -> None:
+def _execute_agent_generator(task: str, ui: EnhancedUI, llm_client = None, logger = None) -> None:
     """Generate a reusable Python agent from an interactive task."""
     from pathlib import Path
 
     from agent_generator.runner import run_agent_generator
-    from ui.environment_guard import agent_generator_llm_error_message, block_project_venv
+    from ui.environment_guard import agent_generator_llm_error_message, block_missing_socksio, block_project_venv
 
     if block_project_venv(ui.console):
         return
+    if block_missing_socksio(ui.console):
+        return
     output_dir = Path(__file__).resolve().parents[2] / "generated_agents"
     try:
-        run_agent_generator(task, console=ui.console, output_dir=output_dir, llm_client=llm_client)
+        run_agent_generator(task, console=ui.console, output_dir=output_dir, llm_client=llm_client, logger=logger)
     except Exception as e:
         ui.show_error("Agent generation failed", agent_generator_llm_error_message(e))

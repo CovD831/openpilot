@@ -757,7 +757,9 @@ class EnhancedUI:
 
         while True:
             try:
-                response = self.console.input("[bold cyan]Your choice[/bold cyan] (1-{}, default {}): ".format(
+                from utils.input_utils import read_text
+
+                response = read_text("Your choice (1-{}, default {}): ".format(
                     len(choices), default + 1
                 ))
 

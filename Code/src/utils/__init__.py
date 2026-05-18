@@ -105,6 +105,11 @@ from .tree_viz import (
     format_tree_node,
 )
 
+from .input_utils import (
+    read_text,
+    read_confirm,
+)
+
 __all__ = [
     # Cache
     'LRUCache',
@@ -180,4 +185,7 @@ __all__ = [
     'treeify_compact',
     'treeify_with_types',
     'format_tree_node',
+    # Input
+    'read_text',
+    'read_confirm',
 ]

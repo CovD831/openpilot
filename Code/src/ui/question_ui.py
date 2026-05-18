@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.box import ROUNDED
+from utils.input_utils import read_text
 
 
 QuestionKind = Literal["integer", "select", "confirm", "text"]
@@ -251,7 +252,7 @@ class QuestionUI:
     def _read_input(self, prompt: str) -> str:
         if self.input_func is not None:
             return self.input_func(prompt)
-        return self.console.input(prompt)
+        return read_text(prompt)
 
     def _is_interactive(self) -> bool:
         if self.interactive is not None:

@@ -990,16 +990,9 @@
           "default": 5
         },
         {
-          "name": "region",
-          "type": "string",
-          "description": "DuckDuckGo region code",
-          "required": false,
-          "default": "wt-wt"
-        },
-        {
           "name": "time_range",
           "type": "string",
-          "description": "Time range: all, day, week, month, or year",
+          "description": "Search time range: all, day, week, month, or year",
           "required": false,
           "default": "all"
         },
@@ -1009,6 +1002,20 @@
           "description": "Safe search: off, moderate, or strict",
           "required": false,
           "default": "moderate"
+        },
+        {
+          "name": "max_search_attempts",
+          "type": "integer",
+          "description": "Maximum Google/Bing query attempts, clamped to 1-10",
+          "required": false,
+          "default": 6
+        },
+        {
+          "name": "search_budget_seconds",
+          "type": "integer",
+          "description": "Maximum search-loop budget in seconds, clamped to 3-30",
+          "required": false,
+          "default": 20
         },
         {
           "name": "timeout",
@@ -1030,6 +1037,34 @@
           "description": "Maximum extracted text characters per page, clamped to 500-12000",
           "required": false,
           "default": 4000
+        },
+        {
+          "name": "follow_redirects",
+          "type": "boolean",
+          "description": "Use an LLM to choose valuable links from fetched pages and follow them",
+          "required": false,
+          "default": true
+        },
+        {
+          "name": "max_redirect_depth",
+          "type": "integer",
+          "description": "Maximum LLM-guided link-following depth, clamped to 0-2",
+          "required": false,
+          "default": 1
+        },
+        {
+          "name": "max_redirect_pages",
+          "type": "integer",
+          "description": "Maximum selected redirect pages to fetch per depth, clamped to 0-5",
+          "required": false,
+          "default": 2
+        },
+        {
+          "name": "max_redirect_candidates",
+          "type": "integer",
+          "description": "Maximum page links to present to the LLM per redirect depth, clamped to 5-30",
+          "required": false,
+          "default": 12
         },
         {
           "name": "llm_cleanup",
@@ -1057,6 +1092,18 @@
           "provider": {
             "type": "string",
             "description": "Search provider used"
+          },
+          "effective_query": {
+            "type": "string",
+            "description": "Query variant that returned results"
+          },
+          "search_attempts": {
+            "type": "array",
+            "description": "Search attempt diagnostics"
+          },
+          "network_diagnostics": {
+            "type": "object",
+            "description": "Sanitized HTTP/proxy diagnostics"
           },
           "results": {
             "type": "array",

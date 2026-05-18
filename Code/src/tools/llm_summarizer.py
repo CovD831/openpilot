@@ -98,11 +98,17 @@ def llm_summarizer_executor(params: dict[str, Any]) -> dict[str, Any]:
     # Build prompt
     prompt = f"{instruction}\n\n{text}"
 
-    # Call LLM
     try:
-        from core.config import LLMSettings
-        settings = LLMSettings()
-        client = LLMClient(settings)
+        injected_client = params.get("_llm_client")
+        if injected_client is not None:
+            client = injected_client
+            model = getattr(injected_client, "model", "injected")
+        else:
+            from core.config import LLMSettings
+
+            settings = LLMSettings()
+            client = LLMClient(settings)
+            model = settings.model
 
         response = client.complete(
             LLMRequest(
@@ -110,13 +116,14 @@ def llm_summarizer_executor(params: dict[str, Any]) -> dict[str, Any]:
                 response_format="text",
                 max_tokens=max_tokens,
                 temperature=0.3,
+                metadata={"tool": "llm_summarizer", "task": "summarize"},
             )
         )
 
         return {
             "summary": response.content,
             "tokens_used": response.usage.get("total_tokens", 0) if response.usage else 0,
-            "model": settings.model
+            "model": getattr(response, "model", None) or model,
         }
     except Exception as e:
         raise Exception(f"LLM summarizer failed: {e}") from e
