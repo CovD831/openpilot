@@ -95,9 +95,6 @@ def llm_summarizer_executor(params: dict[str, Any]) -> dict[str, Any]:
     instruction = params.get("instruction", "Summarize the following text concisely.")
     max_tokens = params.get("max_tokens", 500)
 
-    # Build prompt
-    prompt = f"{instruction}\n\n{text}"
-
     try:
         injected_client = params.get("_llm_client")
         if injected_client is not None:
@@ -110,20 +107,67 @@ def llm_summarizer_executor(params: dict[str, Any]) -> dict[str, Any]:
             client = LLMClient(settings)
             model = settings.model
 
-        response = client.complete(
-            LLMRequest(
-                messages=[LLMMessage(role="user", content=prompt)],
-                response_format="text",
-                max_tokens=max_tokens,
-                temperature=0.3,
-                metadata={"tool": "llm_summarizer", "task": "summarize"},
-            )
-        )
+        prompt = f"{instruction}\n\n{text}"
+        response = _complete_summary(client, prompt=prompt, max_tokens=max_tokens)
+        attempts = [_summary_attempt(response, prompt_chars=len(prompt), max_tokens=max_tokens)]
+        summary = response.content or ""
 
+        if not summary.strip() and getattr(response, "finish_reason", None) == "length":
+            retry_instruction = (
+                f"{instruction}\n\n"
+                "The previous response was empty because the output token budget was exhausted. "
+                "Return the final answer directly as visible Markdown. Do not spend tokens on private reasoning, "
+                "analysis preambles, or metadata."
+            )
+            retry_prompt = f"{retry_instruction}\n\n{text}"
+            retry_max_tokens = _retry_max_tokens(max_tokens)
+            response = _complete_summary(client, prompt=retry_prompt, max_tokens=retry_max_tokens)
+            attempts.append(_summary_attempt(response, prompt_chars=len(retry_prompt), max_tokens=retry_max_tokens))
+            summary = response.content or ""
+
+        tokens_used = sum(int(attempt.get("tokens_used") or 0) for attempt in attempts)
+        if not tokens_used:
+            tokens_used = response.usage.get("total_tokens", 0) if response.usage else 0
         return {
-            "summary": response.content,
-            "tokens_used": response.usage.get("total_tokens", 0) if response.usage else 0,
+            "summary": summary,
+            "tokens_used": tokens_used,
             "model": getattr(response, "model", None) or model,
+            "finish_reason": getattr(response, "finish_reason", None),
+            "response_chars": len(summary),
+            "prompt_chars": attempts[-1]["prompt_chars"] if attempts else len(prompt),
+            "attempts": attempts,
         }
     except Exception as e:
         raise Exception(f"LLM summarizer failed: {e}") from e
+
+
+def _complete_summary(client: Any, *, prompt: str, max_tokens: int) -> Any:
+    return client.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content=prompt)],
+            response_format="text",
+            max_tokens=max_tokens,
+            temperature=0.3,
+            metadata={"tool": "llm_summarizer", "task": "summarize"},
+        )
+    )
+
+
+def _summary_attempt(response: Any, *, prompt_chars: int, max_tokens: int) -> dict[str, Any]:
+    summary = response.content or ""
+    return {
+        "model": getattr(response, "model", ""),
+        "finish_reason": getattr(response, "finish_reason", None),
+        "response_chars": len(summary),
+        "prompt_chars": prompt_chars,
+        "max_tokens": max_tokens,
+        "tokens_used": response.usage.get("total_tokens", 0) if getattr(response, "usage", None) else 0,
+    }
+
+
+def _retry_max_tokens(max_tokens: int) -> int:
+    try:
+        base = int(max_tokens)
+    except (TypeError, ValueError):
+        base = 500
+    return min(max(base * 2, base + 800, 1800), 4096)

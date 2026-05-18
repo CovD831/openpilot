@@ -18,6 +18,7 @@ from agent_generator.models import DataArtifact, DataArtifactKind, Slot
 from agent_generator.pipeline_combiner import combine_pipelines
 from agent_generator.runner import _complete_empty_slots
 from agent_generator.slot_generator import generate_slots
+from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.openpilot_log import OpenPilotLogger
 from tools.code_reviewer import code_reviewer_executor
 from tools.builtin_tools import register_builtin_tools
@@ -93,9 +94,16 @@ class FakeStructuredLogger:
 
 
 class FakeSummarizerLLM:
-    def __init__(self, content: str = "## 最终结果\n整理后的机器学习报告。", *, fail: bool = False) -> None:
+    def __init__(
+        self,
+        content: str | list[str] = "## 最终结果\n整理后的机器学习报告。",
+        *,
+        fail: bool = False,
+        finish_reason: str | list[str] = "stop",
+    ) -> None:
         self.content = content
         self.fail = fail
+        self.finish_reason = finish_reason
         self.requests = []
         self.model = "fake-summarizer"
 
@@ -103,11 +111,22 @@ class FakeSummarizerLLM:
         self.requests.append(request)
         if self.fail:
             raise RuntimeError("summarizer unavailable")
+        if isinstance(self.content, list):
+            index = min(len(self.requests) - 1, len(self.content) - 1)
+            content = self.content[index]
+        else:
+            content = self.content
+        if isinstance(self.finish_reason, list):
+            finish_index = min(len(self.requests) - 1, len(self.finish_reason) - 1)
+            finish_reason = self.finish_reason[finish_index]
+        else:
+            finish_reason = self.finish_reason
         return SimpleNamespace(
-            content=self.content,
+            content=content,
             parsed_json=None,
             usage={"total_tokens": 123},
             model=self.model,
+            finish_reason=finish_reason,
         )
 
 
@@ -122,6 +141,31 @@ class FakeSlotLLM:
         task = request.metadata.get("task")
         payload = self.repair_payload if task == "slot_language_repair" else self.first_payload
         return SimpleNamespace(parsed_json=payload, content=json.dumps(payload))
+
+
+class FakeLLMSettings:
+    provider = "fake-provider"
+    base_url = "https://example.com/v1"
+    api_key = "test-key"
+    model = "fake-model"
+    timeout_seconds = 10.0
+    temperature = 0.2
+    transport_retries = 0
+    retry_initial_delay = 0.0
+    retry_max_delay = 0.0
+
+    def require_ready(self) -> None:
+        return None
+
+
+def _fake_chat_response(content, *, finish_reason: str = "stop"):
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content=content), finish_reason=finish_reason)],
+        usage=SimpleNamespace(model_dump=lambda: {"total_tokens": 7}),
+        model="fake-model",
+        id="fake-id",
+        created=123,
+    )
 
 
 def test_builtin_tools_register_expected_contracts() -> None:
@@ -387,6 +431,60 @@ def _sample_collected_web_artifact() -> DataArtifact:
     )
 
 
+def test_llm_cache_key_includes_max_tokens() -> None:
+    client = LLMClient(FakeLLMSettings())
+    request_10 = LLMRequest(messages=[LLMMessage(role="user", content="same prompt")], max_tokens=10)
+    request_20 = LLMRequest(messages=[LLMMessage(role="user", content="same prompt")], max_tokens=20)
+
+    assert client._make_cache_key(request_10) != client._make_cache_key(request_20)
+
+
+def test_llm_empty_length_response_is_not_cached(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    responses = [
+        _fake_chat_response("", finish_reason="length"),
+        _fake_chat_response("Recovered content", finish_reason="stop"),
+    ]
+    calls = []
+
+    def fake_create(_openai_client, payload):
+        calls.append(payload)
+        return responses[min(len(calls) - 1, len(responses) - 1)]
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+    request = LLMRequest(messages=[LLMMessage(role="user", content="same prompt")], max_tokens=10)
+
+    first = client.complete(request)
+    second = client.complete(request)
+
+    assert first.content == ""
+    assert first.finish_reason == "length"
+    assert first.raw_response_metadata["empty_length_response"] is True
+    assert second.content == "Recovered content"
+    assert len(calls) == 2
+
+
+def test_llm_extracts_text_from_content_parts(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+
+    def fake_create(_openai_client, _payload):
+        return _fake_chat_response(
+            [
+                {"type": "text", "text": "Part A"},
+                SimpleNamespace(text="Part B"),
+            ]
+        )
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(LLMRequest(messages=[LLMMessage(role="user", content="parts")]))
+
+    assert response.content == "Part A\nPart B"
+    diagnostics = response.raw_response_metadata["content_diagnostics"]
+    assert diagnostics["content_type"] == "list"
+    assert diagnostics["content_part_count"] == 2
+
+
 def test_llm_summarizer_uses_injected_client_without_real_llm() -> None:
     fake_llm = FakeSummarizerLLM("Injected summary")
 
@@ -399,12 +497,77 @@ def test_llm_summarizer_uses_injected_client_without_real_llm() -> None:
         }
     )
 
-    assert result == {"summary": "Injected summary", "tokens_used": 123, "model": "fake-summarizer"}
+    assert result["summary"] == "Injected summary"
+    assert result["tokens_used"] == 123
+    assert result["model"] == "fake-summarizer"
+    assert result["finish_reason"] == "stop"
+    assert result["response_chars"] == len("Injected summary")
+    assert result["prompt_chars"] > len("Collected text")
     request = fake_llm.requests[0]
     assert request.response_format == "text"
     assert request.max_tokens == 321
     assert "Produce the final output." in request.messages[0].content
     assert "Collected text" in request.messages[0].content
+
+
+def test_llm_summarizer_empty_response_returns_diagnostics() -> None:
+    fake_llm = FakeSummarizerLLM("")
+
+    result = llm_summarizer_executor(
+        {
+            "text": "Collected text",
+            "instruction": "Produce the final output.",
+            "_llm_client": fake_llm,
+        }
+    )
+
+    assert result["summary"] == ""
+    assert result["response_chars"] == 0
+    assert result["finish_reason"] == "stop"
+    assert result["prompt_chars"] > 0
+
+
+def test_llm_summarizer_retries_empty_length_response() -> None:
+    fake_llm = FakeSummarizerLLM(
+        ["", "# 恢复结果\n第二次生成成功。"],
+        finish_reason=["length", "stop"],
+    )
+
+    result = llm_summarizer_executor(
+        {
+            "text": "Collected text",
+            "instruction": "Produce the final output.",
+            "max_tokens": 300,
+            "_llm_client": fake_llm,
+        }
+    )
+
+    assert result["summary"] == "# 恢复结果\n第二次生成成功。"
+    assert result["finish_reason"] == "stop"
+    assert len(result["attempts"]) == 2
+    assert result["attempts"][0]["finish_reason"] == "length"
+    assert result["attempts"][0]["response_chars"] == 0
+    assert result["attempts"][1]["max_tokens"] > 300
+    assert "previous response was empty" in fake_llm.requests[1].messages[0].content
+
+
+def test_llm_summarizer_keeps_diagnostics_after_repeated_empty_length() -> None:
+    fake_llm = FakeSummarizerLLM(["", ""], finish_reason=["length", "length"])
+
+    result = llm_summarizer_executor(
+        {
+            "text": "Collected text",
+            "instruction": "Produce the final output.",
+            "max_tokens": 300,
+            "_llm_client": fake_llm,
+        }
+    )
+
+    assert result["summary"] == ""
+    assert result["finish_reason"] == "length"
+    assert result["response_chars"] == 0
+    assert len(result["attempts"]) == 2
+    assert [attempt["response_chars"] for attempt in result["attempts"]] == [0, 0]
 
 
 def test_data_processor_generates_user_facing_result_with_llm() -> None:
@@ -428,8 +591,92 @@ def test_data_processor_generates_user_facing_result_with_llm() -> None:
     assert content["processing_tool"] == "llm_summarizer"
     assert "Requested output format: 报告" in content["processing_instruction"]
     assert "Clean summary about machine learning" in fake_llm.requests[0].messages[0].content
+    assert "# Processing Evidence Brief" in fake_llm.requests[0].messages[0].content
     assert pipeline.steps[0].strategy == "llm"
     assert "Generated 报告 result" in processed_data[0].preview
+    assert content["summarizer_output"]["attempts"][0]["attempt"] == "full_context"
+    assert content["summarizer_output"]["response_chars"] == len("# 机器学习报告\n这是处理后的报告正文。")
+
+
+def test_data_processor_uses_summarizer_internal_retry_for_empty_length() -> None:
+    fake_llm = FakeSummarizerLLM(
+        ["", "# 内部重试结果\n处理阶段拿到了正文。"],
+        finish_reason=["length", "stop"],
+    )
+
+    processed_data, pipeline = process_data(
+        "帮我调查一下机器学习",
+        [Slot(name="output_format", kind="format", description="输出形式", value="报告", required=False)],
+        [_sample_collected_web_artifact()],
+        llm_client=fake_llm,
+    )
+
+    content = processed_data[0].content
+    assert content["processing_tool"] == "llm_summarizer"
+    assert content["result_text"] == "# 内部重试结果\n处理阶段拿到了正文。"
+    assert len(content["summarizer_output"]["attempts"]) == 1
+    assert len(content["summarizer_output"]["attempts"][0]["summarizer_attempts"]) == 2
+    assert pipeline.steps[0].parameters["processing_retry_count"] == 0
+
+
+def test_data_processor_retries_empty_summary_with_short_context() -> None:
+    fake_llm = FakeSummarizerLLM(["", "# 重试结果\n短上下文生成成功。"])
+    slots = [Slot(name="output_format", kind="format", description="输出形式", value="报告", required=False)]
+
+    processed_data, pipeline = process_data(
+        "帮我调查一下机器学习",
+        slots,
+        [_sample_collected_web_artifact()],
+        llm_client=fake_llm,
+    )
+
+    content = processed_data[0].content
+    assert content["processing_tool"] == "llm_summarizer"
+    assert content["result_text"] == "# 重试结果\n短上下文生成成功。"
+    assert [attempt["attempt"] for attempt in content["summarizer_output"]["attempts"]] == [
+        "full_context",
+        "short_retry",
+    ]
+    assert "previous attempt returned an empty response" in fake_llm.requests[1].messages[0].content
+    assert pipeline.steps[0].parameters["processing_retry_count"] == 1
+
+
+def test_data_processor_logs_retry_and_result_diagnostics() -> None:
+    logger = FakeStructuredLogger()
+
+    process_data(
+        "帮我调查一下机器学习",
+        [Slot(name="output_format", kind="format", description="输出形式", value="报告", required=False)],
+        [_sample_collected_web_artifact()],
+        llm_client=FakeSummarizerLLM(["", "# 重试结果\n成功。"]),
+        logger=logger,
+    )
+
+    event = logger.events[-1]
+    assert event["source_name"] == "data_processor"
+    assert event["phase"] == "data_processing"
+    assert event["success"] is True
+    assert event["input_summary"]["used_retry"] is True
+    assert event["output_summary"]["result_text_chars"] > 0
+
+
+def test_data_processor_falls_back_after_two_empty_summaries() -> None:
+    fake_llm = FakeSummarizerLLM(["", ""])
+    slots = [Slot(name="output_format", kind="format", description="输出形式", value="报告", required=False)]
+
+    processed_data, pipeline = process_data(
+        "帮我调查一下机器学习",
+        slots,
+        [_sample_collected_web_artifact()],
+        llm_client=fake_llm,
+    )
+
+    content = processed_data[0].content
+    assert content["processing_tool"] == "rule_based_fallback"
+    assert "empty response after 2 attempt" in content["warnings"][0]
+    assert "Machine Learning Guide" in content["result_text"]
+    assert [attempt["response_chars"] for attempt in content["summarizer_output"]["attempts"]] == [0, 0]
+    assert pipeline.steps[0].strategy == "function"
 
 
 def test_data_processor_instruction_follows_non_report_output_format() -> None:
@@ -468,6 +715,28 @@ def test_data_processor_falls_back_to_rule_based_result_when_llm_fails() -> None
     assert pipeline.steps[0].strategy == "function"
 
 
+def test_data_processor_fallback_uses_urls_and_excerpts_without_summary() -> None:
+    artifact = _sample_collected_web_artifact()
+    output = artifact.content["tool_output"]
+    output["research_summary"] = ""
+    output["key_points"] = []
+
+    processed_data, _pipeline = process_data(
+        "帮我调查一下机器学习",
+        [Slot(name="output_format", kind="format", description="输出形式", value="摘要", required=False)],
+        [artifact],
+        llm_client=FakeSummarizerLLM(fail=True),
+    )
+
+    result_text = processed_data[0].content["result_text"]
+    assert "### 参考链接" in result_text
+    assert "https://example.com/ml" in result_text
+    assert "Introductory material." in result_text
+    assert "### 页面摘录" in result_text
+    assert "Readable page content" in result_text
+    assert "## 资料限制" in result_text
+
+
 def test_processed_data_preview_displays_result_text() -> None:
     processed_data, _pipeline = process_data(
         "帮我调查一下机器学习",
@@ -481,6 +750,7 @@ def test_processed_data_preview_displays_result_text() -> None:
 
     text = rendered.getvalue()
     assert "Processed Result" in text
+    assert "# 成品" in text
     assert "这是真正的处理结果" in text
 
 

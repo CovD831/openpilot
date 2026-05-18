@@ -142,7 +142,7 @@ def _render_processed_content(content: dict[str, Any]) -> str:
     ]
     result_text = str(content.get("result_text") or "").strip()
     if result_text:
-        lines.extend(["", "[bold]Processed Result[/bold]", _truncate(result_text, 3600)])
+        lines.extend(["", "[bold]Processed Result[/bold]", _truncate_preserve_lines(result_text, 3600)])
     warnings = _string_list(content.get("warnings"))
     if warnings:
         lines.extend(["", "[bold yellow]Warnings[/bold yellow]"])
@@ -192,3 +192,10 @@ def _truncate(value: str, limit: int) -> str:
     if len(cleaned) <= limit:
         return cleaned
     return cleaned[: max(0, limit - 3)] + "..."
+
+
+def _truncate_preserve_lines(value: str, limit: int) -> str:
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."

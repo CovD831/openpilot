@@ -80,7 +80,13 @@ def run_agent_generator(
         logger,
     )
 
-    processed_data, processing_pipeline = process_data(cleaned_task, slots, collected_data, llm_client=llm_client)
+    processed_data, processing_pipeline = process_data(
+        cleaned_task,
+        slots,
+        collected_data,
+        llm_client=llm_client,
+        logger=logger,
+    )
     present_data(processed_data, console)
     processing_pipeline = _approve_or_retry_processing(
         cleaned_task,
@@ -91,6 +97,7 @@ def run_agent_generator(
         console,
         auto_approve,
         llm_client,
+        logger,
     )
 
     pipelines = [collection_pipeline, processing_pipeline]
@@ -204,11 +211,12 @@ def _approve_or_retry_processing(
     console: Console,
     auto_approve: bool,
     llm_client = None,
+    logger: Any | None = None,
 ) -> PipelineSpec:
     current_pipeline = pipeline
     while not _confirm(console, "Is the processed result satisfactory?", auto_approve, default=True):
         _add_feedback(slots, console, "processing")
-        revised_data, current_pipeline = process_data(task, slots, collected_data, llm_client=llm_client)
+        revised_data, current_pipeline = process_data(task, slots, collected_data, llm_client=llm_client, logger=logger)
         data[:] = revised_data
         present_data(data, console)
     return _mark_approved(current_pipeline)

@@ -67,7 +67,7 @@ class LLMClient:
         """Generate a cache key from the request."""
         messages_str = json.dumps([m.model_dump() for m in request.messages], sort_keys=True)
         temp = request.temperature if request.temperature is not None else self.settings.temperature
-        return f"{self.settings.model}:{request.response_format}:{temp}:{messages_str}"
+        return f"{self.settings.model}:{request.response_format}:{temp}:{request.max_tokens}:{messages_str}"
 
     def complete(self, request: LLMRequest, max_retries: int = 3, use_cache: bool = True) -> LLMResponse:
         """Execute a chat completion and normalize the response.
@@ -117,7 +117,7 @@ class LLMClient:
             response = self._create_completion_with_transport_retry(client, payload)
 
             choice = response.choices[0]
-            content = choice.message.content or ""
+            content, content_diagnostics = self._extract_message_content(choice.message)
             parsed_json: dict[str, Any] | list[Any] | None = None
 
             if request.response_format == "json_object":
@@ -136,16 +136,17 @@ class LLMClient:
                         provider=self.settings.provider,
                         usage=usage,
                         finish_reason=choice.finish_reason,
-                        raw_response_metadata={
-                            "id": response.id,
-                            "created": response.created,
-                            "transport_retry_history": getattr(self, "_last_transport_retry_history", []),
-                            "json_repair_attempt": attempt + 1,
-                        },
+                        raw_response_metadata=self._response_metadata(
+                            response=response,
+                            choice=choice,
+                            content=content,
+                            content_diagnostics=content_diagnostics,
+                            json_repair_attempt=attempt + 1,
+                        ),
                     )
 
                     # Cache successful response
-                    if use_cache and self._cache is not None:
+                    if use_cache and self._cache is not None and self._should_cache_response(result):
                         cache_key = self._make_cache_key(request)
                         self._cache.put(cache_key, result)
 
@@ -183,16 +184,17 @@ class LLMClient:
                     provider=self.settings.provider,
                     usage=usage,
                     finish_reason=choice.finish_reason,
-                    raw_response_metadata={
-                        "id": response.id,
-                        "created": response.created,
-                        "transport_retry_history": getattr(self, "_last_transport_retry_history", []),
-                        "json_repair_attempt": attempt + 1,
-                    },
+                    raw_response_metadata=self._response_metadata(
+                        response=response,
+                        choice=choice,
+                        content=content,
+                        content_diagnostics=content_diagnostics,
+                        json_repair_attempt=attempt + 1,
+                    ),
                 )
 
                 # Cache successful response
-                if use_cache and self._cache is not None:
+                if use_cache and self._cache is not None and self._should_cache_response(result):
                     cache_key = self._make_cache_key(request)
                     self._cache.put(cache_key, result)
 
@@ -282,6 +284,80 @@ class LLMClient:
         if isinstance(status_code, int):
             return status_code == 429 or status_code >= 500
         return category in {ErrorCategory.RETRYABLE, ErrorCategory.TIMEOUT, ErrorCategory.NETWORK}
+
+    def _extract_message_content(self, message: Any) -> tuple[str, dict[str, Any]]:
+        raw_content = getattr(message, "content", None)
+        diagnostics = {
+            "content_type": type(raw_content).__name__,
+            "content_part_count": len(raw_content) if isinstance(raw_content, list) else None,
+            "message_field_names": self._message_field_names(message),
+        }
+        if isinstance(raw_content, str):
+            return raw_content, diagnostics
+        if isinstance(raw_content, list):
+            parts = [text for part in raw_content if (text := self._content_part_text(part))]
+            return "\n".join(parts), diagnostics
+        if raw_content is not None:
+            return str(raw_content), diagnostics
+
+        for field_name in ("text", "message", "output_text"):
+            value = getattr(message, field_name, None)
+            if isinstance(value, str):
+                diagnostics["fallback_content_field"] = field_name
+                return value, diagnostics
+        return "", diagnostics
+
+    def _content_part_text(self, part: Any) -> str:
+        if isinstance(part, str):
+            return part
+        if isinstance(part, dict):
+            text = part.get("text")
+            if isinstance(text, str):
+                return text
+            if part.get("type") in {"text", "output_text"} and isinstance(part.get("content"), str):
+                return str(part["content"])
+            return ""
+        text = getattr(part, "text", None)
+        if isinstance(text, str):
+            return text
+        content = getattr(part, "content", None)
+        if isinstance(content, str):
+            return content
+        return ""
+
+    def _message_field_names(self, message: Any) -> list[str]:
+        if hasattr(message, "model_dump"):
+            try:
+                return sorted(str(key) for key in message.model_dump().keys())
+            except Exception:
+                pass
+        if hasattr(message, "__dict__"):
+            return sorted(str(key) for key in vars(message).keys())
+        return []
+
+    def _response_metadata(
+        self,
+        *,
+        response: Any,
+        choice: Any,
+        content: str,
+        content_diagnostics: dict[str, Any],
+        json_repair_attempt: int,
+    ) -> dict[str, Any]:
+        finish_reason = getattr(choice, "finish_reason", None)
+        return {
+            "id": getattr(response, "id", None),
+            "created": getattr(response, "created", None),
+            "transport_retry_history": getattr(self, "_last_transport_retry_history", []),
+            "json_repair_attempt": json_repair_attempt,
+            "content_diagnostics": content_diagnostics,
+            "empty_length_response": finish_reason == "length" and not content.strip(),
+        }
+
+    def _should_cache_response(self, response: LLMResponse) -> bool:
+        if response.finish_reason == "length" and not response.content.strip():
+            return False
+        return True
 
     def _extract_json_from_content(self, content: str) -> str:
         """Extract JSON from content, handling markdown code blocks.
