@@ -43,21 +43,21 @@ openpilot run --once "在 /tmp/demo 中创建一个 Python 项目"
 Interactive commands:
 
 ```text
-/autopilot <goal>  Run a goal through modern autonomous execution
 /config            Show current LLM configuration
 /help              Show command help
 /clear             Clear the screen
 /exit              Exit
 ```
 
-Plain text entered without a leading slash is also routed to the modern autopilot path.
+Enter any task without a leading slash. OpenPilot classifies the task and routes it to reusable Agent generation or direct autonomous execution.
 
 ## Current Architecture
 
 The active runtime path is:
 
 ```text
-ui.cli -> ui.enhanced_cli -> execution.IntelligentAutopilot
+ui.cli -> ui.enhanced_cli -> tools.task_classifier
+        -> agent_generator.runner OR execution.IntelligentAutopilot
         -> core.SemanticAnalyzer / agents.TaskDecomposer
         -> tools.ToolOrchestrator / tools.ToolExecutor
         -> built-in tools

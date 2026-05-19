@@ -23,7 +23,7 @@
 
 ### `ui/`
 
-负责命令行入口、交互式 REPL、Rich dashboard、进度追踪和通用询问界面。`cli.py` 只保留 `config` 与 `run/openpilot` 入口，`enhanced_cli.py` 负责现代交互模式和 `/autopilot` 调用链，`enhanced_ui.py` 与 `progress_tracker.py` 负责 Task Graph、Current Task Details、spinner 和 LLM/tool 公共进度 trace，`question_ui.py` 提供可复用的问题询问 UI。
+负责命令行入口、交互式 REPL、Rich dashboard、进度追踪和通用询问界面。`cli.py` 只保留 `config` 与 `run/openpilot` 入口，`enhanced_cli.py` 负责现代交互模式、任务分类和自动路由，`enhanced_ui.py` 与 `progress_tracker.py` 负责 Task Graph、Current Task Details、spinner 和 LLM/tool 公共进度 trace，`question_ui.py` 提供可复用的问题询问 UI。
 
 ### `execution/`
 
@@ -35,7 +35,7 @@
 
 ### `tools/`
 
-负责标准化工具定义、注册、选择、编排和执行。核心边界包括 `tool_registry.py`、`tool_orchestrator.py`、`tool_executor.py`、`tool_selector.py` 和 `builtin_tools.py`。内置工具包括文件读写、目录列举、多文件读取、LLM 总结、代码生成、代码审查、代码执行、命令执行、README 生成、项目状态读取、项目提升空间分析和 `autonomy_tool`。
+负责标准化工具定义、注册、选择、编排和执行。核心边界包括 `tool_registry.py`、`tool_orchestrator.py`、`tool_executor.py`、`tool_selector.py` 和 `builtin_tools.py`。内置工具包括任务分类、文件读写、目录列举、多文件读取、LLM 总结、代码生成、代码审查、代码执行、命令执行、README 生成、项目状态读取、项目提升空间分析和 `autonomy_tool`。
 工具协议类型也归属该目录，例如 `tool_models.py` 和 `tool_orchestration_models.py`。`autonomy_tool` 的决策类型位于 `tools/autonomy_models.py`。
 
 ### `core/`
@@ -55,7 +55,9 @@
 ```mermaid
 flowchart TD
     CLI["openpilot = ui.cli:main"] --> EnhancedCLI["ui.enhanced_cli / interactive REPL"]
-    EnhancedCLI --> Autopilot["execution.IntelligentAutopilot"]
+    EnhancedCLI --> Classifier["tools.task_classifier"]
+    Classifier --> AgentGenerator["agent_generator.runner"]
+    Classifier --> Autopilot["execution.IntelligentAutopilot"]
     Autopilot --> Semantic["core.SemanticAnalyzer"]
     Autopilot --> Decomposer["agents.TaskDecomposer"]
     Decomposer --> Orchestrator["tools.ToolOrchestrator"]
@@ -71,7 +73,7 @@ flowchart TD
     Autopilot --> Logs["core.OpenPilotLogger"]
 ```
 
-典型 `/autopilot` 流程从 `ui.cli:main` 进入交互模式，再由 `enhanced_cli.py` 创建 `IntelligentAutopilot`。Autopilot 先做语义分析和任务分解，再通过工具编排器选择并执行内置工具；如果产物是项目或代码文件，会生成 README，并进入项目评估与自主迭代。增强 UI 通过 `EnhancedUI` 和 `ProgressTracker` 展示 Task Graph、当前任务细节、工具 spinner 和 LLM 公共进度 trace，同时 `OpenPilotLogger` 写入结构化日志。
+典型任务流程从 `ui.cli:main` 进入交互模式，再由 `enhanced_cli.py` 调用 `task_classifier`。需要沉淀可复用 Agent、工作流或自动化模板的任务进入 `agent_generator.runner`；直接创建、修改、修复或优化项目的任务进入 `IntelligentAutopilot`。Autopilot 先做语义分析和任务分解，再通过工具编排器选择并执行内置工具；如果产物是项目或代码文件，会生成 README，并进入项目评估与自主迭代。增强 UI 通过 `EnhancedUI` 和 `ProgressTracker` 展示 Task Graph、当前任务细节、工具 spinner 和 LLM 公共进度 trace，同时 `OpenPilotLogger` 写入结构化日志。
 
 ## 已删除的旧结构
 

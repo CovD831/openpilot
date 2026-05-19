@@ -13,6 +13,7 @@ from tools.readme_tool import README_TOOL_DEFINITION, readme_tool_executor
 from tools.command_tool import COMMAND_EXECUTOR_DEFINITION, command_executor
 from tools.embedder import EMBEDDER_DEFINITION, embedder_executor
 from tools.web_searcher import WEB_SEARCHER_DEFINITION, web_searcher_executor
+from tools.task_classifier import TASK_CLASSIFIER_DEFINITION, task_classifier_executor
 
 
 __all__ = [
@@ -46,6 +47,8 @@ __all__ = [
     "embedder_executor",
     "WEB_SEARCHER_DEFINITION",
     "web_searcher_executor",
+    "TASK_CLASSIFIER_DEFINITION",
+    "task_classifier_executor",
     # Registration
     "register_builtin_tools",
 ]
@@ -69,3 +72,4 @@ def register_builtin_tools(registry) -> None:
     registry.register(COMMAND_EXECUTOR_DEFINITION, command_executor)
     registry.register(EMBEDDER_DEFINITION, embedder_executor)
     registry.register(WEB_SEARCHER_DEFINITION, web_searcher_executor)
+    registry.register(TASK_CLASSIFIER_DEFINITION, task_classifier_executor)

@@ -78,6 +78,7 @@ def run_enhanced_cli(
             logger,
             settings,
             runtime_options,
+            llm_client,
         )
 
     runtime_options = _runtime_options_from_args(args, project_prompt_default=True)
@@ -124,6 +125,7 @@ def _run_once_mode(
     logger,
     settings: LLMSettings,
     runtime_options: OpenPilotRuntimeOptions,
+    llm_client = None,
 ) -> int:
     """Run a single goal and exit."""
     from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
@@ -134,9 +136,16 @@ def _run_once_mode(
     ui.console.print()
 
     try:
+        classification = _classify_task_route(goal)
+        _show_task_route(ui, classification)
+
+        active_llm_client = llm_client or LLMClient(settings)
+        if classification.get("route") == "agent_generator":
+            return 0 if _execute_agent_generator(goal, ui, active_llm_client, logger) else 2
+
         # Create autopilot with enhanced UI support
         autopilot = IntelligentAutopilot(
-            llm_client=LLMClient(settings),
+            llm_client=active_llm_client,
             console=ui.console,
             auto_approve=True,
             logger=logger,
@@ -218,7 +227,7 @@ def _run_interactive_mode(
 
     ui.console.print()
     ui.console.print("[bold green]Welcome to OpenPilot Interactive Mode[/bold green]")
-    ui.console.print("[dim]Type your goal or use /help for commands[/dim]")
+    ui.console.print("[dim]Type your task or use /help for commands[/dim]")
     if runtime_options.prompt_for_project_improvement_iterations:
         ui.console.print("[dim]Project improvement iterations: asked per generated project[/dim]")
     else:
@@ -259,26 +268,6 @@ def _run_interactive_mode(
                     ui.show_banner()
                     continue
 
-                # Handle autopilot command
-                if user_input.strip().startswith("/autopilot"):
-                    parts = user_input.strip().split(maxsplit=1)
-                    if len(parts) < 2:
-                        ui.console.print("[red]Usage:[/red] /autopilot <goal>")
-                        continue
-                    goal = parts[1]
-                    _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options)
-                    continue
-
-                # Handle agent generator command
-                if user_input.strip().startswith("/agent"):
-                    parts = user_input.strip().split(maxsplit=1)
-                    if len(parts) < 2:
-                        ui.console.print("[red]Usage:[/red] /agent <task>")
-                        continue
-                    task = parts[1]
-                    _execute_agent_generator(task, ui, llm_client, logger)
-                    continue
-
                 # Handle goal execution
                 if not user_input.startswith("/"):
                     _execute_goal_interactive(user_input, ui, tracker, llm_client, logger, runtime_options)
@@ -307,7 +296,26 @@ def _execute_goal_interactive(
     runtime_options: OpenPilotRuntimeOptions,
 ):
     """Execute a goal in interactive mode."""
+    classification = _classify_task_route(goal)
+    _show_task_route(ui, classification)
+    if classification.get("route") == "agent_generator":
+        return _execute_agent_generator(goal, ui, llm_client, logger)
     return _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options)
+
+
+def _classify_task_route(task: str) -> dict:
+    """Classify a user task before selecting the execution path."""
+    from tools.task_classifier import task_classifier_executor
+
+    return task_classifier_executor({"task": task})
+
+
+def _show_task_route(ui: EnhancedUI, classification: dict) -> None:
+    """Show the selected route without interrupting execution."""
+    route = classification.get("route", "autonomous_iteration")
+    confidence = float(classification.get("confidence") or 0)
+    reason = classification.get("reason", "")
+    ui.console.print(f"[dim]Task route: {route} ({confidence:.2f}) - {reason}[/dim]")
 
 
 def _show_help(ui: EnhancedUI):
@@ -428,7 +436,7 @@ def _execute_autopilot(
         traceback.print_exc()
 
 
-def _execute_agent_generator(task: str, ui: EnhancedUI, llm_client = None, logger = None) -> None:
+def _execute_agent_generator(task: str, ui: EnhancedUI, llm_client = None, logger = None) -> bool:
     """Generate a reusable Python agent from an interactive task."""
     from pathlib import Path
 
@@ -436,11 +444,13 @@ def _execute_agent_generator(task: str, ui: EnhancedUI, llm_client = None, logge
     from ui.environment_guard import agent_generator_llm_error_message, block_missing_socksio, block_project_venv
 
     if block_project_venv(ui.console):
-        return
+        return False
     if block_missing_socksio(ui.console):
-        return
+        return False
     output_dir = Path(__file__).resolve().parents[2] / "generated_agents"
     try:
         run_agent_generator(task, console=ui.console, output_dir=output_dir, llm_client=llm_client, logger=logger)
+        return True
     except Exception as e:
         ui.show_error("Agent generation failed", agent_generator_llm_error_message(e))
+        return False

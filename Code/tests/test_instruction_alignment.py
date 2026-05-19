@@ -18,6 +18,7 @@ from memory.agents.project_manager_agent import ProjectManagerAgent
 from memory.agents.virtual_environment_manager import VirtualEnvironmentManager
 from memory.memory_models import MemoryRecord, MemoryType
 from memory.memory_store import MemoryStore
+from tools.task_classifier import task_classifier_executor
 from tools.builtin_tools import register_builtin_tools
 from tools.tool_executor import ToolExecutor
 from tools.tool_selection import ToolSelection
@@ -169,3 +170,124 @@ def test_tool_executor_structured_logs_include_source_type(tmp_path) -> None:
     assert payloads[-1]["source_name"] == "file_reader"
     assert payloads[-1]["phase"] == "tool_execution"
     assert payloads[-1]["success"] is False
+
+
+def test_task_classifier_routes_direct_project_work_to_autonomous_iteration() -> None:
+    result = task_classifier_executor({"task": "帮我在项目里做一个贪吃蛇"})
+
+    assert result["route"] == "autonomous_iteration"
+    assert result["confidence"] >= 0.8
+
+
+def test_task_classifier_routes_reusable_agent_requests_to_agent_generator() -> None:
+    result = task_classifier_executor({"task": "生成一个可复用的研究报告 agent"})
+
+    assert result["route"] == "agent_generator"
+    assert result["confidence"] >= 0.8
+
+
+def test_task_classifier_routes_knowledge_work_to_agent_generator() -> None:
+    tasks = [
+        "帮我调查一下机器学习",
+        "帮我研究一下新能源汽车出海市场",
+        "整理一下这些资料并生成报告",
+        "解释一下 transformer 的核心思想",
+    ]
+
+    for task in tasks:
+        result = task_classifier_executor({"task": task})
+        assert result["route"] == "agent_generator", task
+        assert "knowledge work" in result["reason"]
+
+
+def test_task_classifier_execution_intent_overrides_knowledge_work() -> None:
+    tasks = [
+        "帮我在项目里实现机器学习模块",
+        "修复 web_searcher.py 里的 bug",
+        "在 /tmp/demo 创建一个 Python 项目",
+        "研究 web_searcher.py 为什么失败并修复",
+    ]
+
+    for task in tasks:
+        result = task_classifier_executor({"task": task})
+        assert result["route"] == "autonomous_iteration", task
+
+
+def test_task_classifier_defaults_ambiguous_tasks_to_autonomous_iteration() -> None:
+    result = task_classifier_executor({"task": "分析一下这个任务"})
+
+    assert result["route"] == "autonomous_iteration"
+
+
+def test_command_registry_hides_removed_agent_and_autopilot_commands() -> None:
+    from ui.commands import get_all_command_names, get_command_registry
+
+    names = get_all_command_names()
+    help_text = get_command_registry().format_help()
+
+    assert "/agent" not in names
+    assert "/autopilot" not in names
+    assert "/agent" not in help_text
+    assert "/autopilot" not in help_text
+    assert "task classifier" in help_text.lower()
+
+
+def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> None:
+    from ui import enhanced_cli
+
+    calls = []
+
+    class Console:
+        def print(self, *args, **kwargs):
+            pass
+
+    class UI:
+        console = Console()
+
+    runtime_options = enhanced_cli.OpenPilotRuntimeOptions()
+
+    def fake_agent(task, ui, llm_client=None, logger=None):
+        calls.append(("agent", task))
+        return "agent-result"
+
+    def fake_autopilot(goal, ui, tracker, llm_client, logger, runtime_options):
+        calls.append(("autopilot", goal))
+        return "autopilot-result"
+
+    monkeypatch.setattr(enhanced_cli, "_execute_agent_generator", fake_agent)
+    monkeypatch.setattr(enhanced_cli, "_execute_autopilot", fake_autopilot)
+
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_classify_task_route",
+        lambda task: {"route": "agent_generator", "confidence": 0.9, "reason": "test"},
+    )
+    assert (
+        enhanced_cli._execute_goal_interactive(
+            "生成一个可复用 agent",
+            UI(),
+            tracker=None,
+            llm_client=None,
+            logger=None,
+            runtime_options=runtime_options,
+        )
+        == "agent-result"
+    )
+
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_classify_task_route",
+        lambda task: {"route": "autonomous_iteration", "confidence": 0.9, "reason": "test"},
+    )
+    assert (
+        enhanced_cli._execute_goal_interactive(
+            "帮我做一个项目",
+            UI(),
+            tracker=None,
+            llm_client=None,
+            logger=None,
+            runtime_options=runtime_options,
+        )
+        == "autopilot-result"
+    )
+    assert calls == [("agent", "生成一个可复用 agent"), ("autopilot", "帮我做一个项目")]

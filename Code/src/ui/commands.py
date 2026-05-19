@@ -36,24 +36,6 @@ class CommandRegistry:
     def _initialize_commands(self):
         """Initialize all available commands."""
         commands = [
-            # Execution
-            Command(
-                name="/autopilot",
-                aliases=[],
-                description="AGI mode: Fully autonomous execution with intelligent task decomposition",
-                usage="/autopilot <goal>",
-                category=CommandCategory.EXECUTION,
-                requires_args=True
-            ),
-            Command(
-                name="/agent",
-                aliases=[],
-                description="Generate a reusable Python agent from an interactive pipeline",
-                usage="/agent <task>",
-                category=CommandCategory.EXECUTION,
-                requires_args=True
-            ),
-
             # System
             Command(
                 name="/config",
@@ -156,8 +138,8 @@ class CommandRegistry:
         lines.append("  - Type '/' to see command suggestions")
         lines.append("  - Use arrow keys to navigate command history")
         lines.append("  - Press Tab for command completion")
-        lines.append("  - Use /agent <task> to build a reusable generated agent")
-        lines.append("  - Type any text without '/' to run modern autopilot")
+        lines.append("  - Type any task without '/' to run automatic routing")
+        lines.append("  - The task classifier selects reusable Agent generation or direct execution")
 
         return "\n".join(lines)
 

@@ -6,12 +6,13 @@ import importlib.util
 from base64 import urlsafe_b64encode
 from io import StringIO
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 from rich.console import Console
 
-from agent_generator.data_collector import collect_data
+from agent_generator.data_collector import _build_search_query, collect_data
 from agent_generator.data_processor import process_data
 from agent_generator.data_presenter import present_data
 from agent_generator.models import DataArtifact, DataArtifactKind, Slot
@@ -23,7 +24,7 @@ from core.openpilot_log import OpenPilotLogger
 from tools.code_reviewer import code_reviewer_executor
 from tools.builtin_tools import register_builtin_tools
 from tools.llm_summarizer import llm_summarizer_executor
-from tools.web_searcher import _default_http_get, web_searcher_executor
+from tools.web_searcher import _build_search_query_variants, _default_http_get, web_searcher_executor
 from tools.tool_executor import ToolExecutor
 from core.tool_contracts import (
     PermissionLevel,
@@ -174,13 +175,14 @@ def test_builtin_tools_register_expected_contracts() -> None:
     names = {tool.name for tool in registry.list_all()}
     removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 11
+    assert len(names) == 12
     assert {
         "command_executor",
         "embedder",
         "file_reader",
         "file_writer",
         "multi_file_reader",
+        "task_classifier",
         "web_searcher",
     }.issubset(names)
     assert removed_directory_tool not in names
@@ -1336,6 +1338,74 @@ def test_web_searcher_builds_short_query_variants_from_long_slot_query() -> None
     assert "机器学习" in result["effective_query"]
 
 
+def test_agent_generator_search_query_keeps_natural_language_without_slots() -> None:
+    assert _build_search_query("帮我调查机器学习", []) == "帮我调查机器学习"
+
+
+def test_agent_generator_search_query_uses_explicit_subject_slot() -> None:
+    slot = Slot(
+        name="subject",
+        kind="data_source",
+        description="搜索主题",
+        value="机器学习",
+        required=True,
+    )
+
+    assert _build_search_query("帮我调查机器学习", [slot]) == "机器学习"
+
+
+def test_web_searcher_llm_query_planner_runs_before_raw_natural_language() -> None:
+    seen_queries = []
+    html = '<a href="/url?q=https%3A%2F%2Fexample.com%2Fml&amp;sa=U">ML Result</a>'
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        seen_queries.append(parse_qs(urlparse(url).query)["q"][0])
+        return html
+
+    fake_llm = FakeCleanupLLM(keyword_variants="机器学习\nmachine learning overview")
+    result = web_searcher_executor(
+        {
+            "query": "帮我调查机器学习",
+            "max_pages": 0,
+            "llm_cleanup": False,
+            "max_search_attempts": 1,
+            "_http_get": fake_http_get,
+            "_llm_client": fake_llm,
+        }
+    )
+
+    assert result["effective_query"] == "机器学习"
+    assert seen_queries[0] == "机器学习"
+    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation"]
+
+
+def test_web_searcher_llm_query_planner_generalizes_without_keyword_lists() -> None:
+    fake_llm = FakeCleanupLLM(keyword_variants="transformer 核心脉络\ntransformer architecture overview")
+
+    variants, warnings = _build_search_query_variants(
+        query="我想弄明白 transformer 的核心脉络",
+        llm_client=fake_llm,
+        max_variants=4,
+    )
+
+    assert warnings == []
+    assert variants[0] == "transformer 核心脉络"
+    assert "我想弄明白 transformer 的核心脉络" in variants
+
+
+def test_web_searcher_llm_query_planner_supports_english_natural_language() -> None:
+    fake_llm = FakeCleanupLLM(keyword_variants="edge AI trends\nedge artificial intelligence market trends")
+
+    variants, warnings = _build_search_query_variants(
+        query="I need to get a solid picture of edge AI trends",
+        llm_client=fake_llm,
+        max_variants=4,
+    )
+
+    assert warnings == []
+    assert variants[0] == "edge AI trends"
+
+
 def test_web_searcher_tries_next_query_variant_until_success() -> None:
     google_html = '<a href="/url?q=https%3A%2F%2Fexample.com%2Fml&amp;sa=U">Machine Learning</a>'
 
@@ -1382,6 +1452,22 @@ def test_web_searcher_llm_keyword_generation_failure_uses_local_variants() -> No
     assert result["count"] == 1
     assert any("LLM keyword generation failed" in warning for warning in result["warnings"])
     assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation"]
+
+
+def test_web_searcher_search_budget_warning_is_not_duplicated(monkeypatch) -> None:
+    monotonic_values = iter([0, 4, 5, 6])
+    monkeypatch.setattr("tools.web_searcher.time.monotonic", lambda: next(monotonic_values))
+
+    result = web_searcher_executor(
+        {
+            "query": "openpilot research",
+            "max_pages": 0,
+            "llm_cleanup": False,
+            "search_budget_seconds": 3,
+        }
+    )
+
+    assert result["warnings"].count("Search budget exhausted after 3s.") == 1
 
 
 def test_web_searcher_default_http_get_uses_httpx_env_proxy_and_redirects(monkeypatch) -> None:

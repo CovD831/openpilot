@@ -1180,6 +1180,57 @@
         "llm"
       ],
       "audit_required": true
+    },
+    {
+      "tool_name": "task_classifier",
+      "display_name": "Task Classifier",
+      "function": "Classify a user task and choose reusable agent generation, knowledge-work generation, or autonomous execution",
+      "version": "1.0.0",
+      "capabilities": [],
+      "permission_level": "auto",
+      "input_schema": [
+        {
+          "name": "task",
+          "type": "string",
+          "description": "User task text to classify",
+          "required": true,
+          "default": null
+        }
+      ],
+      "output_schema": {
+        "type": "object",
+        "description": "Task routing decision",
+        "properties": {
+          "route": {
+            "type": "string",
+            "description": "agent_generator or autonomous_iteration"
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Classifier confidence from 0.0 to 1.0"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Short explanation for the route"
+          }
+        }
+      },
+      "failure_modes": [
+        {
+          "error_type": "invalid_input",
+          "description": "Task text is missing or empty",
+          "recovery_strategy": "Provide a non-empty task string"
+        }
+      ],
+      "timeout_seconds": 5,
+      "max_retries": 0,
+      "tags": [
+        "classification",
+        "routing",
+        "agent",
+        "autopilot"
+      ],
+      "audit_required": true
     }
   ]
 }

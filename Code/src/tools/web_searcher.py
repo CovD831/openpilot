@@ -525,18 +525,27 @@ def web_searcher_executor(params: dict[str, Any]) -> dict[str, Any]:
     search_attempts = []
     search_started_at = time.monotonic()
     attempt_count = 0
+    search_budget_exhausted = False
     for search_query in query_variants:
         if attempt_count >= max_search_attempts:
             break
         if time.monotonic() - search_started_at >= search_budget_seconds:
-            warnings.append(f"Search budget exhausted after {search_budget_seconds}s.")
+            search_budget_exhausted = _append_search_budget_warning(
+                warnings,
+                search_budget_seconds,
+                already_appended=search_budget_exhausted,
+            )
             break
         for candidate_provider in ("google_html", "bing_html"):
             if attempt_count >= max_search_attempts:
                 break
             elapsed = time.monotonic() - search_started_at
             if elapsed >= search_budget_seconds:
-                warnings.append(f"Search budget exhausted after {search_budget_seconds}s.")
+                search_budget_exhausted = _append_search_budget_warning(
+                    warnings,
+                    search_budget_seconds,
+                    already_appended=search_budget_exhausted,
+                )
                 break
             attempt_count += 1
             if candidate_provider == "google_html":
@@ -687,12 +696,18 @@ def _build_search_query_variants(
     max_variants: int,
 ) -> tuple[list[str], list[str]]:
     warnings = []
-    variants = _local_search_query_variants(query)
+    local_variants = _local_search_query_variants(query)
+    llm_variants = []
     if llm_client is not None:
         try:
-            variants.extend(_llm_search_query_variants(query=query, llm_client=llm_client))
+            llm_variants = _llm_search_query_variants(query=query, llm_client=llm_client)
         except RuntimeError as exc:
             warnings.append(f"LLM keyword generation failed; using local query variants. Reason: {exc}")
+
+    if _has_explicit_query_subject(query):
+        variants = [*local_variants, *llm_variants]
+    else:
+        variants = [*llm_variants, *local_variants]
     variants.append(query)
     cleaned = []
     for variant in variants:
@@ -706,13 +721,7 @@ def _build_search_query_variants(
 def _local_search_query_variants(query: str) -> list[str]:
     slots = _extract_query_slots(query)
     base_query = _strip_query_slots(query)
-    subject = (
-        slots.get("subject")
-        or slots.get("topic")
-        or slots.get("主题")
-        or _subject_from_text(base_query)
-        or base_query
-    )
+    subject = slots.get("subject") or slots.get("topic") or slots.get("主题") or ""
     subject = _clean_query_variant(subject)
     depth = slots.get("depth") or slots.get("scope") or ""
     time_focus = slots.get("time_focus") or slots.get("time") or ""
@@ -743,11 +752,17 @@ def _local_search_query_variants(query: str) -> list[str]:
     return variants
 
 
+def _has_explicit_query_subject(query: str) -> bool:
+    slots = _extract_query_slots(query)
+    return any(slots.get(key) for key in ("subject", "topic", "主题"))
+
+
 def _llm_search_query_variants(*, query: str, llm_client: Any) -> list[str]:
     prompt = (
-        "Generate 3 to 5 concise web search queries for the user's research request. "
-        "Prefer short keyword-style queries over long sentences. Keep important subject, recency, "
-        "language, and scope constraints. Return plain text only, one query per line.\n\n"
+        "Rewrite the user's natural-language task into 3 to 5 concise web search queries. "
+        "Remove request/action wording and keep only searchable subject matter plus important "
+        "scope, language, recency, source, or output constraints. Prefer short keyword-style "
+        "queries over long sentences. Return plain text only, one query per line.\n\n"
         f"Request:\n{query}"
     )
     try:
@@ -786,19 +801,22 @@ def _strip_query_slots(query: str) -> str:
     return _clean_query_variant(stripped)
 
 
-def _subject_from_text(text: str) -> str:
-    cleaned = _clean_query_variant(text)
-    for prefix in ("帮我调研一下", "帮我调查一下", "调研一下", "调查一下", "research", "investigate"):
-        if cleaned.lower().startswith(prefix.lower()):
-            return _clean_query_variant(cleaned[len(prefix):])
-    return cleaned
-
-
 def _clean_query_variant(value: str) -> str:
     cleaned = _clean_text(value)
     cleaned = re.sub(r"^[-*+\d.)\s]+", "", cleaned).strip("'\"` ")
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned[:160].strip()
+
+
+def _append_search_budget_warning(
+    warnings: list[str],
+    search_budget_seconds: int,
+    *,
+    already_appended: bool,
+) -> bool:
+    if not already_appended:
+        warnings.append(f"Search budget exhausted after {search_budget_seconds}s.")
+    return True
 
 
 def _matches_any(value: str, expected: set[str]) -> bool:

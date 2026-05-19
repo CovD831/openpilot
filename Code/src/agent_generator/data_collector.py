@@ -419,7 +419,7 @@ def _build_search_query(task: str, slots: list[Slot]) -> str:
             continue
         slot_values[slot.name.lower()] = " ".join(str(item) for item in _flatten_values(slot.value) if item)
 
-    subject = slot_values.get("subject") or slot_values.get("topic") or slot_values.get("主题") or _strip_search_intent_prefix(task)
+    subject = slot_values.get("subject") or slot_values.get("topic") or slot_values.get("主题") or ""
     modifiers = []
     depth = slot_values.get("depth") or slot_values.get("scope") or ""
     if _contains_any(depth, ("overview", "概述", "整体", "intro", "入门")):
@@ -433,14 +433,6 @@ def _build_search_query(task: str, slots: list[Slot]) -> str:
 
     query = " ".join([subject, *modifiers]).strip()
     return query or task
-
-
-def _strip_search_intent_prefix(task: str) -> str:
-    cleaned = " ".join(task.split())
-    for prefix in ("帮我调研一下", "帮我调查一下", "调研一下", "调查一下", "research", "investigate"):
-        if cleaned.lower().startswith(prefix.lower()):
-            return cleaned[len(prefix):].strip()
-    return cleaned
 
 
 def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
