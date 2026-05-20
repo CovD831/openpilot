@@ -17,6 +17,7 @@ from metadata.base import (
     ensure_metadata,
     metadata_summary,
 )
+from metadata.bugfix import BugFixAttemptMetadata, BugFixResultMetadata
 from metadata.data import CollectedDataMetadata, PresentationMetadata, ProcessedDataMetadata
 from metadata.project import (
     AutonomyDecisionMetadata,
@@ -53,6 +54,8 @@ from metadata.tooling import (
 
 __all__ = [
     "ArtifactMetadata",
+    "BugFixAttemptMetadata",
+    "BugFixResultMetadata",
     "CodeArtifactMetadata",
     "CommandArtifactMetadata",
     "CorrelationInfo",

@@ -194,8 +194,9 @@ def test_builtin_tools_register_expected_contracts() -> None:
     names = {tool.name for tool in registry.list_all()}
     removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 12
+    assert len(names) == 13
     assert {
+        "bug_fix_tool",
         "command_executor",
         "embedder",
         "file_reader",

@@ -75,6 +75,9 @@ class ToolInputMetadata(MetadataBase):
     timeout: int | None = None
     cwd: str | None = None
     env: dict[str, str] | None = None
+    max_iterations: int | None = None
+    continuation_iterations: int | None = None
+    fix_instruction: str | None = None
 
     # Project/autonomous iteration fields
     project_path: str | None = None

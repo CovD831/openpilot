@@ -17,6 +17,7 @@ from metadata.artifacts import (
     TextArtifactMetadata,
 )
 from metadata.base import JsonValue, MetadataBase, MetadataKind
+from metadata.bugfix import BugFixAttemptMetadata, BugFixResultMetadata
 from metadata.project import EnvironmentSyncMetadata, ImprovementAnalysisMetadata, ProjectStateMetadata
 
 
@@ -187,6 +188,44 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             provider=str(payload.get("provider") or ""),
             cached=bool(payload.get("cached", False)),
             attributes=attr_without("query", "embedding", "dimension", "model", "provider", "cached"),
+        )
+    if tool_name == "bug_fix_tool":
+        attempts = [
+            item
+            if isinstance(item, BugFixAttemptMetadata)
+            else BugFixAttemptMetadata.model_validate(item)
+            for item in payload.get("attempts", [])
+        ]
+        final_command_result = payload.get("final_command_result")
+        if isinstance(final_command_result, dict):
+            final_command_result = CommandArtifactMetadata.model_validate(final_command_result)
+        return BugFixResultMetadata(
+            command=str(payload.get("command") or getattr(input_metadata, "command", "") or ""),
+            cwd=str(payload.get("cwd") or getattr(input_metadata, "cwd", "") or ""),
+            target_files=[str(item) for item in payload.get("target_files") or getattr(input_metadata, "file_paths", [])],
+            fixed=bool(payload.get("fixed", False)),
+            iterations_used=int(payload.get("iterations_used") or 0),
+            max_iterations=int(payload.get("max_iterations") or getattr(input_metadata, "max_iterations", None) or 5),
+            continuation_iterations=int(
+                payload.get("continuation_iterations") or getattr(input_metadata, "continuation_iterations", None) or 3
+            ),
+            attempts=attempts,
+            final_command_result=final_command_result,
+            requires_user_decision=bool(payload.get("requires_user_decision", False)),
+            user_terminated=bool(payload.get("user_terminated", False)),
+            annotations=attr_without(
+                "command",
+                "cwd",
+                "target_files",
+                "fixed",
+                "iterations_used",
+                "max_iterations",
+                "continuation_iterations",
+                "attempts",
+                "final_command_result",
+                "requires_user_decision",
+                "user_terminated",
+            ),
         )
     if tool_name == "project_environment_tool":
         return EnvironmentSyncMetadata(

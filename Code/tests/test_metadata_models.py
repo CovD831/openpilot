@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 
 from metadata import (
+    BugFixAttemptMetadata,
+    BugFixResultMetadata,
     CodeArtifactMetadata,
+    CommandArtifactMetadata,
     FailureMetadata,
     MetadataKind,
     ResultStatus,
@@ -65,3 +68,44 @@ def test_task_result_and_tool_chain_routing_use_metadata_types() -> None:
     assert writer_input.code is None
     assert executor_input.code == "print('ok')"
     assert executor_input.language == "python"
+
+
+def test_bug_fix_metadata_serializes_attempts_and_failure_result() -> None:
+    command_result = CommandArtifactMetadata(
+        command="python app.py",
+        success=False,
+        stderr="SyntaxError",
+        exit_code=1,
+    )
+    attempt = BugFixAttemptMetadata(
+        iteration=1,
+        command_result=command_result,
+        error_summary="SyntaxError",
+        modified_files=["app.py"],
+        rationale="Fix broken syntax",
+    )
+    result = BugFixResultMetadata(
+        command="python app.py",
+        target_files=["app.py"],
+        fixed=False,
+        iterations_used=1,
+        attempts=[attempt],
+        final_command_result=command_result,
+        requires_user_decision=True,
+    )
+
+    envelope = ToolResultMetadata(
+        tool_name="bug_fix_tool",
+        status=ResultStatus.FAIL,
+        result=result,
+        failure=FailureMetadata(
+            error_type="MaxBugFixIterationsReached",
+            error_message="still failing",
+            retry_recommended=True,
+        ),
+    )
+    payload = envelope.to_json_dict()
+
+    assert payload["result"]["kind"] == MetadataKind.BUG_FIX_RESULT
+    assert payload["result"]["attempts"][0]["kind"] == MetadataKind.BUG_FIX_ATTEMPT
+    assert payload["result"]["requires_user_decision"] is True
