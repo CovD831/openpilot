@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -132,31 +132,12 @@ TASK_CLASSIFIER_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[],
     permission_level=PermissionLevel.AUTO,
-    input_schema=[
-        ToolInputSchema(
-            name="task",
-            type="string",
-            description="User task text to classify",
-            required=True,
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Task routing decision",
-        properties={
-            "route": {
-                "type": "string",
-                "description": "agent_generator or autonomous_iteration",
-            },
-            "confidence": {
-                "type": "number",
-                "description": "Classifier confidence from 0.0 to 1.0",
-            },
-            "reason": {
-                "type": "string",
-                "description": "Short explanation for the route",
-            },
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='task_classifier',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['task'],
+        input_defaults={},
     ),
     timeout_seconds=5,
     max_retries=0,
@@ -172,7 +153,9 @@ TASK_CLASSIFIER_DEFINITION = ToolDefinition(
 )
 
 
-def task_classifier_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('task_classifier')
+def task_classifier_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Classify a task into the agent generator or autonomous iteration route."""
     task = " ".join(str(params.get("task") or "").strip().split())
     if not task:

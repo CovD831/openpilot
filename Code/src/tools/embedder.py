@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -21,45 +21,12 @@ EMBEDDER_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.LLM_CALL],
     permission_level=PermissionLevel.MEDIUM,
-    input_schema=[
-        ToolInputSchema(
-            name="query",
-            type="string",
-            description="Text to embed",
-            required=True,
-        ),
-        ToolInputSchema(
-            name="provider",
-            type="string",
-            description="Embedding provider",
-            required=False,
-            default="openai",
-        ),
-        ToolInputSchema(
-            name="model",
-            type="string",
-            description="Embedding model name",
-            required=False,
-            default="text-embedding-3-small",
-        ),
-        ToolInputSchema(
-            name="use_cache",
-            type="boolean",
-            description="Use cached embeddings when available",
-            required=False,
-            default=True,
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Embedding vector and metadata",
-        properties={
-            "embedding": {"type": "array", "description": "Embedding vector"},
-            "dimension": {"type": "integer", "description": "Embedding vector dimension"},
-            "model": {"type": "string", "description": "Embedding model used"},
-            "provider": {"type": "string", "description": "Embedding provider used"},
-            "cached": {"type": "boolean", "description": "Whether the embedding was found in cache"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='embedder',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['query'],
+        input_defaults={'provider': 'openai', 'model': 'text-embedding-3-small', 'use_cache': True},
     ),
     timeout_seconds=60,
     max_retries=1,
@@ -80,7 +47,9 @@ EMBEDDER_DEFINITION = ToolDefinition(
 )
 
 
-def embedder_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('embedder')
+def embedder_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Execute the standard embedder tool."""
     query = str(params.get("query") or "").strip()
     if not query:

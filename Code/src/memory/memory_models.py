@@ -36,7 +36,7 @@ class MemoryRecord(BaseModel):
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     usage_count: int = Field(default=0, ge=0)
     last_used: str | None = None
-    metadata: dict = Field(default_factory=dict)
+    attributes: dict = Field(default_factory=dict)
 
     # For semantic search
     embedding: list[float] | None = None

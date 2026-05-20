@@ -34,6 +34,7 @@ from tools.tool_registry import ToolRegistry
 from tools.tool_executor import ToolExecutor
 from core.openpilot_log import OpenPilotLogger
 from core.exceptions import ErrorCategory, classify_error
+from metadata import ToolInputMetadata, tool_result_payload
 from autonomous_iteration.improvement_context import ImprovementContextHelper
 from autonomous_iteration.runner import AutonomousIterationRunner
 from autonomous_iteration.task_executor import AutonomousTaskExecutor
@@ -224,7 +225,9 @@ class IntelligentAutopilot:
         from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
 
         def execute_code_generator(params: dict[str, Any]) -> dict[str, Any]:
-            return code_generator_executor({**params, "_llm_client": self.llm_client})
+            return code_generator_executor(
+                ToolInputMetadata.from_mapping("code_generator", {**params, "_llm_client": self.llm_client})
+            )
 
         self.tool_registry.register(
             CODE_GENERATOR_DEFINITION,
@@ -353,11 +356,11 @@ class IntelligentAutopilot:
             task=task,
             step_id="fast_code_generator",
             tool_name="code_generator",
-            input_params={
+            input_metadata=ToolInputMetadata.from_mapping("code_generator", {
                 "task_description": code_prompt,
                 "language": "python",
                 "context": f"Output file: {target_file}",
-            },
+            }),
         )
         tool_results.append(code_result)
 
@@ -377,13 +380,13 @@ class IntelligentAutopilot:
                 task=task,
                 step_id="fast_file_writer",
                 tool_name="file_writer",
-                input_params={
+                input_metadata=ToolInputMetadata.from_mapping("file_writer", {
                     "file_path": str(target_file),
                     "content": code,
                     "encoding": "utf-8",
                     "create_dirs": True,
                     "overwrite": True,
-                },
+                }),
             )
             tool_results.append(write_result)
             if write_result["success"]:
@@ -415,7 +418,7 @@ class IntelligentAutopilot:
                         task=task,
                         step_id="fast_readme_tool",
                         tool_name="readme_tool",
-                        input_params={
+                        input_metadata=ToolInputMetadata.from_mapping("readme_tool", {
                             "project_path": str(target_file.parent),
                             "project_summary": goal,
                             "written_files": [str(target_file)],
@@ -424,7 +427,7 @@ class IntelligentAutopilot:
                             "setup_commands": environment_payload.get("setup_commands") or [],
                             "environment": self._readme_environment_context(environment_payload),
                             "overwrite": True,
-                        },
+                        }),
                     )
                     tool_results.append(readme_result)
         elif syntax_error:
@@ -481,7 +484,7 @@ class IntelligentAutopilot:
             },
             error=error_msg,
             duration=duration,
-            metadata={"fast_path": True, "target_file": str(target_file)},
+            annotations={"fast_path": True, "target_file": str(target_file)},
         )
 
         self.stats["success"] = success
@@ -582,12 +585,14 @@ class IntelligentAutopilot:
         task: Task,
         step_id: str,
         tool_name: str,
-        input_params: dict[str, Any],
+        input_metadata: ToolInputMetadata,
         timeout_override: int | None = None,
         parent_task_id: str | None = None,
     ) -> dict[str, Any]:
         if timeout_override is None:
             timeout_override = self._llm_tool_timeout_override(tool_name)
+        typed_input = input_metadata
+        display_payload = typed_input.to_params()
 
         if self.enhanced_ui:
             if parent_task_id:
@@ -598,7 +603,7 @@ class IntelligentAutopilot:
                 tool_name=tool_name,
                 status="running",
             )
-            display_params = dict(input_params)
+            display_params = dict(display_payload)
             if "content" in display_params:
                 display_params["content"] = f"<{len(str(display_params['content']))} chars>"
             param_lines = "\n".join(f"{key}: {value}" for key, value in display_params.items())
@@ -613,7 +618,7 @@ class IntelligentAutopilot:
             tool_name=tool_name,
             reason="capability_match",
             confidence=0.95,
-            input_params=input_params,
+            input_metadata=typed_input,
             requires_confirmation=False,
             fallback_tools=[],
             depends_on=[],
@@ -627,7 +632,7 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "timeout_override": timeout_override,
-                "params": self._sanitize_tool_params(input_params),
+                "params": self._sanitize_tool_metadata(typed_input),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -652,8 +657,8 @@ class IntelligentAutopilot:
             )
         result = {
             "tool": tool_name,
-            "params": self._sanitize_tool_params(input_params),
-            "result": exec_result.output,
+            "params": self._sanitize_tool_metadata(typed_input),
+            "result": exec_result.output_metadata.result if exec_result.output_metadata else None,
             "success": exec_result.success,
             "error": exec_result.error.error_message if exec_result.error else None,
             "error_type": exec_result.error.error_type if exec_result.error else None,
@@ -678,7 +683,7 @@ class IntelligentAutopilot:
                 "duration_seconds": result["duration_seconds"],
                 "attempts_used": result["attempts_used"],
                 "retry_count": result["retry_count"],
-                "output": self._summarize_tool_output(exec_result.output),
+                "output": self._summarize_tool_output(exec_result.output_metadata),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -817,13 +822,13 @@ class IntelligentAutopilot:
             task=task,
             step_id="final_readme_tool",
             tool_name="readme_tool",
-            input_params={
+            input_metadata=ToolInputMetadata.from_mapping("readme_tool", {
                 "project_path": str(project_path),
                 "project_summary": goal,
                 "written_files": written_files,
                 "entry_files": written_files,
                 "overwrite": True,
-            },
+            }),
         )
 
         if self.enhanced_ui:
@@ -889,7 +894,7 @@ class IntelligentAutopilot:
                 details=f"Project: {project_path}\nVirtual environment: .venv",
                 status="running",
             )
-        input_params = {
+        input_metadata_payload = {
             "project_path": str(project_path),
             "written_files": written_files,
             "entry_files": entry_files,
@@ -900,7 +905,7 @@ class IntelligentAutopilot:
         result = self._execute_project_environment_agent_tool(
             task=task,
             step_id=step_id,
-            input_params=input_params,
+            input_metadata=ToolInputMetadata.from_mapping("project_environment_tool", input_metadata_payload),
             parent_task_id=parent_task_id,
         )
         if result.get("success") and isinstance(result.get("result"), dict):
@@ -951,13 +956,15 @@ class IntelligentAutopilot:
         *,
         task: Task,
         step_id: str,
-        input_params: dict[str, Any],
+        input_metadata: ToolInputMetadata,
         parent_task_id: str | None = None,
     ) -> dict[str, Any]:
         """Run the environment manager's agent-local tool without public registry selection."""
         from memory.agents.project_environment_tool import project_environment_tool_executor
 
         tool_name = "project_environment_tool"
+        typed_input = input_metadata
+        input_payload = typed_input.to_params()
         started = time.monotonic()
         if self.enhanced_ui:
             self._set_dashboard_tool_status(
@@ -966,7 +973,7 @@ class IntelligentAutopilot:
                 tool_name=tool_name,
                 status="running",
             )
-            param_lines = "\n".join(f"{key}: {value}" for key, value in input_params.items())
+            param_lines = "\n".join(f"{key}: {value}" for key, value in input_payload.items())
             self.enhanced_ui.set_current_task_state(
                 title=f"Tool: {tool_name}",
                 details=f"Task: {task.description}\nStep: {step_id}\n{param_lines}",
@@ -980,7 +987,7 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "timeout_override": None,
-                "params": self._sanitize_tool_params(input_params),
+                "params": self._sanitize_tool_metadata(typed_input),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -991,7 +998,8 @@ class IntelligentAutopilot:
         error: str | None = None
         error_type: str | None = None
         try:
-            output = project_environment_tool_executor({**input_params, "_memory_store": self.memory_store})
+            typed_input.runtime_handles["_memory_store"] = self.memory_store
+            output = tool_result_payload(project_environment_tool_executor(typed_input))
             success = True
         except Exception as exc:
             error = str(exc)
@@ -1001,7 +1009,7 @@ class IntelligentAutopilot:
         status = "completed" if success else "failed"
         result = {
             "tool": tool_name,
-            "params": self._sanitize_tool_params(input_params),
+            "params": self._sanitize_tool_metadata(typed_input),
             "result": output,
             "success": success,
             "error": error,
@@ -1053,7 +1061,7 @@ class IntelligentAutopilot:
         *,
         task: Task,
         step_id: str,
-        input_params: dict[str, Any],
+        input_metadata: ToolInputMetadata,
         parent_task_id: str | None = None,
     ) -> dict[str, Any]:
         """Run the autonomous-iteration project state reader without public registry selection."""
@@ -1063,8 +1071,11 @@ class IntelligentAutopilot:
             task=task,
             step_id=step_id,
             tool_name="project_state_reader",
-            input_params=input_params,
-            executor=lambda params: project_state_reader_executor({**params, "_memory_store": self.memory_store}),
+            input_metadata=input_metadata,
+            executor=lambda metadata: (
+                metadata.runtime_handles.__setitem__("_memory_store", self.memory_store)
+                or project_state_reader_executor(metadata)
+            ),
             parent_task_id=parent_task_id,
         )
 
@@ -1073,7 +1084,7 @@ class IntelligentAutopilot:
         *,
         task: Task,
         step_id: str,
-        input_params: dict[str, Any],
+        input_metadata: ToolInputMetadata,
         parent_task_id: str | None = None,
     ) -> dict[str, Any]:
         """Run the autonomous-iteration improvement analyzer without public registry selection."""
@@ -1083,8 +1094,11 @@ class IntelligentAutopilot:
             task=task,
             step_id=step_id,
             tool_name="project_improvement_tool",
-            input_params=input_params,
-            executor=lambda params: project_improvement_tool_executor({**params, "_llm_client": self.llm_client}),
+            input_metadata=input_metadata,
+            executor=lambda metadata: (
+                metadata.runtime_handles.__setitem__("_llm_client", self.llm_client)
+                or project_improvement_tool_executor(metadata)
+            ),
             parent_task_id=parent_task_id,
         )
 
@@ -1094,11 +1108,13 @@ class IntelligentAutopilot:
         task: Task,
         step_id: str,
         tool_name: str,
-        input_params: dict[str, Any],
-        executor: Callable[[dict[str, Any]], dict[str, Any]],
+        input_metadata: ToolInputMetadata,
+        executor: Callable[[ToolInputMetadata], dict[str, Any]],
         parent_task_id: str | None = None,
     ) -> dict[str, Any]:
         """Run a module-owned tool and return the same envelope as registry-backed tools."""
+        typed_input = input_metadata
+        input_payload = typed_input.to_params()
         started = time.monotonic()
         if self.enhanced_ui:
             self._set_dashboard_tool_status(
@@ -1107,7 +1123,7 @@ class IntelligentAutopilot:
                 tool_name=tool_name,
                 status="running",
             )
-            param_lines = "\n".join(f"{key}: {value}" for key, value in input_params.items())
+            param_lines = "\n".join(f"{key}: {value}" for key, value in input_payload.items())
             self.enhanced_ui.set_current_task_state(
                 title=f"Tool: {tool_name}",
                 details=f"Task: {task.description}\nStep: {step_id}\n{param_lines}",
@@ -1121,7 +1137,7 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "timeout_override": None,
-                "params": self._sanitize_tool_params(input_params),
+                "params": self._sanitize_tool_metadata(typed_input),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -1132,7 +1148,7 @@ class IntelligentAutopilot:
         error: str | None = None
         error_type: str | None = None
         try:
-            output = executor(input_params)
+            output = tool_result_payload(executor(typed_input))
             success = True
         except Exception as exc:
             error = str(exc)
@@ -1142,7 +1158,7 @@ class IntelligentAutopilot:
         status = "completed" if success else "failed"
         result = {
             "tool": tool_name,
-            "params": self._sanitize_tool_params(input_params),
+            "params": self._sanitize_tool_metadata(typed_input),
             "result": output,
             "success": success,
             "error": error,
@@ -1235,7 +1251,7 @@ class IntelligentAutopilot:
         tool_result = self._execute_project_improvement_agent_tool(
             task=task,
             step_id=f"iteration_{completed_iteration}_project_improvement_tool",
-            input_params={
+            input_metadata=ToolInputMetadata.from_mapping("project_improvement_tool", {
                 "project_path": str(project_path),
                 "goal": goal,
                 "written_files": written_files,
@@ -1244,7 +1260,7 @@ class IntelligentAutopilot:
                 "validation_result": evaluation.model_dump(),
                 "readme_path": str(readme_path),
                 "prompt_context": prompt_context,
-            },
+            }),
             parent_task_id=self._dashboard_stage_id("goal_maker"),
         )
         if tool_result["success"] and isinstance(tool_result.get("result"), dict):
@@ -1654,7 +1670,7 @@ class IntelligentAutopilot:
 
     def _results_include_tool(self, results: list[TaskExecutionResult], tool_name: str) -> bool:
         for result in results:
-            task_result = result.result if isinstance(result.result, dict) else {}
+            task_result = result.result_metadata.result if result.result_metadata and isinstance(result.result_metadata.result, dict) else {}
             for tool_call in task_result.get("tool_calls", []):
                 if tool_call.get("tool") == tool_name:
                     return True
@@ -1664,7 +1680,7 @@ class IntelligentAutopilot:
         files: list[str] = []
         seen: set[str] = set()
         for result in results:
-            task_result = result.result if isinstance(result.result, dict) else {}
+            task_result = result.result_metadata.result if result.result_metadata and isinstance(result.result_metadata.result, dict) else {}
             for tool_call in task_result.get("tool_calls", []):
                 if tool_call.get("tool") != "file_writer" or not tool_call.get("success"):
                     continue
@@ -1696,8 +1712,8 @@ class IntelligentAutopilot:
         path_match = re.search(r"['\"](?P<path>/[^'\"]+)['\"]", goal)
         return path_match.group("path") if path_match else None
 
-    def _sanitize_tool_params(self, params: dict[str, Any]) -> dict[str, Any]:
-        return self.tool_io.sanitize_tool_params(params)
+    def _sanitize_tool_metadata(self, value: Any) -> dict[str, Any]:
+        return self.tool_io.sanitize_tool_metadata(value)
 
     def _summarize_tool_output(self, output: Any) -> dict[str, Any]:
         return self.tool_io.summarize_tool_output(output)
@@ -1705,27 +1721,19 @@ class IntelligentAutopilot:
     def _json_safe_summary(self, value: Any) -> Any:
         return self.tool_io.json_safe_summary(value)
 
-    def _resolve_chained_inputs(
+    def _resolve_chained_metadata(
         self,
         tool_name: str,
-        input_params: dict[str, Any],
+        input_metadata: ToolInputMetadata,
         last_output: Any,
         last_code_output: Any,
-    ) -> dict[str, Any]:
-        return self.tool_io.resolve_chained_inputs(
+    ) -> ToolInputMetadata:
+        return self.tool_io.resolve_chained_metadata(
             tool_name,
-            input_params,
+            input_metadata,
             last_output,
             last_code_output,
         )
-
-    def _replace_output_placeholders(
-        self,
-        value: Any,
-        last_output: Any,
-        last_code_output: Any,
-    ) -> Any:
-        return self.tool_io.replace_output_placeholders(value, last_output, last_code_output)
 
     def _extract_generated_content(self, output: Any) -> str | None:
         return self.tool_io.extract_generated_content(output)
@@ -1776,16 +1784,16 @@ class IntelligentAutopilot:
         """Format available tools for LLM prompt."""
         return self.tool_io.format_tools_for_llm(tools)
 
-    def _resolve_selection_inputs(
+    def _resolve_selection_metadata(
         self,
         selection: ToolSelection,
         step_outputs: dict[str, Any]
     ) -> ToolSelection:
-        """Resolve tool inputs from previous step outputs.
+        """Resolve tool metadata from previous step outputs.
 
         Based on the modern autopilot tool-chaining path.
         """
-        return self.tool_io.resolve_selection_inputs(selection, step_outputs)
+        return self.tool_io.resolve_selection_metadata(selection, step_outputs)
 
     def _show_start_panel(self, goal: str):
         """Show start panel."""

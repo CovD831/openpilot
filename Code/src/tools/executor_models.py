@@ -9,6 +9,8 @@ from enum import Enum
 from typing import Any, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
+from metadata import ToolInputMetadata, ToolResultMetadata
+
 
 class ExecutionStatus(str, Enum):
     """执行状态"""
@@ -47,7 +49,7 @@ class ExecutionContext(BaseModel):
     step_id: str = Field(description="步骤ID")
 
     # 输入参数
-    input_params: dict[str, Any] = Field(default_factory=dict, description="输入参数")
+    input_metadata: ToolInputMetadata = Field(default_factory=ToolInputMetadata, description="输入元数据")
 
     # 执行配置
     timeout_seconds: int = Field(default=300, description="超时时间（秒）")
@@ -69,8 +71,8 @@ class ExecutionContext(BaseModel):
     depends_on: list[str] = Field(default_factory=list, description="依赖的执行ID")
     priority: ExecutionPriority = Field(default=ExecutionPriority.MEDIUM, description="执行优先级")
 
-    # 元数据
-    metadata: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    # 非协议附加属性
+    attributes: dict[str, Any] = Field(default_factory=dict, description="附加属性")
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
 
 
@@ -128,8 +130,8 @@ class ExecutionResult(BaseModel):
     status: ExecutionStatus = Field(description="执行状态")
     success: bool = Field(description="是否成功")
 
-    # 执行结果
-    output: Optional[Any] = Field(default=None, description="输出结果")
+    # 执行结果元数据
+    output_metadata: Optional[ToolResultMetadata] = Field(default=None, description="输出元数据")
     error: Optional[ExecutionError] = Field(default=None, description="错误信息")
 
     # 时间统计
@@ -148,19 +150,19 @@ class ExecutionResult(BaseModel):
     # 日志
     logs: list[ExecutionLog] = Field(default_factory=list, description="执行日志")
 
-    # 元数据
-    metadata: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    # 非协议附加属性
+    attributes: dict[str, Any] = Field(default_factory=dict, description="附加属性")
 
     def add_log(self, level: str, message: str, details: Optional[dict[str, Any]] = None):
         """添加日志"""
         log = ExecutionLog(level=level, message=message, details=details)
         self.logs.append(log)
 
-    def mark_success(self, output: Any):
+    def mark_success(self, output_metadata: ToolResultMetadata):
         """标记为成功"""
         self.status = ExecutionStatus.SUCCESS
         self.success = True
-        self.output = output
+        self.output_metadata = output_metadata
         self.completed_at = datetime.now()
         if self.started_at:
             self.duration_seconds = (self.completed_at - self.started_at).total_seconds()
@@ -257,9 +259,9 @@ class ExecutionPlan(BaseModel):
     stop_on_first_failure: bool = Field(default=False, description="首次失败时停止")
     fallback_enabled: bool = Field(default=True, description="是否启用降级")
 
-    # 元数据
+    # 非协议附加属性
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    attributes: dict[str, Any] = Field(default_factory=dict, description="附加属性")
 
 
 class ExecutionSummary(BaseModel):

@@ -21,15 +21,15 @@ from agent_generator.runner import _complete_empty_slots
 from agent_generator.slot_generator import generate_slots
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.openpilot_log import OpenPilotLogger
-from tools.code_reviewer import code_reviewer_executor
+from metadata import ToolContractMetadata, ToolInputMetadata
+from tools.code_reviewer import code_reviewer_executor as _code_reviewer_executor
 from tools.builtin_tools import register_builtin_tools
-from tools.llm_summarizer import llm_summarizer_executor
-from tools.web_searcher import _build_search_query_variants, _default_http_get, web_searcher_executor
+from tools.llm_summarizer import llm_summarizer_executor as _llm_summarizer_executor
+from tools.web_searcher import _build_search_query_variants, _default_http_get, web_searcher_executor as _web_searcher_executor
 from tools.tool_executor import ToolExecutor
 from core.tool_contracts import (
     PermissionLevel,
     ToolDefinition,
-    ToolOutputSchema,
 )
 from tools.tool_selection import ToolSelection
 from tools.tool_registry import ToolRegistry
@@ -39,6 +39,18 @@ def _registered_registry() -> ToolRegistry:
     registry = ToolRegistry()
     register_builtin_tools(registry)
     return registry
+
+
+def code_reviewer_executor(params: dict) -> dict:
+    return _code_reviewer_executor(ToolInputMetadata.from_mapping("code_reviewer", params))
+
+
+def llm_summarizer_executor(params: dict) -> dict:
+    return _llm_summarizer_executor(ToolInputMetadata.from_mapping("llm_summarizer", params))
+
+
+def web_searcher_executor(params: dict) -> dict:
+    return _web_searcher_executor(ToolInputMetadata.from_mapping("web_searcher", params))
 
 
 class FakeCleanupLLM:
@@ -69,7 +81,7 @@ class FakeCleanupLLM:
 
     def complete(self, request):
         self.requests.append(request)
-        task = request.metadata.get("task")
+        task = request.trace_info.get("task")
         if self.fail or task in self.fail_tasks:
             raise RuntimeError("llm unavailable")
         if task == "keyword_generation":
@@ -139,7 +151,7 @@ class FakeSlotLLM:
 
     def complete(self, request):
         self.requests.append(request)
-        task = request.metadata.get("task")
+        task = request.trace_info.get("task")
         payload = self.repair_payload if task == "slot_language_repair" else self.first_payload
         return SimpleNamespace(parsed_json=payload, content=json.dumps(payload))
 
@@ -279,7 +291,7 @@ def test_slot_generator_repairs_language_drift_with_llm(monkeypatch) -> None:
 
     slots = generate_slots("帮我调查一下机器学习", llm_client=fake_llm)
 
-    assert [request.metadata["task"] for request in fake_llm.requests] == [
+    assert [request.trace_info["task"] for request in fake_llm.requests] == [
         "slot_generation",
         "slot_language_repair",
     ]
@@ -349,7 +361,7 @@ def test_slot_generator_does_not_force_english_task_to_chinese(monkeypatch) -> N
 
     slots = generate_slots("Research machine learning", llm_client=fake_llm)
 
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["slot_generation"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["slot_generation"]
     assert slots[0].description == "Purpose of the investigation"
     assert slots[0].value == "basic concepts"
 
@@ -461,7 +473,7 @@ def test_llm_empty_length_response_is_not_cached(monkeypatch) -> None:
 
     assert first.content == ""
     assert first.finish_reason == "length"
-    assert first.raw_response_metadata["empty_length_response"] is True
+    assert first.provider_details["empty_length_response"] is True
     assert second.content == "Recovered content"
     assert len(calls) == 2
 
@@ -482,7 +494,7 @@ def test_llm_extracts_text_from_content_parts(monkeypatch) -> None:
     response = client.complete(LLMRequest(messages=[LLMMessage(role="user", content="parts")]))
 
     assert response.content == "Part A\nPart B"
-    diagnostics = response.raw_response_metadata["content_diagnostics"]
+    diagnostics = response.provider_details["content_diagnostics"]
     assert diagnostics["content_type"] == "list"
     assert diagnostics["content_part_count"] == 2
 
@@ -795,7 +807,7 @@ def test_tool_executor_rejects_missing_required_input() -> None:
                 step_id="read-file",
                 tool_name="file_reader",
                 reason="capability_match",
-                input_params={},
+                input_metadata={},
             )
         )
     finally:
@@ -807,8 +819,8 @@ def test_tool_executor_rejects_missing_required_input() -> None:
     assert "file_path" in result.error.error_message
     assert result.error.recoverable
     assert result.error.retry_recommended
-    assert result.metadata["failure_mode"] == "invalid_input"
-    assert "required parameters" in result.metadata["recovery_strategy"]
+    assert result.attributes["failure_mode"] == "invalid_input"
+    assert "required metadata fields" in result.attributes["recovery_strategy"]
 
 
 def test_tool_executor_reads_file_and_applies_defaults(tmp_path) -> None:
@@ -820,7 +832,7 @@ def test_tool_executor_reads_file_and_applies_defaults(tmp_path) -> None:
         step_id="read-file",
         tool_name="file_reader",
         reason="capability_match",
-        input_params={"file_path": str(target)},
+        input_metadata={"file_path": str(target)},
     )
     try:
         result = executor.execute_single(selection)
@@ -828,12 +840,12 @@ def test_tool_executor_reads_file_and_applies_defaults(tmp_path) -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["content"] == "hello openpilot"
-    assert result.output["encoding"] == "utf-8"
-    assert result.output["file_type"] == "data"
-    assert result.output["truncated"] is False
-    assert selection.input_params["encoding"] == "utf-8"
-    assert selection.input_params["max_size_mb"] == 10
+    assert result.output_metadata.result["content"] == "hello openpilot"
+    assert result.output_metadata.result["encoding"] == "utf-8"
+    assert result.output_metadata.result["file_type"] == "data"
+    assert result.output_metadata.result["truncated"] is False
+    assert selection.input_metadata.encoding == "utf-8"
+    assert selection.input_metadata.max_size_mb == 10
 
 
 def test_file_reader_supports_sample_mode(tmp_path) -> None:
@@ -847,7 +859,7 @@ def test_file_reader_supports_sample_mode(tmp_path) -> None:
                 step_id="sample-file",
                 tool_name="file_reader",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "file_path": str(target),
                     "read_mode": "sample",
                     "max_lines": 2,
@@ -858,11 +870,11 @@ def test_file_reader_supports_sample_mode(tmp_path) -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["content"] == "one\ntwo\n"
-    assert result.output["lines_read"] == 2
-    assert result.output["total_lines"] == 3
-    assert result.output["truncated"] is True
-    assert result.output["metadata"]["read_mode"] == "sample"
+    assert result.output_metadata.result["content"] == "one\ntwo\n"
+    assert result.output_metadata.result["lines_read"] == 2
+    assert result.output_metadata.result["total_lines"] == 3
+    assert result.output_metadata.result["truncated"] is True
+    assert result.output_metadata.result["attributes"]["read_mode"] == "sample"
 
 
 def test_file_reader_supports_tail_mode(tmp_path) -> None:
@@ -876,7 +888,7 @@ def test_file_reader_supports_tail_mode(tmp_path) -> None:
                 step_id="tail-file",
                 tool_name="file_reader",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "file_path": str(target),
                     "read_mode": "tail",
                     "max_lines": 2,
@@ -887,11 +899,11 @@ def test_file_reader_supports_tail_mode(tmp_path) -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["content"] == "two\nthree\n"
-    assert result.output["lines_read"] == 2
-    assert result.output["total_lines"] == 3
-    assert result.output["truncated"] is True
-    assert result.output["metadata"]["read_mode"] == "tail"
+    assert result.output_metadata.result["content"] == "two\nthree\n"
+    assert result.output_metadata.result["lines_read"] == 2
+    assert result.output_metadata.result["total_lines"] == 3
+    assert result.output_metadata.result["truncated"] is True
+    assert result.output_metadata.result["attributes"]["read_mode"] == "tail"
 
 
 def test_file_reader_adaptive_mode_samples_log_files(tmp_path) -> None:
@@ -905,7 +917,7 @@ def test_file_reader_adaptive_mode_samples_log_files(tmp_path) -> None:
                 step_id="adaptive-file",
                 tool_name="file_reader",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "file_path": str(target),
                     "read_mode": "adaptive",
                     "max_lines": 2,
@@ -916,10 +928,10 @@ def test_file_reader_adaptive_mode_samples_log_files(tmp_path) -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["file_type"] == "log"
-    assert result.output["content"] == "first\nsecond\n"
-    assert result.output["truncated"] is True
-    assert result.output["metadata"]["read_mode"] == "adaptive"
+    assert result.output_metadata.result["file_type"] == "log"
+    assert result.output_metadata.result["content"] == "first\nsecond\n"
+    assert result.output_metadata.result["truncated"] is True
+    assert result.output_metadata.result["attributes"]["read_mode"] == "adaptive"
 
 
 def test_file_reader_returns_placeholder_for_binary_files(tmp_path) -> None:
@@ -933,17 +945,17 @@ def test_file_reader_returns_placeholder_for_binary_files(tmp_path) -> None:
                 step_id="binary-file",
                 tool_name="file_reader",
                 reason="capability_match",
-                input_params={"file_path": str(target)},
+                input_metadata={"file_path": str(target)},
             )
         )
     finally:
         executor.shutdown()
 
     assert result.success
-    assert result.output["content"] == "[Binary file - content not displayed]"
-    assert result.output["file_type"] == "binary"
-    assert result.output["encoding"] == "binary"
-    assert result.output["lines_read"] == 0
+    assert result.output_metadata.result["content"] == "[Binary file - content not displayed]"
+    assert result.output_metadata.result["file_type"] == "binary"
+    assert result.output_metadata.result["encoding"] == "binary"
+    assert result.output_metadata.result["lines_read"] == 0
 
 
 def test_multi_file_reader_scans_directory_with_glob(tmp_path) -> None:
@@ -962,7 +974,7 @@ def test_multi_file_reader_scans_directory_with_glob(tmp_path) -> None:
                 step_id="read-matching-files",
                 tool_name="multi_file_reader",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "directory_path": str(tmp_path),
                     "pattern": "*完成报告.md",
                 },
@@ -972,11 +984,11 @@ def test_multi_file_reader_scans_directory_with_glob(tmp_path) -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["count"] == 2
-    assert result.output["files"] == [str(first), str(second)]
-    assert "alpha" in result.output["content"]
-    assert "beta" in result.output["content"]
-    assert "ignored" not in result.output["content"]
+    assert result.output_metadata.result["count"] == 2
+    assert result.output_metadata.result["files"] == [str(first), str(second)]
+    assert "alpha" in result.output_metadata.result["content"]
+    assert "beta" in result.output_metadata.result["content"]
+    assert "ignored" not in result.output_metadata.result["content"]
 
 
 def test_code_reviewer_rejects_non_pygame_when_pygame_is_product_fit() -> None:
@@ -1032,44 +1044,40 @@ def test_code_reviewer_allows_pygame_code_without_product_fit_warning() -> None:
     assert not any("Product-fit rubric not satisfied" in item for item in result["suggestions"])
 
 
-def test_tool_executor_records_output_schema_warnings() -> None:
+def test_tool_executor_uses_contract_metadata_defaults() -> None:
     registry = ToolRegistry()
     registry.register(
         ToolDefinition(
-            name="partial_output_tool",
-            display_name="Partial Output Tool",
-            description="Returns an incomplete object to exercise warnings",
+            name="contract_default_tool",
+            display_name="Contract Default Tool",
+            description="Uses contract metadata defaults",
             permission_level=PermissionLevel.LOW,
-            input_schema=[],
-            output_schema=ToolOutputSchema(
-                type="object",
-                description="Expected output",
-                properties={
-                    "present": {"type": "string"},
-                    "missing": {"type": "integer"},
-                },
+            contract_metadata=ToolContractMetadata(
+                tool_name="contract_default_tool",
+                input_metadata_type="ToolInputMetadata",
+                output_metadata_type="ToolResultMetadata",
+                input_defaults={"query": "default query"},
             ),
             audit_required=False,
         ),
-        lambda params: {"present": "yes"},
+        lambda metadata: {"query": metadata.query},
     )
     executor = ToolExecutor(registry)
     try:
         result = executor.execute_single(
             ToolSelection(
-                step_id="partial-output",
-                tool_name="partial_output_tool",
+                step_id="contract-default",
+                tool_name="contract_default_tool",
                 reason="capability_match",
-                input_params={},
+                input_metadata={},
             )
         )
     finally:
         executor.shutdown()
 
     assert result.success
-    assert result.metadata["validation_warnings"] == [
-        "Output for partial_output_tool is missing declared property: missing"
-    ]
+    assert result.output_metadata.result == {"query": "default query"}
+    assert result.attributes.get("validation_warnings", []) == []
 
 
 def test_command_executor_defaults_to_dry_run(tmp_path) -> None:
@@ -1082,16 +1090,16 @@ def test_command_executor_defaults_to_dry_run(tmp_path) -> None:
                 step_id="dry-run-command",
                 tool_name="command_executor",
                 reason="capability_match",
-                input_params={"command": f"touch {target}"},
+                input_metadata={"command": f"touch {target}"},
             )
         )
     finally:
         executor.shutdown()
 
     assert result.success
-    assert result.output["stdout"].startswith("[DRY RUN]")
-    assert result.output["exit_code"] == 0
-    assert result.output["risk_assessment"]["risk_level"] == "medium"
+    assert result.output_metadata.result["stdout"].startswith("[DRY RUN]")
+    assert result.output_metadata.result["exit_code"] == 0
+    assert result.output_metadata.result["risk_assessment"]["risk_level"] == "medium"
     assert not target.exists()
 
 
@@ -1104,7 +1112,7 @@ def test_command_executor_automatic_runs_low_risk_command() -> None:
                 step_id="automatic-command",
                 tool_name="command_executor",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "command": f"{sys.executable} -c \"print('ok')\"",
                     "mode": "automatic",
                     "timeout": 10,
@@ -1115,10 +1123,10 @@ def test_command_executor_automatic_runs_low_risk_command() -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["success"]
-    assert result.output["stdout"].strip() == "ok"
-    assert result.output["stderr"] == ""
-    assert result.output["exit_code"] == 0
+    assert result.output_metadata.result["success"]
+    assert result.output_metadata.result["stdout"].strip() == "ok"
+    assert result.output_metadata.result["stderr"] == ""
+    assert result.output_metadata.result["exit_code"] == 0
 
 
 def test_web_searcher_requires_query() -> None:
@@ -1130,7 +1138,7 @@ def test_web_searcher_requires_query() -> None:
                 step_id="search-missing-query",
                 tool_name="web_searcher",
                 reason="capability_match",
-                input_params={},
+                input_metadata={},
             )
         )
     finally:
@@ -1167,7 +1175,7 @@ def test_web_searcher_parses_google_html_without_network() -> None:
                 step_id="search-web",
                 tool_name="web_searcher",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "query": "openpilot research",
                     "max_results": 1,
                     "max_pages": 0,
@@ -1181,19 +1189,19 @@ def test_web_searcher_parses_google_html_without_network() -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["provider"] == "google_html"
-    assert result.output["effective_query"] == "openpilot research"
-    assert result.output["count"] == 1
-    assert result.output["llm_cleanup"] is False
-    assert result.output["results"][0] == {
+    assert result.output_metadata.result["provider"] == "google_html"
+    assert result.output_metadata.result["effective_query"] == "openpilot research"
+    assert result.output_metadata.result["count"] == 1
+    assert result.output_metadata.result["llm_cleanup"] is False
+    assert result.output_metadata.result["results"][0] == {
         "rank": 1,
         "title": "Alpha Result",
         "url": "https://example.com/alpha",
         "snippet": "",
         "source_domain": "example.com",
     }
-    assert result.output["search_attempts"][0]["provider"] == "google_html"
-    assert result.output["warnings"] == []
+    assert result.output_metadata.result["search_attempts"][0]["provider"] == "google_html"
+    assert result.output_metadata.result["warnings"] == []
 
 
 def test_web_searcher_parses_google_url_parameter_without_network() -> None:
@@ -1261,7 +1269,7 @@ def test_web_searcher_empty_results_return_warning_without_failure() -> None:
                 step_id="search-empty",
                 tool_name="web_searcher",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "query": "nothing",
                     "llm_cleanup": False,
                     "_http_get": lambda url, timeout: "<html><body>No results</body></html>",
@@ -1272,11 +1280,11 @@ def test_web_searcher_empty_results_return_warning_without_failure() -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["count"] == 0
-    assert result.output["results"] == []
-    assert result.output["search_attempts"]
-    assert all(attempt["status"] == "empty" for attempt in result.output["search_attempts"])
-    assert result.output["warnings"]
+    assert result.output_metadata.result["count"] == 0
+    assert result.output_metadata.result["results"] == []
+    assert result.output_metadata.result["search_attempts"]
+    assert all(attempt["status"] == "empty" for attempt in result.output_metadata.result["search_attempts"])
+    assert result.output_metadata.result["warnings"]
 
 
 def test_web_searcher_continues_from_empty_google_to_bing_without_network() -> None:
@@ -1376,7 +1384,7 @@ def test_web_searcher_llm_query_planner_runs_before_raw_natural_language() -> No
 
     assert result["effective_query"] == "机器学习"
     assert seen_queries[0] == "机器学习"
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation"]
 
 
 def test_web_searcher_llm_query_planner_generalizes_without_keyword_lists() -> None:
@@ -1451,7 +1459,7 @@ def test_web_searcher_llm_keyword_generation_failure_uses_local_variants() -> No
 
     assert result["count"] == 1
     assert any("LLM keyword generation failed" in warning for warning in result["warnings"])
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation"]
 
 
 def test_web_searcher_search_budget_warning_is_not_duplicated(monkeypatch) -> None:
@@ -1524,7 +1532,7 @@ def test_web_searcher_network_errors_include_sanitized_proxy_diagnostics(monkeyp
     assert result["search_attempts"][0]["status"] == "network_error"
     assert "Network/proxy failure" in result["search_attempts"][0]["error"]
     assert "[redacted-url]" in result["search_attempts"][0]["error"]
-    assert "proxy.example" not in json.dumps(result, ensure_ascii=False)
+    assert "proxy.example" not in json.dumps(result.result.model_dump(mode="json"), ensure_ascii=False)
     assert result["network_diagnostics"]["proxy_env_vars"] == []
     assert any("No HTTP_PROXY/HTTPS_PROXY/ALL_PROXY" in warning for warning in result["warnings"])
 
@@ -1616,7 +1624,7 @@ def test_web_searcher_network_errors_are_reported_without_failure() -> None:
                 step_id="search-network-failure",
                 tool_name="web_searcher",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "query": "openpilot",
                     "_http_get": failing_http_get,
                 },
@@ -1626,11 +1634,11 @@ def test_web_searcher_network_errors_are_reported_without_failure() -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output["count"] == 0
-    assert result.output["results"] == []
-    assert result.output["search_attempts"]
-    assert all(attempt["status"] == "network_error" for attempt in result.output["search_attempts"])
-    assert any("network down" in warning for warning in result.output["warnings"])
+    assert result.output_metadata.result["count"] == 0
+    assert result.output_metadata.result["results"] == []
+    assert result.output_metadata.result["search_attempts"]
+    assert all(attempt["status"] == "network_error" for attempt in result.output_metadata.result["search_attempts"])
+    assert any("network down" in warning for warning in result.output_metadata.result["warnings"])
 
 
 def test_web_searcher_fetches_pages_and_cleans_with_llm_without_network() -> None:
@@ -1669,7 +1677,7 @@ def test_web_searcher_fetches_pages_and_cleans_with_llm_without_network() -> Non
     )
 
     assert result["llm_cleanup"] is True
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation", "cleanup"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation", "cleanup"]
     assert fake_llm.requests[-1].response_format == "text"
     assert len(result["pages"]) == 2
     assert result["pages"][0]["title"] == "Alpha Page"
@@ -1705,7 +1713,7 @@ def test_web_searcher_max_pages_zero_skips_page_fetch_and_cleanup() -> None:
     assert result["count"] == 1
     assert result["pages"] == []
     assert result["llm_cleanup"] is False
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation"]
 
 
 def test_web_searcher_llm_cleanup_false_skips_llm() -> None:
@@ -1730,7 +1738,7 @@ def test_web_searcher_llm_cleanup_false_skips_llm() -> None:
     assert result["llm_cleanup"] is False
     assert result["research_summary"] == ""
     assert result["key_points"] == []
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation"]
 
 
 def test_web_searcher_page_fetch_failure_is_nonfatal() -> None:
@@ -1789,7 +1797,7 @@ def test_web_searcher_follows_llm_selected_page_links_without_network() -> None:
         }
     )
 
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation", "link_selection"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation", "link_selection"]
     assert fake_llm.requests[1].response_format == "text"
     assert len(result["pages"]) == 2
     assert result["pages"][1]["url"] == "https://example.com/detail"
@@ -1833,7 +1841,7 @@ def test_web_searcher_default_redirect_depth_stops_after_one_layer() -> None:
         "https://example.com/a",
         "https://example.com/detail",
     ]
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation", "link_selection"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation", "link_selection"]
 
 
 def test_web_searcher_redirect_selection_failure_is_nonfatal() -> None:
@@ -1897,7 +1905,7 @@ def test_web_searcher_can_disable_redirect_following() -> None:
 
     assert len(disabled["pages"]) == 1
     assert len(depth_zero["pages"]) == 1
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation", "keyword_generation"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation", "keyword_generation"]
 
 
 def test_web_searcher_llm_cleanup_failure_is_reported() -> None:
@@ -1945,7 +1953,7 @@ def test_web_searcher_cleanup_failure_can_return_raw_for_agent_generator() -> No
     assert result["key_points"] == []
     assert result["llm_cleanup_error"]
     assert any("LLM cleanup failed" in warning for warning in result["warnings"])
-    assert [request.metadata["task"] for request in fake_llm.requests] == ["keyword_generation", "cleanup"]
+    assert [request.trace_info["task"] for request in fake_llm.requests] == ["keyword_generation", "cleanup"]
 
 
 def test_web_searcher_search_failure_returns_attempt_diagnostics_with_cleanup_fallback_policy() -> None:
@@ -1968,6 +1976,7 @@ def test_web_searcher_search_failure_returns_attempt_diagnostics_with_cleanup_fa
 
 def test_agent_generator_collect_data_raises_on_unusable_network_search(monkeypatch) -> None:
     def fake_web_searcher(params):
+        params = params.to_params()
         return {
             "query": params["query"],
             "provider": "bing_html",
@@ -2022,6 +2031,7 @@ def test_agent_generator_collect_data_raises_on_unusable_network_search(monkeypa
 
 def test_agent_generator_collect_data_keeps_true_empty_search_artifact(monkeypatch) -> None:
     def fake_web_searcher(params):
+        params = params.to_params()
         return {
             "query": params["query"],
             "provider": "bing_html",
@@ -2059,6 +2069,7 @@ def test_agent_generator_collect_data_keeps_true_empty_search_artifact(monkeypat
 
 def test_agent_generator_collect_data_returns_web_artifact_when_cleanup_fails(monkeypatch) -> None:
     def fake_web_searcher(params):
+        params = params.to_params()
         assert params["_cleanup_failure_policy"] == "return_raw"
         return {
             "query": params["query"],
@@ -2142,7 +2153,7 @@ def test_embedder_uses_injected_service_without_network() -> None:
                 step_id="embed-query",
                 tool_name="embedder",
                 reason="capability_match",
-                input_params={
+                input_metadata={
                     "query": "hello semantic world",
                     "use_cache": False,
                     "_embedding_service": FakeEmbeddingService(),
@@ -2153,13 +2164,11 @@ def test_embedder_uses_injected_service_without_network() -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output == {
-        "embedding": [0.1, 0.2, 0.3],
-        "dimension": 3,
-        "model": "fake-embedding",
-        "provider": "fake",
-        "cached": False,
-    }
+    assert result.output_metadata.result["embedding"] == [0.1, 0.2, 0.3]
+    assert result.output_metadata.result["dimension"] == 3
+    assert result.output_metadata.result["model"] == "fake-embedding"
+    assert result.output_metadata.result["provider"] == "fake"
+    assert result.output_metadata.result["cached"] is False
 
 
 def test_logger_writes_legacy_and_structured_jsonl(tmp_path) -> None:
@@ -2183,7 +2192,7 @@ def test_logger_writes_legacy_and_structured_jsonl(tmp_path) -> None:
         duration_ms=3,
         input_summary={"file_path": "demo.txt"},
         output_summary={"size_bytes": 4},
-        metadata={"contract": "phase1"},
+        annotations={"contract": "phase1"},
     )
 
     events = [
@@ -2198,4 +2207,4 @@ def test_logger_writes_legacy_and_structured_jsonl(tmp_path) -> None:
     assert events[0]["payload"] == {"message": "ok"}
     assert events[1]["payload"]["source_type"] == "tool"
     assert events[1]["payload"]["source_name"] == "file_reader"
-    assert events[1]["payload"]["metadata"] == {"contract": "phase1"}
+    assert events[1]["payload"]["annotations"] == {"contract": "phase1"}

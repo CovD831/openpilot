@@ -7,13 +7,13 @@ import re
 import uuid
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 from tools.code_models import (
     CodeLanguage,
@@ -31,36 +31,12 @@ CODE_REVIEWER_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.CODE_EXECUTION, ToolCapability.LLM_CALL],
     permission_level=PermissionLevel.LOW,
-    input_schema=[
-        ToolInputSchema(
-            name="code",
-            type="string",
-            description="Code to review",
-            required=True
-        ),
-        ToolInputSchema(
-            name="language",
-            type="string",
-            description="Programming language (python, shell, bash)",
-            required=True
-        ),
-        ToolInputSchema(
-            name="prompt_context",
-            type="object",
-            description="Structured upper-layer Prompt Context for product-fit review",
-            required=False,
-            default={}
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Code review results",
-        properties={
-            "review": {"type": "string", "description": "Overall review summary"},
-            "issues": {"type": "array", "description": "List of issues found"},
-            "suggestions": {"type": "array", "description": "Improvement suggestions"},
-            "approved": {"type": "boolean", "description": "Whether code is approved"}
-        }
+    contract_metadata=ToolContractMetadata(
+        tool_name='code_reviewer',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['code', 'language'],
+        input_defaults={'prompt_context': {}},
     ),
     timeout_seconds=60,
     max_retries=2,
@@ -81,7 +57,9 @@ CODE_REVIEWER_DEFINITION = ToolDefinition(
 )
 
 
-def code_reviewer_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('code_reviewer')
+def code_reviewer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """
     Execute code reviewer tool.
 

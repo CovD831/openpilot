@@ -50,7 +50,7 @@ class Slot(BaseModel):
 
 
 class DataArtifact(BaseModel):
-    """Collected or processed data plus presentation metadata."""
+    """Collected or processed data plus presentation attributes."""
 
     id: str
     name: str

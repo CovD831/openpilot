@@ -12,6 +12,8 @@ from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote_plus, unquote, urlencode, urldefrag, urljoin, urlparse
 
@@ -23,8 +25,6 @@ from core.tool_contracts import (
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -35,132 +35,12 @@ WEB_SEARCHER_DEFINITION = ToolDefinition(
     version="1.1.0",
     capabilities=[ToolCapability.WEB_SEARCH, ToolCapability.NETWORK, ToolCapability.LLM_CALL],
     permission_level=PermissionLevel.MEDIUM,
-    input_schema=[
-        ToolInputSchema(
-            name="query",
-            type="string",
-            description="Search query",
-            required=True,
-        ),
-        ToolInputSchema(
-            name="max_results",
-            type="integer",
-            description="Maximum number of results to return, clamped to 1-10",
-            required=False,
-            default=5,
-        ),
-        ToolInputSchema(
-            name="time_range",
-            type="string",
-            description="Search time range: all, day, week, month, or year",
-            required=False,
-            default="all",
-        ),
-        ToolInputSchema(
-            name="safe_search",
-            type="string",
-            description="Safe search: off, moderate, or strict",
-            required=False,
-            default="moderate",
-        ),
-        ToolInputSchema(
-            name="max_search_attempts",
-            type="integer",
-            description="Maximum Google/Bing query attempts, clamped to 1-10",
-            required=False,
-            default=6,
-        ),
-        ToolInputSchema(
-            name="search_budget_seconds",
-            type="integer",
-            description="Maximum search-loop budget in seconds, clamped to 3-30",
-            required=False,
-            default=20,
-        ),
-        ToolInputSchema(
-            name="timeout",
-            type="integer",
-            description="HTTP timeout in seconds",
-            required=False,
-            default=10,
-        ),
-        ToolInputSchema(
-            name="max_pages",
-            type="integer",
-            description="Maximum result pages to fetch and clean, clamped to 0-5",
-            required=False,
-            default=3,
-        ),
-        ToolInputSchema(
-            name="max_page_chars",
-            type="integer",
-            description="Maximum extracted text characters per page, clamped to 500-12000",
-            required=False,
-            default=4000,
-        ),
-        ToolInputSchema(
-            name="follow_redirects",
-            type="boolean",
-            description="Use an LLM to choose valuable links from fetched pages and follow them",
-            required=False,
-            default=True,
-        ),
-        ToolInputSchema(
-            name="max_redirect_depth",
-            type="integer",
-            description="Maximum LLM-guided link-following depth, clamped to 0-2",
-            required=False,
-            default=1,
-        ),
-        ToolInputSchema(
-            name="max_redirect_pages",
-            type="integer",
-            description="Maximum selected redirect pages to fetch per depth, clamped to 0-5",
-            required=False,
-            default=2,
-        ),
-        ToolInputSchema(
-            name="max_redirect_candidates",
-            type="integer",
-            description="Maximum page links to present to the LLM per redirect depth, clamped to 5-30",
-            required=False,
-            default=12,
-        ),
-        ToolInputSchema(
-            name="llm_cleanup",
-            type="boolean",
-            description="Use an LLM to remove noise and organize fetched content",
-            required=False,
-            default=True,
-        ),
-        ToolInputSchema(
-            name="cleanup_instruction",
-            type="string",
-            description="Additional instructions for organizing the research result",
-            required=False,
-            default="Remove navigation, ads, duplicates, and unsupported claims. Organize facts by source and keep the answer concise.",
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Structured web search results, fetched pages, and cleaned research summary",
-        properties={
-            "query": {"type": "string", "description": "Search query"},
-            "provider": {"type": "string", "description": "Search provider used"},
-            "effective_query": {"type": "string", "description": "Query variant that returned results"},
-            "search_attempts": {"type": "array", "description": "Search attempt diagnostics"},
-            "network_diagnostics": {"type": "object", "description": "Sanitized HTTP/proxy diagnostics"},
-            "results": {"type": "array", "description": "Search result records"},
-            "count": {"type": "integer", "description": "Number of returned results"},
-            "pages": {"type": "array", "description": "Fetched page excerpts and status"},
-            "llm_cleanup": {"type": "boolean", "description": "Whether LLM cleanup was executed"},
-            "research_summary": {"type": "string", "description": "Cleaned research summary"},
-            "key_points": {"type": "array", "description": "Important facts extracted from sources"},
-            "source_notes": {"type": "array", "description": "Source-specific notes"},
-            "follow_up_queries": {"type": "array", "description": "Suggested follow-up searches"},
-            "fetched_at": {"type": "string", "description": "UTC timestamp"},
-            "warnings": {"type": "array", "description": "Non-fatal warnings"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='web_searcher',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['query'],
+        input_defaults={'max_results': 5, 'time_range': 'all', 'safe_search': 'moderate', 'max_search_attempts': 6, 'search_budget_seconds': 20, 'timeout': 10, 'max_pages': 3, 'max_page_chars': 4000, 'follow_redirects': True, 'max_redirect_depth': 1, 'max_redirect_pages': 2, 'max_redirect_candidates': 12, 'llm_cleanup': True, 'cleanup_instruction': 'Remove navigation, ads, duplicates, and unsupported claims. Organize facts by source and keep the answer concise.'},
     ),
     timeout_seconds=30,
     max_retries=1,
@@ -470,7 +350,9 @@ class SearchProviderBlockedError(RuntimeError):
     """Raised when a search provider explicitly blocks the request."""
 
 
-def web_searcher_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('web_searcher')
+def web_searcher_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Search the web, fetch result pages, and return cleaned research data."""
     query = str(params.get("query", "")).strip()
     if not query:
@@ -778,7 +660,7 @@ def _llm_search_query_variants(*, query: str, llm_client: Any) -> list[str]:
                 response_format="text",
                 temperature=0.1,
                 max_tokens=220,
-                metadata={"tool": "web_searcher", "task": "keyword_generation"},
+                trace_info={"tool": "web_searcher", "task": "keyword_generation"},
             )
         )
     except Exception as exc:
@@ -1113,7 +995,7 @@ def _select_redirect_links_with_llm(
                 response_format="text",
                 temperature=0.0,
                 max_tokens=300,
-                metadata={"tool": "web_searcher", "task": "link_selection"},
+                trace_info={"tool": "web_searcher", "task": "link_selection"},
             )
         )
     except Exception as exc:
@@ -1217,7 +1099,7 @@ def _clean_with_llm(
                 response_format="text",
                 temperature=0.1,
                 max_tokens=900,
-                metadata={"tool": "web_searcher", "task": "cleanup"},
+                trace_info={"tool": "web_searcher", "task": "cleanup"},
             )
         )
     except Exception as exc:

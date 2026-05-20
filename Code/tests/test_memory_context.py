@@ -8,6 +8,7 @@ from memory.memory_store import MemoryStore
 from memory.project_manager import ProjectManager
 from memory.short_memory import ShortMemory
 from memory.tool.memory_context_tool import memory_context_executor
+from metadata import ToolInputMetadata
 
 
 def test_project_manager_updates_sketch_and_searches_by_content(tmp_path) -> None:
@@ -106,14 +107,14 @@ def test_memory_context_tool_returns_stable_context_without_llm(tmp_path) -> Non
     short_memory.add_message("user", "Build a pygame demo.")
 
     result = memory_context_executor(
-        {
+        ToolInputMetadata.from_mapping("memory_context", {
             "query": "pygame demo",
             "project_path": str(project),
             "_memory_store": store,
             "_short_memory": short_memory,
             "_project_manager": ProjectManager(project),
             "system_prompt": "Tool caller fixed prompt.",
-        }
+        })
     )
 
     assert result["system_prompt"] == "Tool caller fixed prompt."

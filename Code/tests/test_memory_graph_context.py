@@ -10,6 +10,7 @@ from memory.memory_models import MemoryRecord, MemoryType
 from memory.memory_store import MemoryStore
 from memory.memory_vault import MemoryVault
 from memory.tool.memory_context_tool import memory_context_executor
+from metadata import ToolInputMetadata
 
 
 class FakeEmbeddingService:
@@ -71,7 +72,7 @@ def test_memory_vault_agent_graph_operations_and_logs(tmp_path) -> None:
     edge = vault.graph.get_edge(first, second, edge_type="relevance")
     assert edge is not None
     assert edge.weight == 0.73
-    assert edge.metadata["relevance"] == 0.73
+    assert edge.attributes["relevance"] == 0.73
 
     reminders = agent.remind("pygame arcade", limit=2)
     confidence, answer = agent.confidence_evaluate("pygame arcade")
@@ -151,11 +152,11 @@ def test_memory_context_tool_accepts_injected_memory_vault_agent(tmp_path) -> No
         confidence=0.9,
     )
     result = memory_context_executor(
-        {
+        ToolInputMetadata.from_mapping("memory_context", {
             "query": "pygame",
             "project_path": str(tmp_path),
             "_memory_vault_agent": agent,
-        }
+        })
     )
 
     assert result["related_memories"][0]["id"] == memory_id

@@ -94,11 +94,13 @@ class FakeAutopilot:
         return {"summary": "Need polish."}
 
     def _execute_fast_tool(self, **kwargs):
+        input_metadata = kwargs["input_metadata"]
+        params = input_metadata.to_params() if hasattr(input_metadata, "to_params") else input_metadata
         return {
             "success": True,
             "result": {
-                "project_path": kwargs["input_params"]["project_path"],
-                "written_files": kwargs["input_params"]["written_files"],
+                "project_path": params["project_path"],
+                "written_files": params["written_files"],
             },
         }
 

@@ -341,7 +341,7 @@ def _log_agent_event(
             input_summary=input_summary,
             output_summary=output_summary,
             error=error,
-            metadata={},
+            annotations={},
         )
     except Exception:
         pass

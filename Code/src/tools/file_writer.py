@@ -5,13 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -22,49 +22,12 @@ FILE_WRITER_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.FILE_WRITE],
     permission_level=PermissionLevel.MEDIUM,
-    input_schema=[
-        ToolInputSchema(
-            name="file_path",
-            type="string",
-            description="Absolute or relative path to the file",
-            required=True
-        ),
-        ToolInputSchema(
-            name="content",
-            type="string",
-            description="Content to write to file",
-            required=True
-        ),
-        ToolInputSchema(
-            name="encoding",
-            type="string",
-            description="File encoding (default: utf-8)",
-            required=False,
-            default="utf-8"
-        ),
-        ToolInputSchema(
-            name="create_dirs",
-            type="boolean",
-            description="Create parent directories if they don't exist",
-            required=False,
-            default=True
-        ),
-        ToolInputSchema(
-            name="overwrite",
-            type="boolean",
-            description="Overwrite file if it exists",
-            required=False,
-            default=True
-        )
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Write result and metadata",
-        properties={
-            "file_path": {"type": "string", "description": "Path to written file"},
-            "bytes_written": {"type": "integer", "description": "Number of bytes written"},
-            "created": {"type": "boolean", "description": "Whether file was newly created"}
-        }
+    contract_metadata=ToolContractMetadata(
+        tool_name='file_writer',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['file_path', 'content'],
+        input_defaults={'encoding': 'utf-8', 'create_dirs': True, 'overwrite': True},
     ),
     timeout_seconds=30,
     max_retries=2,
@@ -90,7 +53,9 @@ FILE_WRITER_DEFINITION = ToolDefinition(
 )
 
 
-def file_writer_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('file_writer')
+def file_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """
     Execute file writer tool.
 

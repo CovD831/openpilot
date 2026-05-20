@@ -6,13 +6,13 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 FILE_TYPE_RULES: dict[str, dict[str, Any]] = {
@@ -77,62 +77,12 @@ FILE_READER_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.FILE_READ],
     permission_level=PermissionLevel.LOW,
-    input_schema=[
-        ToolInputSchema(
-            name="file_path",
-            type="string",
-            description="Absolute or relative path to the file",
-            required=True
-        ),
-        ToolInputSchema(
-            name="encoding",
-            type="string",
-            description="File encoding (default: utf-8)",
-            required=False,
-            default="utf-8"
-        ),
-        ToolInputSchema(
-            name="max_size_mb",
-            type="integer",
-            description="Maximum file size in MB (default: 10)",
-            required=False,
-            default=10
-        ),
-        ToolInputSchema(
-            name="read_mode",
-            type="string",
-            description="Read mode: full, adaptive, sample, or tail",
-            required=False,
-            default="full"
-        ),
-        ToolInputSchema(
-            name="max_lines",
-            type="integer",
-            description="Maximum number of lines for adaptive, sample, or tail modes",
-            required=False,
-            default=None
-        ),
-        ToolInputSchema(
-            name="offset",
-            type="integer",
-            description="Line offset for adaptive or sample modes",
-            required=False,
-            default=0
-        )
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="File contents and metadata",
-        properties={
-            "content": {"type": "string", "description": "File contents"},
-            "size_bytes": {"type": "integer", "description": "File size in bytes"},
-            "encoding": {"type": "string", "description": "File encoding used"},
-            "file_type": {"type": "string", "description": "Detected file type"},
-            "lines_read": {"type": "integer", "description": "Number of lines returned"},
-            "total_lines": {"type": ["integer", "null"], "description": "Total line count when known"},
-            "truncated": {"type": "boolean", "description": "Whether content was truncated"},
-            "metadata": {"type": "object", "description": "Additional read metadata"}
-        }
+    contract_metadata=ToolContractMetadata(
+        tool_name='file_reader',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['file_path'],
+        input_defaults={'encoding': 'utf-8', 'max_size_mb': 10, 'read_mode': 'full', 'max_lines': None, 'offset': 0},
     ),
     timeout_seconds=30,
     max_retries=2,
@@ -163,7 +113,9 @@ FILE_READER_DEFINITION = ToolDefinition(
 )
 
 
-def file_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('file_reader')
+def file_reader_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """
     Execute file reader tool.
 
@@ -171,7 +123,7 @@ def file_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
         params: Tool parameters (file_path, encoding, max_size_mb, read_mode, max_lines, offset)
 
     Returns:
-        Dictionary with content, size_bytes, encoding, file_type, line metadata, and extra metadata
+        Dictionary with content, size_bytes, encoding, file_type, line counts, and read attributes
 
     Raises:
         FileNotFoundError: If file doesn't exist
@@ -222,7 +174,7 @@ def file_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
             file_type,
             max_lines=limit,
             offset=offset,
-            metadata={"read_mode": "adaptive"},
+            attributes={"read_mode": "adaptive"},
         )
     if read_mode == "sample":
         return _read_text_file(
@@ -232,7 +184,7 @@ def file_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
             file_type,
             max_lines=_coerce_line_limit(max_lines, 10),
             offset=offset,
-            metadata={"read_mode": "sample"},
+            attributes={"read_mode": "sample"},
         )
     if read_mode == "tail":
         return _read_text_tail(
@@ -285,7 +237,7 @@ def _read_text_file(
     *,
     max_lines: int | None = None,
     offset: int = 0,
-    metadata: dict[str, Any] | None = None,
+    attributes: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if offset < 0:
         raise ValueError("offset must be greater than or equal to 0")
@@ -308,9 +260,9 @@ def _read_text_file(
     if offset and offset < total_lines:
         truncated = True
     content = "".join(selected_lines)
-    result_metadata = dict(metadata or {})
+    result_attributes = dict(attributes or {})
     if fallback:
-        result_metadata["encoding_fallback"] = True
+        result_attributes["encoding_fallback"] = True
 
     return {
         "content": content,
@@ -320,7 +272,7 @@ def _read_text_file(
         "lines_read": len(selected_lines),
         "total_lines": total_lines,
         "truncated": truncated,
-        "metadata": result_metadata,
+        "attributes": result_attributes,
     }
 
 
@@ -345,14 +297,14 @@ def _read_text_tail(
             "lines_read": 0,
             "total_lines": 0,
             "truncated": False,
-            "metadata": {"read_mode": "tail"},
+            "attributes": {"read_mode": "tail"},
         }
 
     total_lines = len(lines)
     selected_lines = lines[-max_lines:] if max_lines and total_lines > max_lines else lines
-    metadata = {"read_mode": "tail"}
+    attributes = {"read_mode": "tail"}
     if fallback:
-        metadata["encoding_fallback"] = True
+        attributes["encoding_fallback"] = True
     return {
         "content": "".join(selected_lines),
         "size_bytes": size_bytes,
@@ -361,7 +313,7 @@ def _read_text_tail(
         "lines_read": len(selected_lines),
         "total_lines": total_lines,
         "truncated": total_lines > len(selected_lines),
-        "metadata": metadata,
+        "attributes": attributes,
     }
 
 
@@ -393,5 +345,5 @@ def _binary_result(file_path: Path, size_bytes: int) -> dict[str, Any]:
         "lines_read": 0,
         "total_lines": 0,
         "truncated": False,
-        "metadata": {"mime_type": mimetypes.guess_type(str(file_path))[0]},
+        "attributes": {"mime_type": mimetypes.guess_type(str(file_path))[0]},
     }

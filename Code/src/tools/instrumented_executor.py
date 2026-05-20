@@ -36,7 +36,7 @@ class InstrumentedToolExecutor(ToolExecutor):
         if self.tracker:
             with self.tracker.track_tool_call(
                 tool_selection.tool_name,
-                self._display_params(tool_selection.input_params),
+                self._display_params(tool_selection.input_metadata.to_params()),
             ) as op_id:
                 self.tracker.update_operation_phase(op_id, "Executing")
                 result = super().execute_single(tool_selection, context)

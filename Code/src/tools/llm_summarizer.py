@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -22,36 +22,12 @@ LLM_SUMMARIZER_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.LLM_CALL],
     permission_level=PermissionLevel.LOW,
-    input_schema=[
-        ToolInputSchema(
-            name="text",
-            type="string",
-            description="Text to summarize or analyze",
-            required=True
-        ),
-        ToolInputSchema(
-            name="instruction",
-            type="string",
-            description="Instruction for the LLM (e.g., 'Summarize in 3 sentences')",
-            required=False,
-            default="Summarize the following text concisely."
-        ),
-        ToolInputSchema(
-            name="max_tokens",
-            type="integer",
-            description="Maximum tokens in response",
-            required=False,
-            default=500
-        )
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="LLM response and metadata",
-        properties={
-            "summary": {"type": "string", "description": "Generated summary"},
-            "tokens_used": {"type": "integer", "description": "Number of tokens used"},
-            "model": {"type": "string", "description": "Model used"}
-        }
+    contract_metadata=ToolContractMetadata(
+        tool_name='llm_summarizer',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['text'],
+        input_defaults={'instruction': 'Summarize the following text concisely.', 'max_tokens': 500},
     ),
     timeout_seconds=60,
     max_retries=3,
@@ -77,7 +53,9 @@ LLM_SUMMARIZER_DEFINITION = ToolDefinition(
 )
 
 
-def llm_summarizer_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('llm_summarizer')
+def llm_summarizer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """
     Execute LLM summarizer tool.
 
@@ -117,7 +95,7 @@ def llm_summarizer_executor(params: dict[str, Any]) -> dict[str, Any]:
                 f"{instruction}\n\n"
                 "The previous response was empty because the output token budget was exhausted. "
                 "Return the final answer directly as visible Markdown. Do not spend tokens on private reasoning, "
-                "analysis preambles, or metadata."
+                "analysis preambles, or schema notes."
             )
             retry_prompt = f"{retry_instruction}\n\n{text}"
             retry_max_tokens = _retry_max_tokens(max_tokens)
@@ -148,7 +126,7 @@ def _complete_summary(client: Any, *, prompt: str, max_tokens: int) -> Any:
             response_format="text",
             max_tokens=max_tokens,
             temperature=0.3,
-            metadata={"tool": "llm_summarizer", "task": "summarize"},
+            trace_info={"tool": "llm_summarizer", "task": "summarize"},
         )
     )
 

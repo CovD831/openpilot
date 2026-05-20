@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from pydantic import BaseModel
 
 from core.tool_contracts import (
@@ -17,8 +19,6 @@ from core.tool_contracts import (
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -67,52 +67,12 @@ COMMAND_EXECUTOR_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.SHELL_EXECUTION],
     permission_level=PermissionLevel.HIGH,
-    input_schema=[
-        ToolInputSchema(
-            name="command",
-            type="string",
-            description="Shell command to execute or dry-run",
-            required=True,
-        ),
-        ToolInputSchema(
-            name="mode",
-            type="string",
-            description="Execution mode: dry_run, interactive, or automatic",
-            required=False,
-            default=ExecutionMode.DRY_RUN.value,
-        ),
-        ToolInputSchema(
-            name="timeout",
-            type="integer",
-            description="Command timeout in seconds",
-            required=False,
-            default=30,
-        ),
-        ToolInputSchema(
-            name="cwd",
-            type="string",
-            description="Working directory for command execution",
-            required=False,
-        ),
-        ToolInputSchema(
-            name="env",
-            type="object",
-            description="Environment variables for command execution",
-            required=False,
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Command execution result and risk assessment",
-        properties={
-            "command": {"type": "string", "description": "Command that was evaluated"},
-            "success": {"type": "boolean", "description": "Whether the command succeeded"},
-            "stdout": {"type": "string", "description": "Standard output"},
-            "stderr": {"type": "string", "description": "Standard error"},
-            "exit_code": {"type": "integer", "description": "Process exit code"},
-            "duration": {"type": "number", "description": "Execution duration in seconds"},
-            "risk_assessment": {"type": "object", "description": "Risk details"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='command_executor',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['command'],
+        input_defaults={'mode': None, 'timeout': 30},
     ),
     timeout_seconds=60,
     max_retries=1,
@@ -393,7 +353,9 @@ class CommandTool:
             return "LOW RISK: This command is safe to execute."
 
 
-def command_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('command_executor')
+def command_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Standard ToolDefinition-compatible command executor."""
     command = str(params.get("command") or "").strip()
     if not command:

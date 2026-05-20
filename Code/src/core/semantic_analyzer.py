@@ -207,7 +207,7 @@ class SemanticAnalyzer:
                 ],
                 response_format="json_object",
                 temperature=0.0,
-                metadata={"semantic_task": "goal"},
+                trace_info={"semantic_task": "goal"},
             )
         )
         raw = self._response_payload(response)
@@ -247,7 +247,7 @@ class SemanticAnalyzer:
                 ],
                 response_format="json_object",
                 temperature=0.0,
-                metadata={"semantic_task": "plan_step", "step_id": step.id},
+                trace_info={"semantic_task": "plan_step", "step_id": step.id},
             )
         )
         raw = self._response_payload(response)

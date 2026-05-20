@@ -5,13 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -22,50 +22,12 @@ MULTI_FILE_READER_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.FILE_READ],
     permission_level=PermissionLevel.LOW,
-    input_schema=[
-        ToolInputSchema(
-            name="file_paths",
-            type="array",
-            description="List of file paths to read",
-            required=False
-        ),
-        ToolInputSchema(
-            name="directory_path",
-            type="string",
-            description="Directory to scan if file_paths is omitted",
-            required=False
-        ),
-        ToolInputSchema(
-            name="pattern",
-            type="string",
-            description="Glob pattern used with directory_path",
-            required=False,
-            default="*完成报告*.md"
-        ),
-        ToolInputSchema(
-            name="encoding",
-            type="string",
-            description="File encoding",
-            required=False,
-            default="utf-8"
-        ),
-        ToolInputSchema(
-            name="max_total_chars",
-            type="integer",
-            description="Maximum combined content length",
-            required=False,
-            default=50000
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Combined file contents and metadata",
-        properties={
-            "content": {"type": "string", "description": "Combined file contents"},
-            "files": {"type": "array", "description": "Read file paths"},
-            "count": {"type": "integer", "description": "Number of files read"},
-            "truncated": {"type": "boolean", "description": "Whether content was truncated"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='multi_file_reader',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=[],
+        input_defaults={'pattern': '*完成报告*.md', 'encoding': 'utf-8', 'max_total_chars': 50000},
     ),
     timeout_seconds=60,
     max_retries=2,
@@ -86,7 +48,9 @@ MULTI_FILE_READER_DEFINITION = ToolDefinition(
 )
 
 
-def multi_file_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('multi_file_reader')
+def multi_file_reader_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Read multiple files and combine them into one text payload."""
     file_paths = params.get("file_paths") or params.get("files")
     if not file_paths:

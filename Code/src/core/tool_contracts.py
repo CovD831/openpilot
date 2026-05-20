@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
+from metadata import MetadataBase, ToolContractMetadata, ToolInputMetadata, ToolResultMetadata
+
 
 class PermissionLevel(str, Enum):
     """Tool permission levels."""
@@ -33,22 +35,6 @@ class ToolCapability(str, Enum):
     NETWORK = "network"
 
 
-class ToolInputSchema(BaseModel):
-    """Schema for tool input parameters."""
-    name: str
-    type: str  # "string", "integer", "boolean", "object", "array"
-    description: str
-    required: bool = True
-    default: Optional[Any] = None
-
-
-class ToolOutputSchema(BaseModel):
-    """Schema for tool output."""
-    type: str  # "string", "object", "array", etc.
-    description: str
-    properties: Optional[dict[str, Any]] = None
-
-
 class ToolFailureMode(BaseModel):
     """Describes how a tool can fail."""
     error_type: str  # "timeout", "permission_denied", "not_found", "invalid_input", etc.
@@ -66,6 +52,8 @@ class ToolDependency(BaseModel):
 
 class ToolDefinition(BaseModel):
     """Complete tool definition."""
+    model_config = ConfigDict(use_enum_values=True, arbitrary_types_allowed=True)
+
     name: str = Field(..., description="Unique tool identifier")
     display_name: str = Field(..., description="Human-readable tool name")
     description: str = Field(..., description="What this tool does")
@@ -75,9 +63,19 @@ class ToolDefinition(BaseModel):
     capabilities: list[ToolCapability] = Field(default_factory=list)
     permission_level: PermissionLevel = Field(default=PermissionLevel.MEDIUM)
 
-    # Input/Output
-    input_schema: list[ToolInputSchema] = Field(default_factory=list)
-    output_schema: ToolOutputSchema
+    # Strict metadata contracts
+    input_metadata_type: type[MetadataBase] = Field(
+        default=ToolInputMetadata,
+        description="Concrete metadata payload type accepted by the tool",
+    )
+    output_metadata_type: type[MetadataBase] = Field(
+        default=ToolResultMetadata,
+        description="Concrete metadata payload type returned by the tool",
+    )
+    contract_metadata: ToolContractMetadata | None = Field(
+        default=None,
+        description="Strict metadata contract used for model harness validation and orchestration",
+    )
 
     # Execution constraints
     timeout_seconds: int = Field(default=30, description="Max execution time")
@@ -87,18 +85,26 @@ class ToolDefinition(BaseModel):
     dependencies: list[ToolDependency] = Field(default_factory=list)
     failure_modes: list[ToolFailureMode] = Field(default_factory=list)
 
-    # Metadata
+    # Discovery fields
     tags: list[str] = Field(default_factory=list, description="Searchable tags")
     author: Optional[str] = None
     audit_required: bool = Field(default=True, description="Whether to log all executions")
 
-    model_config = ConfigDict(use_enum_values=True)
+    def model_post_init(self, __context: Any) -> None:
+        if self.contract_metadata is None:
+            self.contract_metadata = ToolContractMetadata(
+                tool_name=self.name,
+                input_metadata_type=self.input_metadata_type.__name__,
+                output_metadata_type=self.output_metadata_type.__name__,
+                capabilities=[str(capability) for capability in self.capabilities],
+                permission_level=str(self.permission_level),
+            )
 
 
 class ToolExecutionContext(BaseModel):
     """Context for tool execution."""
     tool_name: str
-    input_params: dict[str, Any]
+    input_metadata: ToolInputMetadata
     user_confirmed: bool = False
     autonomy_level: Optional[str] = None
     confidence: Optional[float] = None
@@ -109,10 +115,7 @@ class ToolExecutionResult(BaseModel):
     """Result of tool execution."""
     tool_name: str
     execution_id: str
-    success: bool
-    output: Optional[Any] = None
-    error: Optional[str] = None
-    error_type: Optional[str] = None
+    output_metadata: ToolResultMetadata
     execution_time_ms: int
     retries: int = 0
 
@@ -120,6 +123,5 @@ class ToolExecutionResult(BaseModel):
     memory_mb: Optional[float] = None
     api_calls: int = 0
 
-    # Metadata
     timestamp: str
     logs: list[str] = Field(default_factory=list)

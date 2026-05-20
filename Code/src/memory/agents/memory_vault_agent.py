@@ -29,7 +29,7 @@ class MemoryVaultAgent:
         memory_type: MemoryType = MemoryType.PROJECT,
         tags: list[str] | None = None,
         confidence: float = 0.8,
-        metadata: dict[str, Any] | None = None,
+        attributes: dict[str, Any] | None = None,
     ) -> str:
         self._log_agent(
             "memory_node_add_started",
@@ -37,7 +37,7 @@ class MemoryVaultAgent:
             success=None,
         )
         if self.memory_vault is not None and hasattr(self.memory_vault, "add_memory"):
-            memory_id = self.memory_vault.add_memory(content, memory_type, tags, confidence, metadata)
+            memory_id = self.memory_vault.add_memory(content, memory_type, tags, confidence, attributes)
         else:
             if self.memory_store is None:
                 self._log_agent("memory_node_add_failed", success=False, error="No memory vault or store is configured.")
@@ -49,7 +49,7 @@ class MemoryVaultAgent:
                     content=content,
                     tags=tags or [],
                     confidence=confidence,
-                    metadata=metadata or {},
+                    attributes=attributes or {},
                 )
             )
             memory_id = record.id
@@ -79,7 +79,7 @@ class MemoryVaultAgent:
                         target_id=target_id,
                         edge_type="relevance",
                         weight=relevance,
-                        metadata={"relevance": relevance},
+                        attributes={"relevance": relevance},
                     )
                 )
                 save = getattr(self.memory_vault, "_save_vault", None)
@@ -129,7 +129,7 @@ class MemoryVaultAgent:
                 "type": memory.memory_type.value,
                 "tags": memory.tags,
                 "confidence": memory.confidence,
-                "metadata": memory.metadata,
+                "attributes": memory.attributes,
             }
             for memory in result.memories
         ]
@@ -165,7 +165,7 @@ class MemoryVaultAgent:
             "score": score,
             "tags": memory.tags,
             "confidence": memory.confidence,
-            "metadata": memory.metadata,
+            "attributes": memory.attributes,
         }
 
     def _log_agent(

@@ -35,7 +35,7 @@ class LLMRequest(BaseModel):
     response_format: Literal["text", "json_object"] = "text"
     temperature: float | None = None
     max_tokens: int | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    trace_info: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMResponse(BaseModel):
@@ -49,7 +49,7 @@ class LLMResponse(BaseModel):
     provider: str
     usage: dict[str, Any] = Field(default_factory=dict)
     finish_reason: str | None = None
-    raw_response_metadata: dict[str, Any] = Field(default_factory=dict)
+    provider_details: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMClient:
@@ -136,7 +136,7 @@ class LLMClient:
                         provider=self.settings.provider,
                         usage=usage,
                         finish_reason=choice.finish_reason,
-                        raw_response_metadata=self._response_metadata(
+                        provider_details=self._response_metadata(
                             response=response,
                             choice=choice,
                             content=content,
@@ -184,7 +184,7 @@ class LLMClient:
                     provider=self.settings.provider,
                     usage=usage,
                     finish_reason=choice.finish_reason,
-                    raw_response_metadata=self._response_metadata(
+                    provider_details=self._response_metadata(
                         response=response,
                         choice=choice,
                         content=content,

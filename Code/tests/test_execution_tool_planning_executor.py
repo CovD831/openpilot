@@ -8,6 +8,7 @@ from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskExecutor
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from autonomous_iteration.tool_io import ExecutionToolIO
+from metadata import FailureMetadata, ResultStatus, TaskResultMetadata, ToolResultMetadata
 
 
 class FakeLLM:
@@ -36,18 +37,32 @@ class FakeToolExecutor:
         if selection.tool_name == "code_generator":
             return SimpleNamespace(
                 success=True,
-                output={"code": "print('ok')", "language": "python"},
+                output_metadata=ToolResultMetadata(
+                    tool_name="code_generator",
+                    status=ResultStatus.SUCCESS,
+                    result={"kind": "code_artifact", "code": "print('ok')", "language": "python"},
+                ),
                 error=None,
                 execution_time_ms=10,
             )
         if selection.tool_name == "file_writer":
+            payload = selection.input_metadata.to_params()
             return SimpleNamespace(
                 success=True,
-                output={"file_path": selection.input_params["file_path"], "content": selection.input_params["content"]},
+                output_metadata=ToolResultMetadata(
+                    tool_name="file_writer",
+                    status=ResultStatus.SUCCESS,
+                    result={"kind": "file_artifact", "file_path": payload["file_path"], "content": payload["content"]},
+                ),
                 error=None,
                 execution_time_ms=5,
             )
-        return SimpleNamespace(success=False, output=None, error=SimpleNamespace(error_message="unknown tool"), execution_time_ms=1)
+        return SimpleNamespace(
+            success=False,
+            output_metadata=None,
+            error=SimpleNamespace(error_message="unknown tool"),
+            execution_time_ms=1,
+        )
 
 
 class FakeRuntime:
@@ -63,14 +78,14 @@ class FakeRuntime:
     def _format_tools_for_llm(self, tools):
         return "No tools"
 
-    def _resolve_chained_inputs(self, tool_name, input_params, last_output, last_code_output):
-        return self.tool_io.resolve_chained_inputs(tool_name, input_params, last_output, last_code_output)
+    def _resolve_chained_metadata(self, tool_name, input_metadata, last_output, last_code_output):
+        return self.tool_io.resolve_chained_metadata(tool_name, input_metadata, last_output, last_code_output)
 
     def _map_reason_to_enum(self, reason_text):
         return self.tool_io.map_reason_to_enum(reason_text)
 
-    def _sanitize_tool_params(self, params):
-        return self.tool_io.sanitize_tool_params(params)
+    def _sanitize_tool_metadata(self, input_metadata):
+        return self.tool_io.sanitize_tool_metadata(input_metadata)
 
 
 def _context(task: Task) -> TaskExecutionContext:
@@ -83,8 +98,8 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
         tmp_path,
         {
             "tool_calls": [
-                {"tool_name": "code_generator", "reason": "generate code", "input_params": {"task_description": "make app"}},
-                {"tool_name": "file_writer", "reason": "write file", "input_params": {"file_path": "app.py"}},
+                {"tool_name": "code_generator", "reason": "generate code", "input_metadata": {"task_description": "make app"}},
+                {"tool_name": "file_writer", "reason": "write file", "input_metadata": {"file_path": "app.py"}},
             ]
         },
     )
@@ -93,9 +108,9 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
     result = executor.execute_task(task, _context(task))
 
     assert result.status == TaskStatus.COMPLETED
-    assert result.result["all_tools_succeeded"] is True
-    assert result.result["tool_calls"][1]["params"]["content"] == "print('ok')"
-    assert runtime.tool_executor.selections[1].input_params == {"file_path": "app.py", "content": "print('ok')"}
+    assert result.result_metadata.result["all_tools_succeeded"] is True
+    assert result.result_metadata.result["tool_calls"][1]["params"]["content"] == "print('ok')"
+    assert runtime.tool_executor.selections[1].input_metadata.to_params() == {"file_path": "app.py", "content": "print('ok')"}
     payloads = [
         json.loads(line)["payload"]
         for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
@@ -127,7 +142,12 @@ def test_tool_planning_executor_bad_json_returns_failed_result(tmp_path) -> None
 def test_intelligent_autopilot_execute_task_proxy_uses_tool_planning_agent(tmp_path) -> None:
     class FakeAgent:
         def execute_task(self, task, context):
-            return TaskExecutionResult(task_id=task.id, status=TaskStatus.COMPLETED, result={"proxied": True}, duration=0.0)
+            return TaskExecutionResult(
+                task_id=task.id,
+                status=TaskStatus.COMPLETED,
+                result_metadata=TaskResultMetadata(task_id=task.id, status=ResultStatus.SUCCESS, result={"proxied": True}),
+                duration=0.0,
+            )
 
     class MinimalLLM:
         pass
@@ -139,4 +159,4 @@ def test_intelligent_autopilot_execute_task_proxy_uses_tool_planning_agent(tmp_p
     result = autopilot._execute_task(task, _context(task))
 
     assert result.status == TaskStatus.COMPLETED
-    assert result.result == {"proxied": True}
+    assert result.result_metadata.result == {"proxied": True}

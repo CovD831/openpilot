@@ -51,9 +51,9 @@ class CodeGenerationRequest(BaseModel):
     timeout_seconds: int = Field(default=30, description="执行超时（秒）")
     max_memory_mb: int = Field(default=512, description="最大内存（MB）")
 
-    # 元数据
+    # 附加属性
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    attributes: dict[str, Any] = Field(default_factory=dict, description="附加属性")
 
 
 class GeneratedCode(BaseModel):
@@ -77,9 +77,9 @@ class GeneratedCode(BaseModel):
     generation_time_ms: int = Field(description="生成耗时（毫秒）")
     tokens_used: int = Field(default=0, description="使用的token数")
 
-    # 元数据
+    # 附加属性
     generated_at: datetime = Field(default_factory=datetime.now, description="生成时间")
-    metadata: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    attributes: dict[str, Any] = Field(default_factory=dict, description="附加属性")
 
 
 class DangerousOperation(BaseModel):
@@ -195,8 +195,8 @@ class CodeCacheEntry(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now, description="创建时间")
     last_used_at: datetime = Field(default_factory=datetime.now, description="最后使用时间")
 
-    # 元数据
-    metadata: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    # 附加属性
+    attributes: dict[str, Any] = Field(default_factory=dict, description="附加属性")
 
     @property
     def success_rate(self) -> float:

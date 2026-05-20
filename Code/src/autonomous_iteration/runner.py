@@ -8,6 +8,8 @@ from typing import Any
 
 from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.task_models import Task, TaskPriority
+from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
+from metadata import ToolInputMetadata, tool_result_payload
 
 
 class AutonomousIterationRunner:
@@ -203,38 +205,40 @@ class AutonomousIterationRunner:
         }
         execute_reader = getattr(self.autopilot, "_execute_project_state_reader_agent_tool", None)
         if execute_reader is None:
-            from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
-
-            fallback = project_state_reader_executor({**params, "_memory_store": self.autopilot.memory_store})
+            fallback = project_state_reader_executor(
+                ToolInputMetadata.from_mapping("project_state_reader", {**params, "_memory_store": self.autopilot.memory_store})
+            )
+            payload = tool_result_payload(fallback)
             self._log(
                 "project_state_read",
                 {"iteration": iteration},
-                {"source": "direct", "success": bool(fallback)},
-                success=bool(fallback),
+                {"source": "direct", "success": bool(payload)},
+                success=bool(payload),
             )
-            return fallback
+            return payload
 
         result = execute_reader(
             task=task,
             step_id=f"iteration_{iteration}_project_state_reader",
-            input_params=params,
+            input_metadata=ToolInputMetadata.from_mapping("project_state_reader", params),
             parent_task_id=self.autopilot._dashboard_stage_id("project_state"),
         )
         if result["success"] and isinstance(result.get("result"), dict):
             self._log("project_state_read", {"iteration": iteration}, {"source": "tool", "success": True})
             return result["result"]
 
-        from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
-
-        fallback = project_state_reader_executor({**params, "_memory_store": self.autopilot.memory_store})
+        fallback = project_state_reader_executor(
+            ToolInputMetadata.from_mapping("project_state_reader", {**params, "_memory_store": self.autopilot.memory_store})
+        )
+        payload = tool_result_payload(fallback)
         self._log(
             "project_state_read",
             {"iteration": iteration},
-            {"source": "fallback", "success": bool(fallback)},
-            success=bool(fallback),
+            {"source": "fallback", "success": bool(payload)},
+            success=bool(payload),
             error=result.get("error"),
         )
-        return fallback
+        return payload
 
     def _environment_failure_result(self, environment_result: dict[str, Any], run_command: str) -> dict[str, Any]:
         reason = environment_result.get("error") or "Project environment sync failed."
@@ -379,5 +383,5 @@ class AutonomousIterationRunner:
             input_summary=input_summary,
             output_summary=output_summary,
             error=error,
-            metadata={"stages": self.STAGES},
+            annotations={"stages": self.STAGES},
         )

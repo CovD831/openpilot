@@ -43,7 +43,7 @@ def _generate_slot_payload(task: str, client: Any) -> dict[str, Any]:
             LLMRequest(
                 response_format="json_object",
                 temperature=0.2,
-                metadata={"tool": "agent_generator", "task": "slot_generation"},
+                trace_info={"tool": "agent_generator", "task": "slot_generation"},
                 messages=[
                     LLMMessage(
                         role="system",
@@ -104,7 +104,7 @@ def _repair_slot_language(task: str, user_language: str, slots: list[Slot], clie
             LLMRequest(
                 response_format="json_object",
                 temperature=0.0,
-                metadata={"tool": "agent_generator", "task": "slot_language_repair"},
+                trace_info={"tool": "agent_generator", "task": "slot_language_repair"},
                 messages=[
                     LLMMessage(
                         role="system",

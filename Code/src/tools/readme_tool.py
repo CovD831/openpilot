@@ -8,13 +8,13 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -25,81 +25,12 @@ README_TOOL_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.FILE_WRITE],
     permission_level=PermissionLevel.MEDIUM,
-    input_schema=[
-        ToolInputSchema(
-            name="project_path",
-            type="string",
-            description="Path to the project directory where README.md should be created",
-            required=True,
-        ),
-        ToolInputSchema(
-            name="project_summary",
-            type="string",
-            description="Short description of the project or original user goal",
-            required=False,
-            default="",
-        ),
-        ToolInputSchema(
-            name="written_files",
-            type="array",
-            description="Files created for this project",
-            required=False,
-            default=[],
-        ),
-        ToolInputSchema(
-            name="entry_files",
-            type="array",
-            description="Preferred runnable entry files",
-            required=False,
-            default=[],
-        ),
-        ToolInputSchema(
-            name="environment",
-            type="object",
-            description="Optional environment context such as Python version, conda env, or package notes",
-            required=False,
-            default={},
-        ),
-        ToolInputSchema(
-            name="run_command",
-            type="string",
-            description="Explicit command to run the project",
-            required=False,
-            default="",
-        ),
-        ToolInputSchema(
-            name="setup_commands",
-            type="array",
-            description="Explicit setup commands",
-            required=False,
-            default=[],
-        ),
-        ToolInputSchema(
-            name="test_command",
-            type="string",
-            description="Optional command to test the project",
-            required=False,
-            default="",
-        ),
-        ToolInputSchema(
-            name="overwrite",
-            type="boolean",
-            description="Overwrite README.md if it already exists",
-            required=False,
-            default=True,
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="README write result and inferred commands",
-        properties={
-            "file_path": {"type": "string", "description": "Path to README.md"},
-            "bytes_written": {"type": "integer", "description": "Number of bytes written"},
-            "created": {"type": "boolean", "description": "Whether README.md was newly created"},
-            "run_command": {"type": "string", "description": "Command to run the project"},
-            "setup_commands": {"type": "array", "description": "Setup commands"},
-            "sections": {"type": "array", "description": "README sections generated"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='readme_tool',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['project_path'],
+        input_defaults={'project_summary': '', 'written_files': [], 'entry_files': [], 'environment': {}, 'run_command': '', 'setup_commands': [], 'test_command': '', 'overwrite': True},
     ),
     timeout_seconds=30,
     max_retries=1,
@@ -125,7 +56,9 @@ README_TOOL_DEFINITION = ToolDefinition(
 )
 
 
-def readme_tool_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('readme_tool')
+def readme_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Generate README.md for a project."""
     project_path = Path(params["project_path"]).expanduser()
     readme_path = project_path / "README.md"

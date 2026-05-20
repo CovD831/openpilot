@@ -68,7 +68,7 @@ class FakeTracker:
         self.stopped = True
 
     @contextmanager
-    def track_task(self, title, metadata):
+    def track_task(self, title, attributes):
         yield
 
 

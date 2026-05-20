@@ -386,7 +386,11 @@ class ProjectEvaluatorAgent:
         try:
             from tools.code_reviewer import code_reviewer_executor
 
-            return code_reviewer_executor({"code": code_text, "language": "python"})
+            from metadata import ToolInputMetadata, tool_result_payload
+
+            return tool_result_payload(
+                code_reviewer_executor(ToolInputMetadata.from_mapping("code_reviewer", {"code": code_text, "language": "python"}))
+            )
         except Exception:
             return {}
 

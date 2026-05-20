@@ -71,7 +71,7 @@ must never print the actual API key.
 - `response_format`: `text` or `json_object`.
 - `temperature`: optional per-request override.
 - `max_tokens`: optional token limit.
-- `metadata`: local tracing metadata.
+- `trace_info`: local tracing annotations that are not part of the strict metadata protocol.
 
 `LLMResponse`:
 
@@ -81,7 +81,31 @@ must never print the actual API key.
 - `provider`: configured provider label.
 - `usage`: normalized usage object when available.
 - `finish_reason`: provider finish reason.
-- `raw_response_metadata`: safe metadata such as response id and timestamp.
+- `provider_details`: safe provider details such as response id and timestamp.
+
+### OpenPilot Metadata Protocol
+
+OpenPilot reserves the word metadata for strict, Pydantic v2 model-harness
+contracts in `code/src/metadata`. Free-form diagnostic data must use names such
+as `annotations`, `attributes`, `trace_info`, or `provider_details`.
+
+Every metadata payload carries:
+
+- `kind`
+- `schema_version`
+- `source`
+- `correlation`
+
+Tool execution uses typed metadata:
+
+- `ToolDefinition.input_metadata_type`
+- `ToolDefinition.output_metadata_type`
+- `ToolSelection.input_metadata`
+- `ExecutionResult.output_metadata`
+- `TaskExecutionResult.result_metadata`
+
+Result metadata uses `status`. Successful results put data in `result`; failed
+or timed-out results put structured error details in `failure`.
 
 ### Autonomous Planning Types
 
@@ -274,11 +298,12 @@ name: example_tool
 description: What the tool does.
 version: 0.1.0
 permission_level: auto | notify | confirm | forbidden
-input_schema:
-  type: object
-  required: []
-output_schema:
-  type: object
+input_metadata_type: ToolInputMetadata
+output_metadata_type: ToolResultMetadata
+contract_metadata:
+  kind: tool_contract
+  required_input_fields: []
+  input_defaults: {}
 failure_modes:
   - timeout
   - auth_required
@@ -367,8 +392,8 @@ planning. A typical completion-report summary chain is:
 
 1. `directory_lister` lists matching files in a local directory.
 2. `multi_file_reader` reads the matched files and combines their text.
-3. `llm_summarizer` receives the combined text through `source_step_id` and
-   generates the summary.
+3. `llm_summarizer` receives the combined text through typed tool input
+   metadata and generates the summary.
 
 Built-in local tools:
 
@@ -386,12 +411,12 @@ Built-in local tools:
 
 Execution input chaining:
 
-- Tool selections may include `source_step_id`.
-- The workflow executor removes `source_step_id` before invoking a tool.
-- For `multi_file_reader`, previous `files` output becomes `file_paths`.
-- For `llm_summarizer`, previous `content` output becomes `text`.
-- For `file_writer`, previous textual output may become `content`, but only
-  when the plan explicitly selected a write step.
+- Tool selections declare `input_metadata` and optional dependencies.
+- The workflow executor routes upstream outputs by metadata kind and the
+  declared input/output metadata types.
+- File artifacts can feed file-reading tools.
+- Text and code artifacts can feed summarization, review, execution, or writing
+  tools when those tools declare compatible input metadata.
 
 Workflow execution logs now include `step_results` for each tool call:
 
@@ -411,8 +436,8 @@ Workflow execution logs also include:
 - `planned_steps`: the validated planner steps, including titles, descriptions,
   expected output, dependencies, risk level, and confirmation flags.
 - `tool_selections`: the orchestration output for each step, including selected
-  tool, input keys, compact input preview, dependencies, `source_step_id`,
-  selection reason, confidence, and confirmation flag.
+  tool, input metadata keys, compact input preview, dependencies, selection
+  reason, confidence, and confirmation flag.
 
 Autopilot writes diagnostic events before the final workflow summary:
 
@@ -424,9 +449,8 @@ Autopilot writes diagnostic events before the final workflow summary:
 Before invoking a built-in tool, the workflow executor validates required
 inputs. Missing required inputs produce a failed `ExecutionResult` with
 `error.type = "MissingRequiredInput"` instead of allowing a raw `KeyError`.
-For `llm_summarizer`, missing `text` records whether `source_step_id` was set,
-whether the source output was available, and whether the input chain was
-unresolved.
+For `llm_summarizer`, missing `text` records whether a compatible upstream
+metadata output was available and whether the input chain was unresolved.
 
 Workflow success must reflect actual execution. Non-dry-run workflows are
 successful only when at least one tool ran, every execution result succeeded,
@@ -449,8 +473,8 @@ and all available validation results passed.
   `output_summary` fields are written to the JSONL log for diagnostics.
 - Final report generation is an LLM summarization step unless the user explicitly
   requests persistence with a concrete output file path or filename. In that
-  explicit-save case, `file_writer` receives content from the latest content
-  producing step through `source_step_id`.
+  explicit-save case, `file_writer` receives content from the latest compatible
+  text/code result metadata.
 
 ### LLM semantic analysis
 
@@ -470,4 +494,4 @@ and all available validation results passed.
   `empty_output_retry`, retries once with a shorter payload, and then fails the
   current step with `EmptyLLMOutput` if the retry is also empty.
 - Input-resolution diagnostics include `source_text_empty` so a present-but-empty
-  upstream output is distinguishable from a missing `source_step_id`.
+  upstream metadata output is distinguishable from a missing compatible source.

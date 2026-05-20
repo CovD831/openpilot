@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999995 (TeX Live 2023) (preloaded format=xelatex 2024.1.21)  17 MAY 2026 14:39
+This is XeTeX, Version 3.141592653-2.6-0.999995 (TeX Live 2023) (preloaded format=xelatex 2024.1.21)  20 MAY 2026 00:08
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -631,122 +631,6 @@ LaTeX Font Info:    External font `cmex10' loaded for size
 File: figure/项目核心闭环图.png Graphic file (type bmp)
 <figure/项目核心闭环图.png>
  [3] [4] [5]
-Underfull \hbox (badness 1701) in paragraph at lines 160--160
-[]|\TU/lmr/m/n/10.95 OpenPilot \TU/STSong(0)/m/n/10.95 保 持 模 型 与 工 具 开 放，|
- []
-
-
-Underfull \hbox (badness 5105) in paragraph at lines 180--180
-[]|\TU/STSong(0)/m/n/10.95 垂 类 工 作 流 难
- []
-
-
-Underfull \hbox (badness 5771) in paragraph at lines 180--180
-\TU/STSong(0)/m/n/10.95 功 经 验 固 化 成 长 期 可 用
- []
-
-
-Underfull \hbox (badness 5105) in paragraph at lines 180--180
-[]|\TU/STSong(0)/m/n/10.95 任 务 上 下 文 容
- []
-
-
-Underfull \hbox (badness 1867) in paragraph at lines 180--180
-[]|\TU/lmr/m/n/10.95 Context Manager \TU/STSong(0)/m/n/10.95 保 留
- []
-
-
-Underfull \hbox (badness 5771) in paragraph at lines 180--180
-[]|\TU/STSong(0)/m/n/10.95 黑 盒 自 动 化 让 用 户 难 以
- []
-
-
-Underfull \hbox (badness 1661) in paragraph at lines 180--180
-\TU/STSong(0)/m/n/10.95 判 断 系 统 为 什 么 这 么 做，|
- []
-
-
-Underfull \hbox (badness 5771) in paragraph at lines 180--180
-\TU/STSong(0)/m/n/10.95 认 点 和 复 盘 记 录 贯 穿 任
- []
-
-
-Underfull \hbox (badness 2443) in paragraph at lines 180--180
-\TU/lmr/m/n/10.95 Reader\TU/STSong(0)/m/n/10.95 、| \TU/lmr/m/n/10.95 Command Ex
--
- []
-
-
-Underfull \hbox (badness 5105) in paragraph at lines 180--180
-[]|\TU/STSong(0)/m/n/10.95 小 众 领 域 知 识
- []
-
-
-Underfull \hbox (badness 5771) in paragraph at lines 180--180
-[]|\TU/STSong(0)/m/n/10.95 在 授 权 资 料 和 用 户 反 馈
- []
-
-
-Underfull \hbox (badness 5771) in paragraph at lines 180--180
-\TU/STSong(0)/m/n/10.95 化 为 工 作 流 可 用 的 记 忆
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 180--180
-[]|\TU/STSong(0)/m/n/10.95 垂 类 任 务 完 成
- []
-
-[6] [7]
-LaTeX Font Info:    External font `cmex10' loaded for size
-(Font)              <7> on input line 211.
-LaTeX Font Info:    External font `cmex10' loaded for size
-(Font)              <5> on input line 211.
- [8]
-Underfull \hbox (badness 10000) in paragraph at lines 242--242
-[]|\TU/STSong(0)/m/n/10.95 月 收 入 \TU/lmr/m/n/10.95 ¥5,000–
- []
-
-
-Underfull \hbox (badness 3679) in paragraph at lines 267--267
-[]|\TU/STSong(0)/m/n/10.95 验 证 用 户 能 否 生 成 自
- []
-
-
-Underfull \hbox (badness 3679) in paragraph at lines 267--267
-[]|\TU/STSong(0)/m/n/10.95 建 立 可 审 计 的 后 台 整
- []
-
-
-Underfull \hbox (badness 3679) in paragraph at lines 267--267
-[]|\TU/STSong(0)/m/n/10.95 面 向 小 众 专 业 领 域 补
- []
-
-
-Underfull \hbox (badness 5504) in paragraph at lines 267--267
-\TU/STSong(0)/m/n/10.95 工 作 流 生 成、|  工 具 绑
- []
-
-[9]
-Underfull \hbox (badness 10000) in paragraph at lines 296--296
-[]|\TU/STSong(0)/m/n/10.95 写 入 \TU/lmr/m/n/10.95 Memory Vault\TU/STSong(0)/m/n/
-10.95 、| \TU/lmr/m/n/10.95 Project
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 296--296
-[]|\TU/STSong(0)/m/n/10.95 后 台 整 理 与 主 动
- []
-
-[10]
-File: figure/记忆系统图.png Graphic file (type bmp)
-<figure/记忆系统图.png>
- [11] [12] [13]
-File: figure/产品使用流程图.png Graphic file (type bmp)
-<figure/产品使用流程图.png>
- [14]
-File: figure/运行时截图.png Graphic file (type bmp)
-<figure/运行时截图.png>
- [15] [16] [17]
 
 Package fontspec Warning: Font "STFangsong" does not contain requested Script
 (fontspec)                "CJK".
@@ -774,105 +658,211 @@ Package fontspec Info: Font family 'STFangsong(0)' created for font
 (fontspec)             <->"STFangsong/OT:language=dflt;"
 (fontspec)             - 'small caps'  (m/sc) with NFSS spec.: 
 
+
+Underfull \hbox (badness 1701) in paragraph at lines 162--162
+[]|\TU/lmr/m/n/10.95 OpenPilot \TU/STSong(0)/m/n/10.95 保 持 模 型 与 工 具 开 放，|
+ []
+
+
+Underfull \hbox (badness 5105) in paragraph at lines 182--182
+[]|\TU/STSong(0)/m/n/10.95 垂 类 工 作 流 难
+ []
+
+
+Underfull \hbox (badness 5771) in paragraph at lines 182--182
+\TU/STSong(0)/m/n/10.95 功 经 验 固 化 成 长 期 可 用
+ []
+
+
+Underfull \hbox (badness 5105) in paragraph at lines 182--182
+[]|\TU/STSong(0)/m/n/10.95 任 务 上 下 文 容
+ []
+
+
+Underfull \hbox (badness 1867) in paragraph at lines 182--182
+[]|\TU/lmr/m/n/10.95 Context Manager \TU/STSong(0)/m/n/10.95 保 留
+ []
+
+
+Underfull \hbox (badness 5771) in paragraph at lines 182--182
+[]|\TU/STSong(0)/m/n/10.95 黑 盒 自 动 化 让 用 户 难 以
+ []
+
+
+Underfull \hbox (badness 1661) in paragraph at lines 182--182
+\TU/STSong(0)/m/n/10.95 判 断 系 统 为 什 么 这 么 做，|
+ []
+
+
+Underfull \hbox (badness 5771) in paragraph at lines 182--182
+\TU/STSong(0)/m/n/10.95 认 点 和 复 盘 记 录 贯 穿 任
+ []
+
+
+Underfull \hbox (badness 2443) in paragraph at lines 182--182
+\TU/lmr/m/n/10.95 Reader\TU/STSong(0)/m/n/10.95 、| \TU/lmr/m/n/10.95 Command Ex
+-
+ []
+
+
+Underfull \hbox (badness 5105) in paragraph at lines 182--182
+[]|\TU/STSong(0)/m/n/10.95 小 众 领 域 知 识
+ []
+
+
+Underfull \hbox (badness 5771) in paragraph at lines 182--182
+[]|\TU/STSong(0)/m/n/10.95 在 授 权 资 料 和 用 户 反 馈
+ []
+
+
+Underfull \hbox (badness 5771) in paragraph at lines 182--182
+\TU/STSong(0)/m/n/10.95 化 为 工 作 流 可 用 的 记 忆
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 182--182
+[]|\TU/STSong(0)/m/n/10.95 垂 类 任 务 完 成
+ []
+
+[6] [7] [8]
+LaTeX Font Info:    External font `cmex10' loaded for size
+(Font)              <7> on input line 213.
+LaTeX Font Info:    External font `cmex10' loaded for size
+(Font)              <5> on input line 213.
+
+Underfull \hbox (badness 10000) in paragraph at lines 244--244
+[]|\TU/STSong(0)/m/n/10.95 月 收 入 \TU/lmr/m/n/10.95 ¥5,000–
+ []
+
+[9]
+Underfull \hbox (badness 3679) in paragraph at lines 269--269
+[]|\TU/STSong(0)/m/n/10.95 验 证 用 户 能 否 生 成 自
+ []
+
+
+Underfull \hbox (badness 3679) in paragraph at lines 269--269
+[]|\TU/STSong(0)/m/n/10.95 建 立 可 审 计 的 后 台 整
+ []
+
+
+Underfull \hbox (badness 3679) in paragraph at lines 269--269
+[]|\TU/STSong(0)/m/n/10.95 面 向 小 众 专 业 领 域 补
+ []
+
+
+Underfull \hbox (badness 5504) in paragraph at lines 269--269
+\TU/STSong(0)/m/n/10.95 工 作 流 生 成、|  工 具 绑
+ []
+
+[10]
+Underfull \hbox (badness 10000) in paragraph at lines 298--298
+[]|\TU/STSong(0)/m/n/10.95 写 入 \TU/lmr/m/n/10.95 Memory Vault\TU/STSong(0)/m/n/
+10.95 、| \TU/lmr/m/n/10.95 Project
+ []
+
+
+Underfull \hbox (badness 10000) in paragraph at lines 298--298
+[]|\TU/STSong(0)/m/n/10.95 后 台 整 理 与 主 动
+ []
+
+[11]
+File: figure/记忆系统图.png Graphic file (type bmp)
+<figure/记忆系统图.png>
+ [12] [13] [14]
+File: figure/产品使用流程图.png Graphic file (type bmp)
+<figure/产品使用流程图.png>
+ [15]
+File: figure/运行时截图.png Graphic file (type bmp)
+<figure/运行时截图.png>
+ [16] [17] [18]
 File: figure/系统架构图.png Graphic file (type bmp)
 <figure/系统架构图.png>
-[18] [19]
-Underfull \hbox (badness 10000) in paragraph at lines 681--681
+ [19] [20]
+Underfull \hbox (badness 10000) in paragraph at lines 683--683
 []|\TU/STSong(0)/m/n/10.95 系 统 最 重 要 的 组 成 部
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 681--681
+Underfull \hbox (badness 10000) in paragraph at lines 683--683
 \TU/STSong(0)/m/n/10.95 分，|  包 含 稳 健 数 据 结
  []
 
 
-Underfull \hbox (badness 5939) in paragraph at lines 681--681
+Underfull \hbox (badness 5939) in paragraph at lines 683--683
 []|\TU/STSong(0)/m/n/10.95 面 向 项 目 级 能 力 组 织，|
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 681--681
+Underfull \hbox (badness 10000) in paragraph at lines 683--683
 []|\TU/STSong(0)/m/n/10.95 遵 守 标 准 输 入 输 出 协
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 681--681
+Underfull \hbox (badness 10000) in paragraph at lines 683--683
 []|\TU/STSong(0)/m/n/10.95 公 共 能 力，|  可 被 任 意
  []
 
 
-Underfull \hbox (badness 10000) in paragraph at lines 681--681
+Underfull \hbox (badness 10000) in paragraph at lines 683--683
 []|\TU/STSong(0)/m/n/10.95 公 共 能 力，|  供 模 块、|
  []
 
-[20] [21]
-Underfull \hbox (badness 10000) in paragraph at lines 714--714
+[21]
+Underfull \hbox (badness 10000) in paragraph at lines 716--716
 []|\TU/lmr/bx/n/10.95 Memory Graph
  []
 
-
-Underfull \hbox (badness 10000) in paragraph at lines 714--714
-[]|\TU/lmtt/m/n/10.95 content \TU/STSong(0)/m/n/10.95 保 存 声 明 式 记 忆 内 容；| \TU/l
-mtt/m/n/10.95 semantic_info \TU/STSong(0)/m/n/10.95 保 存 语
- []
-
-
-Underfull \hbox (badness 10000) in paragraph at lines 714--714
-\TU/STSong(0)/m/n/10.95 义 向 量；| \TU/lmtt/m/n/10.95 remind_frequency \TU/STSong(
-0)/m/n/10.95 记 录 该 记 忆 被 提 醒 的 频 率；|
- []
-
 [22]
-Underfull \hbox (badness 10000) in paragraph at lines 758--758
+Underfull \hbox (badness 10000) in paragraph at lines 760--760
 []|\TU/lmr/m/n/10.95 Task Difficulty
  []
 
+[23]
 File: figure/权限与风险等级图.png Graphic file (type bmp)
 <figure/权限与风险等级图.png>
-[23] [24]
-Underfull \hbox (badness 1158) in paragraph at lines 836--836
+ [24]
+Underfull \hbox (badness 1158) in paragraph at lines 838--838
 []|\TU/STSong(0)/m/n/10.95 主 要 依 赖 单 次 对 话 窗 口，|  历 史 资
  []
 
 
-Underfull \hbox (badness 1158) in paragraph at lines 836--836
+Underfull \hbox (badness 1158) in paragraph at lines 838--838
 \TU/STSong(0)/m/n/10.95 料、|  项 目 背 景 和 用 户 偏 好 容 易 丢
  []
 
 
-Underfull \hbox (badness 1158) in paragraph at lines 836--836
+Underfull \hbox (badness 1158) in paragraph at lines 838--838
 []|\TU/STSong(0)/m/n/10.95 主 要 生 成 文 本，|  需 要 用 户 手 动 复
  []
 
 [25] [26]
-Underfull \hbox (badness 3724) in paragraph at lines 867--867
+Underfull \hbox (badness 3724) in paragraph at lines 869--869
 []|\TU/STSong(0)/m/n/10.95 科 研 人 员、|  独 立 开 发
  []
 
 
-Underfull \hbox (badness 3724) in paragraph at lines 867--867
+Underfull \hbox (badness 3724) in paragraph at lines 869--869
 []|\TU/STSong(0)/m/n/10.95 本 地 部 署、|  私 有 模 型
  []
 
 
-Underfull \hbox (badness 2495) in paragraph at lines 867--867
+Underfull \hbox (badness 2495) in paragraph at lines 869--869
 []|\TU/STSong(0)/m/n/10.95 用 户 量 和 工 具 生 态 形
  []
 
 
-Underfull \hbox (badness 2495) in paragraph at lines 867--867
+Underfull \hbox (badness 2495) in paragraph at lines 869--869
 []|\TU/STSong(0)/m/n/10.95 第 三 方 工 具 分 成 或 企
  []
 
 
-Underfull \hbox (badness 3039) in paragraph at lines 912--912
+Underfull \hbox (badness 3039) in paragraph at lines 914--914
 \TU/STSong(0)/m/n/12 化 学 习 与 边 缘 智 能；|  具 备 \TU/lmr/m/n/12 LLM/Agent\TU/STSong(
 0)/m/n/12 、|
  []
 
 
-Underfull \hbox (badness 1968) in paragraph at lines 912--912
+Underfull \hbox (badness 1968) in paragraph at lines 914--914
 \TU/lmr/m/n/12 GraphRAG \TU/STSong(0)/m/n/12 长 期 记 忆、| \TU/lmr/m/n/12 FastAPI\T
 U/STSong(0)/m/n/12 、| \TU/lmr/m/n/12 vLLM\TU/STSong(0)/m/n/12 、|
  []
@@ -891,10 +881,10 @@ Package rerunfilecheck Info: File `项目说明书.out' has not changed.
 Here is how much of TeX's memory you used:
  16171 strings out of 474829
  370411 string characters out of 5759809
- 1959188 words of memory out of 5000000
+ 1963188 words of memory out of 5000000
  38027 multiletter control sequences out of 15000+600000
  564067 words of font info for 94 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
- 93i,14n,97p,1191b,1008s stack positions out of 10000i,1000n,20000p,200000b,200000s
+ 93i,14n,97p,1191b,1006s stack positions out of 10000i,1000n,20000p,200000b,200000s
 
 Output written on 项目说明书.pdf (34 pages).

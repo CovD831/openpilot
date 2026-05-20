@@ -8,6 +8,8 @@ import ast
 from pathlib import Path
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 
 from memory.memory_models import MemoryRecord, MemoryType
 from memory.agents.virtual_environment_manager import (
@@ -22,8 +24,6 @@ from core.tool_contracts import (
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -34,29 +34,12 @@ PROJECT_ENVIRONMENT_TOOL_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.FILE_READ, ToolCapability.SHELL_EXECUTION, ToolCapability.NETWORK],
     permission_level=PermissionLevel.MEDIUM,
-    input_schema=[
-        ToolInputSchema(name="project_path", type="string", description="Project directory", required=True),
-        ToolInputSchema(name="written_files", type="array", description="Project files to scan for Python imports", required=False, default=[]),
-        ToolInputSchema(name="entry_files", type="array", description="Preferred runnable entry files", required=False, default=[]),
-        ToolInputSchema(name="run_command", type="string", description="Existing run command to adapt to the venv", required=False, default=""),
-        ToolInputSchema(name="env_name", type="string", description="Project-local virtual environment directory name", required=False, default=".venv"),
-        ToolInputSchema(name="install", type="boolean", description="Install missing dependencies", required=False, default=True),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Project environment sync result",
-        properties={
-            "project_path": {"type": "string"},
-            "venv_path": {"type": "string"},
-            "python_executable": {"type": "string"},
-            "pip_executable": {"type": "string"},
-            "python_version": {"type": "string"},
-            "detected_packages": {"type": "array"},
-            "installed_packages": {"type": "array"},
-            "dependency_source": {"type": "string"},
-            "setup_commands": {"type": "array"},
-            "run_command": {"type": "string"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='project_environment_tool',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['project_path'],
+        input_defaults={'written_files': [], 'entry_files': [], 'run_command': '', 'env_name': '.venv', 'install': True},
     ),
     timeout_seconds=900,
     max_retries=0,
@@ -81,7 +64,9 @@ THIRD_PARTY_IMPORT_MAP = {
 }
 
 
-def project_environment_tool_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('project_environment_tool')
+def project_environment_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Create/sync a project-local .venv and record dependency context."""
     project_path = Path(params["project_path"]).expanduser()
     project_path.mkdir(parents=True, exist_ok=True)
@@ -314,7 +299,7 @@ def _save_environment_memory(memory_store: Any, project_path: Path, payload: dic
                 content=content,
                 tags=["project_environment", project_path.name, *[_package_key(package) for package in packages]],
                 confidence=0.95,
-                metadata=payload,
+                attributes=payload,
             )
         )
     except Exception:

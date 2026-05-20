@@ -148,7 +148,7 @@ class AgentOrchestrator:
 
             # Update task status
             if result.status == TaskStatus.COMPLETED:
-                task.mark_completed(result.result)
+                task.mark_completed(result.result_metadata)
             elif result.status == TaskStatus.FAILED:
                 task.mark_failed(result.error or "Unknown error")
 
@@ -245,7 +245,7 @@ class AgentOrchestrator:
 
                 # Update task status
                 if result.status == TaskStatus.COMPLETED:
-                    task.mark_completed(result.result)
+                    task.mark_completed(result.result_metadata)
                 elif result.status == TaskStatus.FAILED:
                     task.mark_failed(result.error or "Unknown error")
 

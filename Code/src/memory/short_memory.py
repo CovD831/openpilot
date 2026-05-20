@@ -184,7 +184,7 @@ class Message(BaseModel):
     role: str  # "user", "assistant", "system"
     content: str
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    metadata: dict[str, Any] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
 
 
 class ContextManager:
@@ -200,18 +200,18 @@ class ContextManager:
         self.messages: list[Message] = []
         self._compression_boundary: int | None = None
 
-    def add_message(self, role: str, content: str, metadata: dict[str, Any] | None = None) -> None:
+    def add_message(self, role: str, content: str, attributes: dict[str, Any] | None = None) -> None:
         """Add a message to context.
 
         Args:
             role: Message role (user, assistant, system)
             content: Message content
-            metadata: Optional metadata
+            attributes: Optional attributes
         """
         message = Message(
             role=role,
             content=content,
-            metadata=metadata or {}
+            attributes=attributes or {}
         )
         self.messages.append(message)
 
@@ -387,15 +387,15 @@ class ShortMemory:
         """
         return self.context_manager.get_messages(limit)
 
-    def add_message(self, role: str, content: str, metadata: dict[str, Any] | None = None) -> None:
+    def add_message(self, role: str, content: str, attributes: dict[str, Any] | None = None) -> None:
         """Add message to context.
 
         Args:
             role: Message role
             content: Message content
-            metadata: Optional metadata
+            attributes: Optional attributes
         """
-        self.context_manager.add_message(role, content, metadata)
+        self.context_manager.add_message(role, content, attributes)
 
     def get_memory_sketch(self, memories: list[Any] | None = None) -> str:
         """Get memory sketch.

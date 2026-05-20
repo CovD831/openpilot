@@ -9,13 +9,13 @@ import time
 import uuid
 from typing import Any, Optional
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 from tools.code_models import CodeGenerationRequest, CodeLanguage, GeneratedCode
 
@@ -27,44 +27,12 @@ CODE_GENERATOR_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.CODE_EXECUTION, ToolCapability.LLM_CALL],
     permission_level=PermissionLevel.MEDIUM,
-    input_schema=[
-        ToolInputSchema(
-            name="task_description",
-            type="string",
-            description="Description of the code to generate",
-            required=True
-        ),
-        ToolInputSchema(
-            name="language",
-            type="string",
-            description="Programming language (python, shell, bash)",
-            required=True
-        ),
-        ToolInputSchema(
-            name="context",
-            type="string",
-            description="Additional context or requirements",
-            required=False,
-            default=""
-        ),
-        ToolInputSchema(
-            name="prompt_context",
-            type="object",
-            description="Structured upper-layer Prompt Context from the autonomous agent",
-            required=False,
-            default={}
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Generated code and metadata",
-        properties={
-            "code": {"type": "string", "description": "Generated code"},
-            "language": {"type": "string", "description": "Programming language"},
-            "explanation": {"type": "string", "description": "Code explanation"},
-            "imports": {"type": "array", "description": "List of imported modules"},
-            "functions": {"type": "array", "description": "List of function names"}
-        }
+    contract_metadata=ToolContractMetadata(
+        tool_name='code_generator',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['task_description', 'language'],
+        input_defaults={'context': '', 'prompt_context': {}},
     ),
     timeout_seconds=300,
     max_retries=2,
@@ -90,7 +58,9 @@ CODE_GENERATOR_DEFINITION = ToolDefinition(
 )
 
 
-def code_generator_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('code_generator')
+def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """
     Execute code generator tool.
 

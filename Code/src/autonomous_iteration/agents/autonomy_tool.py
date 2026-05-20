@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from autonomous_iteration.agents.autonomy_models import AutonomyDecision, AutonomyLevel, ConfidenceFactors
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -22,54 +22,12 @@ AUTONOMY_TOOL_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[],
     permission_level=PermissionLevel.LOW,
-    input_schema=[
-        ToolInputSchema(
-            name="step_id",
-            type="string",
-            description="Identifier of the step being evaluated",
-            required=False,
-            default="unknown",
-        ),
-        ToolInputSchema(
-            name="risk_level",
-            type="string",
-            description="Risk level: low, medium, high, or forbidden",
-            required=True,
-        ),
-        ToolInputSchema(
-            name="task_type",
-            type="string",
-            description="Task type such as coding, research, file_workflow, or unknown",
-            required=False,
-            default="unknown",
-        ),
-        ToolInputSchema(
-            name="requires_user_input",
-            type="boolean",
-            description="Whether the step explicitly needs user-provided information",
-            required=False,
-            default=False,
-        ),
-        ToolInputSchema(
-            name="memory_context",
-            type="object",
-            description="Optional confidence context from memory or prior executions",
-            required=False,
-            default={},
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Autonomy decision and confidence factors",
-        properties={
-            "step_id": {"type": "string"},
-            "should_ask_user": {"type": "boolean"},
-            "autonomy_level": {"type": "string"},
-            "confidence": {"type": "number"},
-            "decision_reason": {"type": "string"},
-            "intervention_reason": {"type": ["string", "null"]},
-            "confidence_factors": {"type": "object"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='autonomy_tool',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['risk_level'],
+        input_defaults={'step_id': 'unknown', 'task_type': 'unknown', 'requires_user_input': False, 'memory_context': {}},
     ),
     timeout_seconds=10,
     max_retries=0,
@@ -85,7 +43,9 @@ AUTONOMY_TOOL_DEFINITION = ToolDefinition(
 )
 
 
-def autonomy_tool_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('autonomy_tool')
+def autonomy_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Execute deterministic autonomy decision logic."""
     step_id = str(params.get("step_id") or "unknown")
     risk_level = str(params.get("risk_level") or "medium").lower()

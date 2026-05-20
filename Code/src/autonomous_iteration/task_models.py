@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from metadata import TaskResultMetadata
+
 
 class TaskStatus(str, Enum):
     """Task execution status."""
@@ -44,7 +46,7 @@ class Task(BaseModel):
     completed_at: str | None = None
     result: Any | None = None
     error: str | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    attributes: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
 
     def is_ready(self, completed_task_ids: set[str]) -> bool:
@@ -155,7 +157,7 @@ class Agent(BaseModel):
     completed_tasks: int = 0
     failed_tasks: int = 0
     status: str = "idle"  # idle, busy, offline
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
     def is_available(self) -> bool:
         """Check if agent is available for new tasks.
@@ -180,8 +182,8 @@ class Agent(BaseModel):
         if not self.capabilities:
             return True  # General agent can handle anything
 
-        # Check if task requires specific capabilities (from tags or metadata)
-        required_caps = task.metadata.get("required_capabilities", [])
+        # Check if task requires specific capabilities from tags or attributes.
+        required_caps = task.attributes.get("required_capabilities", [])
         if not required_caps:
             return True
 
@@ -229,7 +231,7 @@ class TaskExecutionResult(BaseModel):
 
     task_id: str
     status: TaskStatus
-    result: Any | None = None
+    result_metadata: TaskResultMetadata | None = None
     error: str | None = None
     duration: float | None = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    attributes: dict[str, Any] = Field(default_factory=dict)

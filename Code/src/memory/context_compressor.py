@@ -108,7 +108,7 @@ class ContextCompressor:
             Message(
                 role="system",
                 content=f"[COMPRESSION BOUNDARY]\n\nPrevious conversation summary:\n{compression_summary}",
-                metadata={"compression": True, "original_message_count": len(messages_to_compress)}
+                attributes={"compression": True, "original_message_count": len(messages_to_compress)}
             )
         ] + preserved_messages
 
@@ -264,7 +264,7 @@ Provide a concise summary (aim for {int(len(conversation) * self.target_compress
             Message(
                 role="system",
                 content=f"[COMPRESSION BOUNDARY]\n\nCompressed conversation summary:\n{compression_summary}",
-                metadata={"compression": True, "original_message_count": len(compressible_messages)}
+                attributes={"compression": True, "original_message_count": len(compressible_messages)}
             )
         ] + preserved_messages
 

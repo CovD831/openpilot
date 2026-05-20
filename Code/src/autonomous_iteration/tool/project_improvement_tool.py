@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.llm import LLMMessage, LLMRequest
 from memory.memory_models import MemoryType
 from core.tool_contracts import (
@@ -13,8 +15,6 @@ from core.tool_contracts import (
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -32,29 +32,12 @@ PROJECT_STATE_READER_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.FILE_READ],
     permission_level=PermissionLevel.LOW,
-    input_schema=[
-        ToolInputSchema(name="project_path", type="string", description="Project directory", required=True),
-        ToolInputSchema(name="goal", type="string", description="Original user goal", required=False, default=""),
-        ToolInputSchema(name="written_files", type="array", description="Files created or changed for the project", required=False, default=[]),
-        ToolInputSchema(name="readme_path", type="string", description="README path", required=False, default=""),
-        ToolInputSchema(name="run_command", type="string", description="Known run command", required=False, default=""),
-        ToolInputSchema(name="memory_query", type="string", description="Query for related project memories", required=False, default=""),
-        ToolInputSchema(name="validation_context", type="object", description="Latest validation result", required=False, default={}),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Structured project state snapshot",
-        properties={
-            "project_path": {"type": "string"},
-            "goal": {"type": "string"},
-            "written_files": {"type": "array"},
-            "file_summaries": {"type": "array"},
-            "readme_summary": {"type": "string"},
-            "run_command": {"type": "string"},
-            "memory_records": {"type": "array"},
-            "validation_context": {"type": "object"},
-            "safe_target_files": {"type": "array"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='project_state_reader',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['project_path'],
+        input_defaults={'goal': '', 'written_files': [], 'readme_path': '', 'run_command': '', 'memory_query': '', 'validation_context': {}},
     ),
     timeout_seconds=20,
     max_retries=0,
@@ -77,27 +60,12 @@ PROJECT_IMPROVEMENT_TOOL_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.LLM_CALL, ToolCapability.FILE_READ],
     permission_level=PermissionLevel.MEDIUM,
-    input_schema=[
-        ToolInputSchema(name="project_path", type="string", description="Generated project directory", required=True),
-        ToolInputSchema(name="goal", type="string", description="Original user goal", required=True),
-        ToolInputSchema(name="written_files", type="array", description="Files created or changed for the project", required=False, default=[]),
-        ToolInputSchema(name="run_command", type="string", description="Command used to run the project", required=False, default=""),
-        ToolInputSchema(name="iteration", type="integer", description="Completed successful iteration count", required=False, default=0),
-        ToolInputSchema(name="validation_result", type="object", description="Latest hard validation result", required=False, default={}),
-        ToolInputSchema(name="readme_path", type="string", description="README path", required=False, default=""),
-        ToolInputSchema(name="prompt_context", type="object", description="Structured upper-layer Prompt Context", required=False, default={}),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Project improvement analysis",
-        properties={
-            "summary": {"type": "string", "description": "Concise public assessment"},
-            "improvement_opportunities": {"type": "array", "description": "Concrete improvement opportunities"},
-            "recommended_actions": {"type": "array", "description": "Prioritized actions"},
-            "next_iteration_goal": {"type": "string", "description": "Single goal for the next iteration"},
-            "must_implement_next": {"type": "array", "description": "Observable acceptance points for the next iteration"},
-            "blocking_risks": {"type": "array", "description": "Known blocking risks from validation"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='project_improvement_tool',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['project_path', 'goal'],
+        input_defaults={'written_files': [], 'run_command': '', 'iteration': 0, 'validation_result': {}, 'readme_path': '', 'prompt_context': {}},
     ),
     timeout_seconds=420,
     max_retries=0,
@@ -118,7 +86,9 @@ PROJECT_IMPROVEMENT_TOOL_DEFINITION = ToolDefinition(
 )
 
 
-def project_state_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('project_state_reader')
+def project_state_reader_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Read current project state using a strict tool-style contract."""
     project_path = Path(params["project_path"]).expanduser()
     goal = str(params.get("goal") or "")
@@ -149,7 +119,7 @@ def project_state_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
                     "content": memory.content[:500],
                     "tags": memory.tags,
                     "confidence": memory.confidence,
-                    "metadata": memory.metadata,
+                    "attributes": memory.attributes,
                 }
                 for memory in query_result.memories
             ]
@@ -170,7 +140,7 @@ def project_state_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
                             "content": memory.content[:500],
                             "tags": memory.tags,
                             "confidence": memory.confidence,
-                            "metadata": memory.metadata,
+                            "attributes": memory.attributes,
                         }
                     )
         except Exception:
@@ -207,7 +177,9 @@ def project_state_reader_executor(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def project_improvement_tool_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('project_improvement_tool')
+def project_improvement_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Produce a project improvement report using the current LLM when available."""
     project_path = Path(params["project_path"]).expanduser()
     goal = str(params["goal"])

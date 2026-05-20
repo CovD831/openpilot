@@ -25,6 +25,13 @@ from tools.tool_selection import (
 from tools.tool_registry import ToolRegistry
 from core.tool_contracts import ToolDefinition
 from core.exceptions import classify_error, is_retryable_error, extract_error_context
+from metadata import (
+    FailureMetadata,
+    ResultStatus,
+    ToolInputMetadata,
+    ToolResultMetadata,
+    metadata_summary,
+)
 
 
 class ToolExecutor:
@@ -78,13 +85,13 @@ class ToolExecutor:
             tool_selection,
             context,
             success=None,
-            input_summary=tool_selection.input_params,
+            input_summary=tool_selection.input_metadata,
         )
 
         # 执行前检查
         check_result = self._pre_execution_check(tool_selection, context)
         if not check_result["passed"]:
-            result.metadata.update(check_result.get("metadata", {}))
+            result.attributes.update(check_result.get("attributes", {}))
             result.mark_failed(ExecutionError(
                 error_type=check_result.get("error_type", "PreExecutionCheckFailed"),
                 error_message=check_result["reason"],
@@ -96,9 +103,9 @@ class ToolExecutor:
                 tool_selection,
                 context,
                 success=False,
-                input_summary=tool_selection.input_params,
+                input_summary=tool_selection.input_metadata,
                 error=result.error.error_message if result.error else check_result["reason"],
-                metadata=result.metadata,
+                annotations=result.attributes,
                 duration_ms=int(result.duration_seconds * 1000),
             )
             return result
@@ -119,9 +126,10 @@ class ToolExecutor:
             try:
                 output = self._execute_with_timeout(
                     tool_executor,
-                    tool_selection.input_params,
+                    tool_selection.input_metadata,
                     timeout=context.timeout_seconds
                 )
+                output_metadata = self._coerce_tool_result_metadata(tool_selection.tool_name, output)
 
                 # 记录资源使用
                 execution_time = time.time() - start_time
@@ -132,15 +140,15 @@ class ToolExecutor:
                 # 执行后验证
                 validation_result = self._post_execution_validation(
                     tool_selection,
-                    output,
+                    output_metadata,
                     context
                 )
 
                 if validation_result["valid"]:
-                    result.mark_success(output)
+                    result.mark_success(output_metadata)
                     warnings = validation_result.get("warnings", [])
                     if warnings:
-                        result.metadata["validation_warnings"] = warnings
+                        result.attributes["validation_warnings"] = warnings
                         for warning in warnings:
                             result.add_log("WARNING", warning)
                             self._log_tool_event(
@@ -148,9 +156,9 @@ class ToolExecutor:
                                 tool_selection,
                                 context,
                                 success=True,
-                                input_summary=tool_selection.input_params,
-                                output_summary=output,
-                                metadata={"warning": warning},
+                                input_summary=tool_selection.input_metadata,
+                                output_summary=output_metadata,
+                                annotations={"warning": warning},
                                 duration_ms=int(result.duration_seconds * 1000),
                             )
                     result.add_log("INFO", f"Execution completed successfully in {execution_time:.2f}s")
@@ -159,13 +167,13 @@ class ToolExecutor:
                         tool_selection,
                         context,
                         success=True,
-                        input_summary=tool_selection.input_params,
-                        output_summary=output,
-                        metadata=result.metadata,
+                        input_summary=tool_selection.input_metadata,
+                        output_summary=output_metadata,
+                        annotations=result.attributes,
                         duration_ms=int(result.duration_seconds * 1000),
                     )
                 else:
-                    result.metadata.update(validation_result.get("metadata", {}))
+                    result.attributes.update(validation_result.get("attributes", {}))
                     result.mark_failed(ExecutionError(
                         error_type="ValidationFailed",
                         error_message=validation_result["reason"],
@@ -177,10 +185,10 @@ class ToolExecutor:
                         tool_selection,
                         context,
                         success=False,
-                        input_summary=tool_selection.input_params,
-                        output_summary=output,
+                        input_summary=tool_selection.input_metadata,
+                        output_summary=output_metadata,
                         error=validation_result["reason"],
-                        metadata=result.metadata,
+                        annotations=result.attributes,
                         duration_ms=int(result.duration_seconds * 1000),
                     )
 
@@ -192,9 +200,9 @@ class ToolExecutor:
                     tool_selection,
                     context,
                     success=False,
-                    input_summary=tool_selection.input_params,
+                    input_summary=tool_selection.input_metadata,
                     error=f"Execution timed out after {context.timeout_seconds}s",
-                    metadata=result.metadata,
+                    annotations=result.attributes,
                     duration_ms=int(result.duration_seconds * 1000),
                 )
 
@@ -220,7 +228,7 @@ class ToolExecutor:
                 recoverable=is_retryable_error(e),
                 retry_recommended=is_retryable_error(e)
             )
-            result.metadata.update(
+            result.attributes.update(
                 self._failure_metadata(
                     tool_selection.tool_name,
                     error.error_type,
@@ -234,9 +242,9 @@ class ToolExecutor:
                 tool_selection,
                 context,
                 success=False,
-                input_summary=tool_selection.input_params,
+                input_summary=tool_selection.input_metadata,
                 error=error.error_message,
-                metadata=result.metadata,
+                annotations=result.attributes,
                 duration_ms=int(result.duration_seconds * 1000),
             )
 
@@ -366,7 +374,7 @@ class ToolExecutor:
                 tool_name=fallback_tool,
                 reason="fallback",
                 confidence=0.5,
-                input_params=tool_selection.input_params,
+                input_metadata=tool_selection.input_metadata,
                 requires_confirmation=False,
                 fallback_tools=[],
                 depends_on=tool_selection.depends_on
@@ -391,7 +399,7 @@ class ToolExecutor:
             execution_id=str(uuid.uuid4()),
             tool_name=tool_selection.tool_name,
             step_id=tool_selection.step_id,
-            input_params=tool_selection.input_params,
+            input_metadata=tool_selection.input_metadata,
             timeout_seconds=tool_selection.timeout_override or (tool_def.timeout_seconds if tool_def else 30),
             max_retries=tool_def.max_retries if tool_def else 3,
             permission_level=tool_def.permission_level if tool_def else "medium",
@@ -421,10 +429,10 @@ class ToolExecutor:
                 "passed": False,
                 "reason": f"Missing dependencies: {missing}",
                 "error_type": "MissingDependency",
-                "metadata": {"missing_dependencies": missing},
+                "attributes": {"missing_dependencies": missing},
             }
 
-        validation_result = self._validate_input_params(tool_def, tool_selection.input_params)
+        validation_result = self._validate_input_metadata(tool_def, tool_selection.input_metadata)
         if not validation_result["valid"]:
             return {
                 "passed": False,
@@ -432,7 +440,7 @@ class ToolExecutor:
                 "error_type": "InvalidInput",
                 "recoverable": True,
                 "retry_recommended": True,
-                "metadata": {
+                "attributes": {
                     "validation_errors": validation_result["errors"],
                     **self._failure_metadata(
                         tool_selection.tool_name,
@@ -442,24 +450,20 @@ class ToolExecutor:
                 },
             }
 
-        if validation_result["normalized_params"] != tool_selection.input_params:
-            tool_selection.input_params = validation_result["normalized_params"]
-            context.input_params = validation_result["normalized_params"]
-
         return {"passed": True}
 
     def _post_execution_validation(
         self,
         tool_selection: ToolSelection,
-        output: Any,
+        output_metadata: ToolResultMetadata,
         context: ExecutionContext
     ) -> dict[str, Any]:
         """执行后验证"""
-        if output is None:
+        if output_metadata is None:
             return {
                 "valid": False,
                 "reason": "Output is None",
-                "metadata": self._failure_metadata(
+                "attributes": self._failure_metadata(
                     tool_selection.tool_name,
                     "invalid_output",
                     "Output is None",
@@ -469,92 +473,51 @@ class ToolExecutor:
         tool_def = self.registry.get(tool_selection.tool_name)
         warnings = []
         if tool_def:
-            warnings.extend(self._output_schema_warnings(tool_def, output))
+            if not isinstance(output_metadata, tool_def.output_metadata_type):
+                warnings.append(
+                    f"Output for {tool_def.name} does not match declared metadata type "
+                    f"{tool_def.output_metadata_type.__name__}: got {type(output_metadata).__name__}"
+                )
 
         return {"valid": True, "warnings": warnings}
 
-    def _validate_input_params(
+    def _validate_input_metadata(
         self,
         tool_def: ToolDefinition,
-        input_params: dict[str, Any]
+        input_metadata: ToolInputMetadata
     ) -> dict[str, Any]:
-        """Validate and normalize tool input parameters against ToolDefinition."""
-        normalized = dict(input_params)
+        """Validate tool input metadata against ToolDefinition."""
         errors = []
+        if not isinstance(input_metadata, tool_def.input_metadata_type):
+            errors.append(
+                f"Invalid metadata type for {tool_def.name}: "
+                f"expected {tool_def.input_metadata_type.__name__}, got {type(input_metadata).__name__}"
+            )
+        if input_metadata.tool_name and input_metadata.tool_name != tool_def.name:
+            errors.append(
+                f"Input metadata tool_name mismatch: expected {tool_def.name}, got {input_metadata.tool_name}"
+            )
+        contract = tool_def.contract_metadata
+        params = input_metadata.to_params()
+        if contract:
+            for field_name, default in contract.input_defaults.items():
+                if field_name not in params and hasattr(input_metadata, field_name):
+                    setattr(input_metadata, field_name, deepcopy(default))
+            params = input_metadata.to_params()
 
-        for field in tool_def.input_schema:
-            value_present = field.name in normalized
-            if not value_present and not field.required:
-                if field.default is not None:
-                    normalized[field.name] = deepcopy(field.default)
-                continue
-
+        for field_name in (contract.required_input_fields if contract else []):
+            value_present = field_name in params
             if not value_present:
-                errors.append(f"Missing required parameter: {field.name}")
+                errors.append(f"Missing required metadata field: {field_name}")
                 continue
-
-            value = normalized[field.name]
-            if value is None and field.required:
-                errors.append(f"Required parameter cannot be None: {field.name}")
-                continue
-
-            if value is not None and not self._matches_schema_type(value, field.type):
-                errors.append(
-                    f"Invalid type for parameter '{field.name}': "
-                    f"expected {field.type}, got {type(value).__name__}"
-                )
+            if params[field_name] is None:
+                errors.append(f"Required metadata field cannot be None: {field_name}")
 
         return {
             "valid": not errors,
             "errors": errors,
             "reason": "; ".join(errors),
-            "normalized_params": normalized,
         }
-
-    def _output_schema_warnings(self, tool_def: ToolDefinition, output: Any) -> list[str]:
-        """Return non-fatal warnings when output does not fully match schema."""
-        schema = tool_def.output_schema
-        warnings = []
-
-        if not self._matches_schema_type(output, schema.type):
-            warnings.append(
-                f"Output for {tool_def.name} does not match declared type "
-                f"{schema.type}: got {type(output).__name__}"
-            )
-            return warnings
-
-        if schema.type == "object" and schema.properties and isinstance(output, dict):
-            for property_name, property_schema in schema.properties.items():
-                if property_name not in output:
-                    warnings.append(
-                        f"Output for {tool_def.name} is missing declared property: "
-                        f"{property_name}"
-                    )
-                    continue
-                expected_type = property_schema.get("type")
-                if expected_type and not self._matches_schema_type(output[property_name], expected_type):
-                    warnings.append(
-                        f"Output property '{property_name}' for {tool_def.name} "
-                        f"expected {expected_type}, got {type(output[property_name]).__name__}"
-                    )
-
-        return warnings
-
-    def _matches_schema_type(self, value: Any, schema_type: str) -> bool:
-        """Check a basic JSON-schema-like type name."""
-        if schema_type == "string":
-            return isinstance(value, str)
-        if schema_type == "integer":
-            return isinstance(value, int) and not isinstance(value, bool)
-        if schema_type == "boolean":
-            return isinstance(value, bool)
-        if schema_type == "object":
-            return isinstance(value, dict)
-        if schema_type == "array":
-            return isinstance(value, list)
-        if schema_type == "number":
-            return isinstance(value, (int, float)) and not isinstance(value, bool)
-        return True
 
     def _failure_metadata(
         self,
@@ -562,7 +525,7 @@ class ToolExecutor:
         error_type: str,
         error_message: str
     ) -> dict[str, Any]:
-        """Build metadata from a tool's declared failure modes."""
+        """Build failure attributes from a tool's declared failure modes."""
         tool_def = self.registry.get(tool_name)
         if not tool_def:
             return {}
@@ -582,10 +545,10 @@ class ToolExecutor:
                     "recovery_strategy": failure_mode.recovery_strategy,
                 }
 
-        if normalized_error == "invalidinput" or "missing required parameter" in normalized_message:
+        if normalized_error in {"invalidinput", "invalid_input"} or "missing required" in normalized_message:
             return {
                 "failure_mode": "invalid_input",
-                "recovery_strategy": "Provide all required parameters with the declared types.",
+                "recovery_strategy": "Provide all required metadata fields with the declared types.",
             }
 
         return {}
@@ -593,12 +556,23 @@ class ToolExecutor:
     def _execute_with_timeout(
         self,
         tool_executor: callable,
-        params: dict[str, Any],
+        input_metadata: ToolInputMetadata,
         timeout: int
     ) -> Any:
         """带超时的执行"""
-        future = self._executor_pool.submit(tool_executor, params)
+        future = self._executor_pool.submit(tool_executor, input_metadata)
         return future.result(timeout=timeout)
+
+    def _coerce_tool_result_metadata(self, tool_name: str, output: Any) -> ToolResultMetadata:
+        if isinstance(output, ToolResultMetadata):
+            return output
+        if hasattr(output, "model_dump"):
+            output = output.model_dump(mode="json")
+        return ToolResultMetadata(
+            tool_name=tool_name,
+            status=ResultStatus.SUCCESS,
+            result=output,
+        )
 
     def _log_tool_event(
         self,
@@ -610,7 +584,7 @@ class ToolExecutor:
         input_summary: Any | None = None,
         output_summary: Any | None = None,
         error: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        annotations: dict[str, Any] | None = None,
         duration_ms: int | None = None,
     ) -> None:
         if not self.logger or not hasattr(self.logger, "log_structured_event"):
@@ -621,28 +595,20 @@ class ToolExecutor:
                 source_name=tool_selection.tool_name,
                 phase="tool_execution",
                 event_type=event_type,
-                session_id=context.metadata.get("session_id", context.execution_id),
-                turn_id=int(context.metadata.get("turn_id", 1)),
+                session_id=context.attributes.get("session_id", context.execution_id),
+                turn_id=int(context.attributes.get("turn_id", 1)),
                 success=success,
                 duration_ms=duration_ms,
                 input_summary=self._json_safe_summary(input_summary),
                 output_summary=self._json_safe_summary(output_summary),
                 error=error,
-                metadata=metadata or {},
+                annotations=annotations or {},
             )
         except Exception:
             pass
 
     def _json_safe_summary(self, value: Any) -> Any:
-        if isinstance(value, dict):
-            return {str(key): self._json_safe_summary(item) for key, item in value.items() if not str(key).startswith("_")}
-        if isinstance(value, list):
-            return [self._json_safe_summary(item) for item in value[:20]]
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            if isinstance(value, str) and len(value) > 1000:
-                return value[:1000] + "...[truncated]"
-            return value
-        return str(value)
+        return metadata_summary(value)
 
     def shutdown(self):
         """关闭执行器"""

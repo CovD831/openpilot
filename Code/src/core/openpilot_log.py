@@ -78,7 +78,7 @@ class OpenPilotLogger:
         input_summary: Any | None = None,
         output_summary: Any | None = None,
         error: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        annotations: dict[str, Any] | None = None,
     ) -> None:
         """Write a normalized event while preserving the legacy log_event API."""
         payload = {
@@ -90,7 +90,7 @@ class OpenPilotLogger:
             "input_summary": input_summary,
             "output_summary": output_summary,
             "error": error,
-            "metadata": metadata or {},
+            "annotations": annotations or {},
         }
 
         self.log_event(
@@ -123,4 +123,3 @@ class OpenPilotLogger:
     def clear_error_buffer(self) -> None:
         """Clear the in-memory error buffer."""
         self._error_buffer.clear()
-

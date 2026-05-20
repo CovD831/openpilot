@@ -270,14 +270,14 @@ def format_percentage(value: float, total: float, decimals: int = 1) -> str:
     return f"{percentage:.{decimals}f}%"
 
 
-def format_log_metadata(
+def format_log_attributes(
     timestamp: Optional[datetime] = None,
     file_size: Optional[int] = None,
     branch: Optional[str] = None,
     pr_number: Optional[int] = None
 ) -> str:
     """
-    Format log metadata combining time, size, branch, PR info.
+    Format log attributes combining time, size, branch, PR info.
 
     Args:
         timestamp: Log timestamp
@@ -286,10 +286,10 @@ def format_log_metadata(
         pr_number: Pull request number
 
     Returns:
-        Formatted metadata string
+        Formatted attributes string
 
     Example:
-        >>> format_log_metadata(file_size=1536000, branch="main")
+        >>> format_log_attributes(file_size=1536000, branch="main")
         '1.5 MB | main'
     """
     parts = []

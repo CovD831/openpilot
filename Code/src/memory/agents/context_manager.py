@@ -23,15 +23,15 @@ class ContextManagerAgent:
         self.context_manager = context_manager or ContextManager()
         self.max_agent_chars = max_agent_chars
 
-    def add_user_message(self, content: str, metadata: dict[str, Any] | None = None) -> None:
+    def add_user_message(self, content: str, attributes: dict[str, Any] | None = None) -> None:
         """Store a user's words exactly as provided."""
-        self.context_manager.add_message("user", content, metadata)
+        self.context_manager.add_message("user", content, attributes)
 
-    def add_agent_message(self, content: str, metadata: dict[str, Any] | None = None) -> None:
+    def add_agent_message(self, content: str, attributes: dict[str, Any] | None = None) -> None:
         """Store compressed agent history."""
         compressed = self._compress_agent_history(content)
-        agent_metadata = {"compressed": compressed != content, **(metadata or {})}
-        self.context_manager.add_message("assistant", compressed, agent_metadata)
+        agent_attributes = {"compressed": compressed != content, **(attributes or {})}
+        self.context_manager.add_message("assistant", compressed, agent_attributes)
 
     def output_context(self, limit: int | None = None) -> dict[str, Any]:
         """Return stored context in structured and prompt-ready forms."""
@@ -42,7 +42,7 @@ class ContextManagerAgent:
                     "role": message.role,
                     "content": message.content,
                     "timestamp": str(message.timestamp),
-                    "metadata": dict(message.metadata),
+                    "attributes": dict(message.attributes),
                 }
                 for message in messages
             ],

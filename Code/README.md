@@ -73,11 +73,12 @@ Important directories:
 | `src/execution/` | Modern autopilot and code execution/generation/review support. |
 | `src/agents/` | Task decomposition, orchestration, project evaluation, autonomous iteration. |
 | `src/tools/` | Standard ToolDefinition protocol, tool registry, built-in tool executors. |
+| `src/metadata/` | Strict Pydantic v2 model-harness contracts exchanged by agents, tools, and runtime services. |
 | `src/core/` | LLM client, instrumentation, config, logging, semantic analysis, risk helpers. |
 | `src/memory/` | Memory store, short memory, context compression, memory vault. |
 | `src/utils/` | Pure utility functions and data structures without LLM/tool protocol behavior. |
 
-The legacy `planning/`, `validation/`, `autonomy/`, `reporting/`, `models/`, and `WorkflowExecutor` code paths have been removed. Pydantic contracts now live beside their owning package: Agent contracts in `agents/`, tool contracts in `tools/`, memory contracts in `memory/`, execution contracts in `execution/`, and semantic classification types in `core/`.
+The legacy `planning/`, `validation/`, `autonomy/`, `reporting/`, `models/`, and `WorkflowExecutor` code paths have been removed. Pydantic contracts now live beside their owning package, with one exception: strict model-harness exchange objects live in `src/metadata/`. Tool calls use typed `input_metadata` and typed `output_metadata`; free-form diagnostic or domain attributes should use names such as `annotations`, `attributes`, `trace_info`, or `provider_details`.
 
 ## Refactoring Notes
 

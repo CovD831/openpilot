@@ -6,6 +6,7 @@ from typing import Any
 
 from agent_generator.models import DataArtifact, DataArtifactKind, PipelineSpec, PipelineStep, Slot, SlotKind, StepStrategy
 from tools.llm_summarizer import llm_summarizer_executor
+from metadata import ToolInputMetadata, tool_result_payload
 
 
 MAX_PROCESSING_CONTEXT_CHARS = 12000
@@ -178,7 +179,7 @@ def _run_summarizer_attempt(
     }
     if llm_client is not None:
         params["_llm_client"] = llm_client
-    return llm_summarizer_executor(params)
+    return tool_result_payload(llm_summarizer_executor(ToolInputMetadata.from_mapping("llm_summarizer", params)))
 
 
 def _summarizer_attempt_summary(name: str, output: dict[str, Any]) -> dict[str, Any]:
@@ -376,12 +377,12 @@ def _build_processing_instruction(*, task: str, slots: list[Slot], output_format
     )
     return (
         "You are the processing stage of an agent generator. Produce the final user-facing result, "
-        "not a plan or metadata sketch.\n"
+        "not a plan or internal notes sketch.\n"
         f"Task: {task}\n"
         f"Requested output format: {output_format}\n"
         f"Processing preference: {processing}\n"
         "Respect the user's language and constraints from the slots. Use Markdown. "
-        "Write the final answer directly; do not include internal reasoning, planning notes, or metadata. "
+        "Write the final answer directly; do not include internal reasoning, planning notes, or schema notes. "
         "Ground claims in the supplied collected data, cite source titles or URLs when useful, "
         "and avoid inventing facts that are not supported by the input.\n"
         "Slot values:\n"
@@ -542,7 +543,7 @@ def _log_processing_event(
                 "attempts": attempts,
             },
             error=warning or None,
-            metadata={},
+            annotations={},
         )
     except Exception:
         pass

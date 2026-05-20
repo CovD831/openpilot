@@ -55,7 +55,7 @@ class TaskDecomposer:
             return False
 
         # Don't decompose if already has subtasks
-        if task.metadata.get("has_subtasks"):
+        if task.attributes.get("has_subtasks"):
             return False
 
         # Use LLM to analyze task complexity
@@ -115,7 +115,7 @@ class TaskDecomposer:
             id=str(uuid.uuid4()),
             description=task_description,
             parent_id=parent_task_id,
-            metadata={"context": context}
+            attributes={"context": context}
         )
 
         # Analyze task and generate decomposition

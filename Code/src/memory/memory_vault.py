@@ -58,7 +58,7 @@ class MemoryVault:
         memory_type: MemoryType,
         tags: list[str] | None = None,
         confidence: float = 0.8,
-        metadata: dict[str, Any] | None = None
+        attributes: dict[str, Any] | None = None
     ) -> str:
         """Add a new memory to the vault.
 
@@ -67,7 +67,7 @@ class MemoryVault:
             memory_type: Type of memory
             tags: Optional tags
             confidence: Confidence score
-            metadata: Optional metadata
+            attributes: Optional attributes
 
         Returns:
             Memory ID
@@ -85,7 +85,7 @@ class MemoryVault:
             content=content,
             tags=tags or [],
             confidence=confidence,
-            metadata=metadata or {},
+            attributes=attributes or {},
             embedding=embedding,
             recall_frequency=0.0
         )
@@ -104,7 +104,7 @@ class MemoryVault:
                 "usage_count": 0,
                 "last_updated_timestamp": datetime.now(timezone.utc).isoformat(),
             },
-            metadata=metadata or {}
+            attributes=attributes or {}
         )
         self.graph.add_node(node)
 
@@ -219,7 +219,7 @@ class MemoryVault:
         content: str | None = None,
         tags: list[str] | None = None,
         confidence: float | None = None,
-        metadata: dict[str, Any] | None = None
+        attributes: dict[str, Any] | None = None
     ) -> bool:
         """Update an existing memory.
 
@@ -228,7 +228,7 @@ class MemoryVault:
             content: New content (if provided)
             tags: New tags (if provided)
             confidence: New confidence (if provided)
-            metadata: New metadata (if provided)
+            attributes: New attributes (if provided)
 
         Returns:
             True if updated successfully
@@ -249,8 +249,8 @@ class MemoryVault:
         if confidence is not None:
             memory.confidence = confidence
 
-        if metadata is not None:
-            memory.metadata.update(metadata)
+        if attributes is not None:
+            memory.attributes.update(attributes)
 
         # Update timestamp
         memory.timestamp = datetime.now(timezone.utc).isoformat()
@@ -543,7 +543,7 @@ class MemoryVault:
                     recall_frequency=node.data.get("recall_frequency", 0.0),
                     usage_count=node.data.get("usage_count", 0),
                     timestamp=node.created_at,
-                    metadata=node.metadata
+                    attributes=node.attributes
                 )
                 self._memory_cache[node.id] = memory
 

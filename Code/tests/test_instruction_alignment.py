@@ -19,6 +19,7 @@ from memory.agents.virtual_environment_manager import VirtualEnvironmentManager
 from memory.memory_models import MemoryRecord, MemoryType
 from memory.memory_store import MemoryStore
 from tools.task_classifier import task_classifier_executor
+from metadata import ToolInputMetadata
 from tools.builtin_tools import register_builtin_tools
 from tools.tool_executor import ToolExecutor
 from tools.tool_selection import ToolSelection
@@ -35,7 +36,7 @@ def test_memory_agent_facades_import_and_context_rules() -> None:
     context = manager.output_context()
 
     assert context["messages"][0]["content"] == user_text
-    assert context["messages"][1]["metadata"]["compressed"] is True
+    assert context["messages"][1]["attributes"]["compressed"] is True
     assert context["messages"][1]["content"].startswith("[COMPRESSED AGENT HISTORY]")
 
 
@@ -154,7 +155,7 @@ def test_tool_executor_structured_logs_include_source_type(tmp_path) -> None:
                 step_id="read-missing",
                 tool_name="file_reader",
                 reason="capability_match",
-                input_params={},
+                input_metadata={},
             )
         )
     finally:
@@ -173,14 +174,14 @@ def test_tool_executor_structured_logs_include_source_type(tmp_path) -> None:
 
 
 def test_task_classifier_routes_direct_project_work_to_autonomous_iteration() -> None:
-    result = task_classifier_executor({"task": "帮我在项目里做一个贪吃蛇"})
+    result = task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": "帮我在项目里做一个贪吃蛇"}))
 
     assert result["route"] == "autonomous_iteration"
     assert result["confidence"] >= 0.8
 
 
 def test_task_classifier_routes_reusable_agent_requests_to_agent_generator() -> None:
-    result = task_classifier_executor({"task": "生成一个可复用的研究报告 agent"})
+    result = task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": "生成一个可复用的研究报告 agent"}))
 
     assert result["route"] == "agent_generator"
     assert result["confidence"] >= 0.8
@@ -195,7 +196,7 @@ def test_task_classifier_routes_knowledge_work_to_agent_generator() -> None:
     ]
 
     for task in tasks:
-        result = task_classifier_executor({"task": task})
+        result = task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": task}))
         assert result["route"] == "agent_generator", task
         assert "knowledge work" in result["reason"]
 
@@ -209,12 +210,12 @@ def test_task_classifier_execution_intent_overrides_knowledge_work() -> None:
     ]
 
     for task in tasks:
-        result = task_classifier_executor({"task": task})
+        result = task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": task}))
         assert result["route"] == "autonomous_iteration", task
 
 
 def test_task_classifier_defaults_ambiguous_tasks_to_autonomous_iteration() -> None:
-    result = task_classifier_executor({"task": "分析一下这个任务"})
+    result = task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": "分析一下这个任务"}))
 
     assert result["route"] == "autonomous_iteration"
 

@@ -81,7 +81,7 @@ from .formatters import (
     format_tokens,
     format_relative_time,
     format_percentage,
-    format_log_metadata,
+    format_log_attributes,
     format_count,
     format_list,
 )
@@ -167,7 +167,7 @@ __all__ = [
     'format_tokens',
     'format_relative_time',
     'format_percentage',
-    'format_log_metadata',
+    'format_log_attributes',
     'format_count',
     'format_list',
     # Diff Utils

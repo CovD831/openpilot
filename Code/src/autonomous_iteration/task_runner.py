@@ -161,14 +161,14 @@ class ExecutionTaskRunner:
                         "success": result.status == TaskStatus.COMPLETED,
                         "error": result.error,
                         "duration": result.duration,
-                        "result_summary": str(result.result)[:200] if result.result else None,
+                        "result_summary": str(result.result_metadata)[:200] if result.result_metadata else None,
                     },
                     session_id=runtime.session_id or "unknown",
                     turn_id=1,
                 )
 
                 if result.status == TaskStatus.COMPLETED:
-                    task.mark_completed(result.result)
+                    task.mark_completed(result.result_metadata)
                     runtime.enhanced_ui.set_task_graph_state(
                         tasks=self.dashboard_task_items(tasks),
                         current_task_id=task.id,
@@ -201,7 +201,7 @@ class ExecutionTaskRunner:
                             "task_index": i,
                             "description": task.description,
                             "error": result.error,
-                            "result": result.result,
+                            "result_metadata": result.result_metadata.to_json_dict() if result.result_metadata else None,
                         },
                         session_id=runtime.session_id or "unknown",
                         turn_id=1,
@@ -221,7 +221,7 @@ class ExecutionTaskRunner:
                     )
                     if result.status == TaskStatus.COMPLETED:
                         task.status = TaskStatus.COMPLETED
-                        task.result = result.result
+                        task.result = result.result_metadata
                     else:
                         task.status = TaskStatus.FAILED
                         task.error = result.error
@@ -247,7 +247,7 @@ class ExecutionTaskRunner:
                     status=TaskStatus.FAILED,
                     error=error_msg,
                     duration=0.0,
-                    metadata={},
+                    attributes={},
                 )
                 results.append(result)
                 task.mark_failed(error_msg)
@@ -339,12 +339,12 @@ class ExecutionTaskRunner:
                         status=TaskStatus.FAILED,
                         error=f"Task execution exception: {str(exc)}",
                         duration=0.0,
-                        metadata={},
+                        attributes={},
                     )
                 results.append(result)
 
                 if result.status == TaskStatus.COMPLETED:
-                    task.mark_completed(result.result)
+                    task.mark_completed(result.result_metadata)
                     runtime.stats["tasks_completed"] += 1
                     status_icon = "✓"
                     status_color = "green"

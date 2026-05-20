@@ -31,7 +31,7 @@ class GraphNode:
     id: str
     type: str
     data: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -44,12 +44,12 @@ class GraphNode:
         """Create node from dictionary."""
         return cls(**data)
 
-    def update(self, data: dict[str, Any] | None = None, metadata: dict[str, Any] | None = None) -> None:
-        """Update node data and metadata."""
+    def update(self, data: dict[str, Any] | None = None, attributes: dict[str, Any] | None = None) -> None:
+        """Update node data and attributes."""
         if data:
             self.data.update(data)
-        if metadata:
-            self.metadata.update(metadata)
+        if attributes:
+            self.attributes.update(attributes)
         self.updated_at = datetime.now(timezone.utc).isoformat()
 
 
@@ -61,7 +61,7 @@ class GraphEdge:
     target_id: str
     edge_type: str = "default"
     weight: float = 1.0
-    metadata: dict[str, Any] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert edge to dictionary."""
@@ -79,7 +79,7 @@ class GraphEdge:
             target_id=self.source_id,
             edge_type=self.edge_type,
             weight=self.weight,
-            metadata=self.metadata.copy()
+            attributes=self.attributes.copy()
         )
 
 

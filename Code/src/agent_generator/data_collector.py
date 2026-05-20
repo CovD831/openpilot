@@ -10,6 +10,7 @@ from agent_generator.models import DataArtifact, DataArtifactKind, PipelineSpec,
 from tools.file_reader import file_reader_executor
 from tools.multi_file_reader import multi_file_reader_executor
 from tools.web_searcher import web_searcher_executor
+from metadata import ToolInputMetadata, tool_result_payload
 
 
 def collect_data(
@@ -98,7 +99,7 @@ def _collect_from_files(
             "max_lines": 200,
             "max_size_mb": 10,
         }
-        output = file_reader_executor(params)
+        output = tool_result_payload(file_reader_executor(ToolInputMetadata.from_mapping("file_reader", params)))
         selected_tool = "file_reader"
         files = [str(file_paths[0])]
     else:
@@ -107,7 +108,7 @@ def _collect_from_files(
             "encoding": "utf-8",
             "max_total_chars": 50000,
         }
-        output = multi_file_reader_executor(params)
+        output = tool_result_payload(multi_file_reader_executor(ToolInputMetadata.from_mapping("multi_file_reader", params)))
         selected_tool = "multi_file_reader"
         files = output.get("files", [str(path) for path in file_paths])
 
@@ -254,7 +255,7 @@ def _execute_web_search_with_cleanup_fallback(
     logger: Any | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     try:
-        output = web_searcher_executor(params)
+        output = tool_result_payload(web_searcher_executor(ToolInputMetadata.from_mapping("web_searcher", params)))
         cleanup_fallback_warning = _cleanup_fallback_warning(output)
         _log_agent_event(
             logger,
@@ -276,7 +277,7 @@ def _execute_web_search_with_cleanup_fallback(
         fallback_params = dict(params)
         fallback_params["llm_cleanup"] = False
         fallback_params.pop("_llm_client", None)
-        output = web_searcher_executor(fallback_params)
+        output = tool_result_payload(web_searcher_executor(ToolInputMetadata.from_mapping("web_searcher", fallback_params)))
         warning = (
             "LLM cleanup disabled because the current SOCKS proxy setup is missing "
             "the socksio dependency. Install with: conda install -n openpilot -c conda-forge socksio."
@@ -378,7 +379,7 @@ def _log_agent_event(
             input_summary=_json_safe_summary(input_summary),
             output_summary=_json_safe_summary(output_summary),
             error=error,
-            metadata={},
+            annotations={},
         )
     except Exception:
         pass

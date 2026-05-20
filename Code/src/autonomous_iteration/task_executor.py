@@ -10,6 +10,7 @@ from typing import Any
 
 from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.task_models import Task, TaskPriority
+from metadata import ToolInputMetadata
 
 
 class AutonomousTaskExecutor:
@@ -132,13 +133,13 @@ class AutonomousTaskExecutor:
             task=task,
             step_id=f"iteration_{iteration}_file_writer",
             tool_name="file_writer",
-            input_params={
+            input_metadata=ToolInputMetadata.from_mapping("file_writer", {
                 "file_path": str(target_file),
                 "content": improved_code,
                 "encoding": "utf-8",
                 "create_dirs": True,
                 "overwrite": True,
-            },
+            }),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         self._log_agent(
@@ -198,7 +199,7 @@ class AutonomousTaskExecutor:
             task=task,
             step_id=f"iteration_{iteration}_code_reviewer",
             tool_name="code_reviewer",
-            input_params={
+            input_metadata=ToolInputMetadata.from_mapping("code_reviewer", {
                 "code": improved_code,
                 "language": "python",
                 "prompt_context": self.runtime._build_prompt_context(
@@ -216,7 +217,7 @@ class AutonomousTaskExecutor:
                     code_context=self.budget_code_context(improved_code, max_chars=3000),
                     mode="review",
                 ),
-            },
+            }),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         self._log_agent(
@@ -230,7 +231,7 @@ class AutonomousTaskExecutor:
             task=task,
             step_id=f"iteration_{iteration}_readme_tool",
             tool_name="readme_tool",
-            input_params={
+            input_metadata=ToolInputMetadata.from_mapping("readme_tool", {
                 "project_path": str(project_path),
                 "project_summary": f"{goal}\n\nRecent Improvements:\n- " + "\n- ".join(
                     (getattr(self.runtime, "_project_improvement_actions", []) or []) + actions
@@ -241,7 +242,7 @@ class AutonomousTaskExecutor:
                 "setup_commands": environment_payload.get("setup_commands") or [],
                 "environment": self.runtime._readme_environment_context(environment_payload),
                 "overwrite": True,
-            },
+            }),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         self._log_agent(
@@ -629,18 +630,18 @@ class AutonomousTaskExecutor:
     ) -> dict[str, Any]:
         mode = mode or ("compact" if simplified else "full")
         step_prefix = "" if mode == "full" else f"{mode}_"
-        input_params = {
+        input_metadata_payload = {
             "task_description": improvement_prompt,
             "language": "python",
             "context": f"Improve {target_file} ({mode} retry mode)",
         }
         if prompt_context:
-            input_params["prompt_context"] = prompt_context
+            input_metadata_payload["prompt_context"] = prompt_context
         result = self.runtime._execute_fast_tool(
             task=task,
             step_id=f"iteration_{iteration}_{step_prefix}code_generator",
             tool_name="code_generator",
-            input_params=input_params,
+            input_metadata=ToolInputMetadata.from_mapping("code_generator", input_metadata_payload),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         self._log_agent(

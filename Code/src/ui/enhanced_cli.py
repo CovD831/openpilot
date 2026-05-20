@@ -305,9 +305,10 @@ def _execute_goal_interactive(
 
 def _classify_task_route(task: str) -> dict:
     """Classify a user task before selecting the execution path."""
+    from metadata import ToolInputMetadata, tool_result_payload
     from tools.task_classifier import task_classifier_executor
 
-    return task_classifier_executor({"task": task})
+    return tool_result_payload(task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": task})))
 
 
 def _show_task_route(ui: EnhancedUI, classification: dict) -> None:

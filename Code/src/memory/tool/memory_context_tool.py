@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from memory.context_builder import MemoryContextBuilder
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 
 
@@ -22,53 +22,12 @@ MEMORY_CONTEXT_TOOL_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.FILE_READ],
     permission_level=PermissionLevel.LOW,
-    input_schema=[
-        ToolInputSchema(
-            name="query",
-            type="string",
-            description="Query used to retrieve relevant memory and files",
-            required=True,
-        ),
-        ToolInputSchema(
-            name="project_path",
-            type="string",
-            description="Project directory to sketch and search",
-            required=False,
-            default=".",
-        ),
-        ToolInputSchema(
-            name="include_environment",
-            type="boolean",
-            description="Include project environment memories",
-            required=False,
-            default=True,
-        ),
-        ToolInputSchema(
-            name="limit",
-            type="integer",
-            description="Maximum memories/files/messages to include",
-            required=False,
-            default=10,
-        ),
-        ToolInputSchema(
-            name="system_prompt",
-            type="string",
-            description="Optional system prompt to prepend to prompt_text",
-            required=False,
-            default="",
-        ),
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Structured memory context and prompt text",
-        properties={
-            "system_prompt": {"type": "string"},
-            "dialog_context": {"type": "array"},
-            "related_memories": {"type": "array"},
-            "related_files": {"type": "array"},
-            "environment_context": {"type": "array"},
-            "prompt_text": {"type": "string"},
-        },
+    contract_metadata=ToolContractMetadata(
+        tool_name='memory_context',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['query'],
+        input_defaults={'project_path': '.', 'include_environment': True, 'limit': 10, 'system_prompt': ''},
     ),
     timeout_seconds=30,
     max_retries=1,
@@ -89,7 +48,9 @@ MEMORY_CONTEXT_TOOL_DEFINITION = ToolDefinition(
 )
 
 
-def memory_context_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('memory_context')
+def memory_context_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """Execute the memory context builder tool."""
     query = str(params.get("query") or "").strip()
     if not query:

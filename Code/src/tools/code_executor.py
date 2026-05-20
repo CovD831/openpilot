@@ -14,13 +14,13 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from typing import Any, Optional
 
+from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
-    ToolInputSchema,
-    ToolOutputSchema,
 )
 from tools.code_models import CodeExecutionResult, CodeLanguage, GeneratedCode
 
@@ -32,36 +32,12 @@ CODE_EXECUTOR_DEFINITION = ToolDefinition(
     version="1.0.0",
     capabilities=[ToolCapability.CODE_EXECUTION],
     permission_level=PermissionLevel.HIGH,
-    input_schema=[
-        ToolInputSchema(
-            name="code",
-            type="string",
-            description="Code to execute",
-            required=True
-        ),
-        ToolInputSchema(
-            name="language",
-            type="string",
-            description="Programming language (python, shell, bash)",
-            required=True
-        ),
-        ToolInputSchema(
-            name="timeout",
-            type="integer",
-            description="Execution timeout in seconds (default: 30)",
-            required=False,
-            default=30
-        )
-    ],
-    output_schema=ToolOutputSchema(
-        type="object",
-        description="Code execution results",
-        properties={
-            "success": {"type": "boolean", "description": "Whether execution succeeded"},
-            "output": {"type": "string", "description": "Execution output (stdout)"},
-            "error": {"type": "string", "description": "Error message (if failed)"},
-            "exit_code": {"type": "integer", "description": "Process exit code"}
-        }
+    contract_metadata=ToolContractMetadata(
+        tool_name='code_executor',
+        input_metadata_type="ToolInputMetadata",
+        output_metadata_type="ToolResultMetadata",
+        required_input_fields=['code', 'language'],
+        input_defaults={'timeout': 30},
     ),
     timeout_seconds=60,
     max_retries=1,
@@ -87,7 +63,9 @@ CODE_EXECUTOR_DEFINITION = ToolDefinition(
 )
 
 
-def code_executor_executor(params: dict[str, Any]) -> dict[str, Any]:
+@metadata_tool_result('code_executor')
+def code_executor_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    params = input_metadata.to_params()
     """
     Execute code executor tool.
 

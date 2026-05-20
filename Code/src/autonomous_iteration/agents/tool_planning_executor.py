@@ -9,6 +9,7 @@ from typing import Any
 
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.llm import LLMMessage, LLMRequest
+from metadata import FailureMetadata, ResultStatus, TaskResultMetadata, ToolInputMetadata
 from tools.tool_selection import ToolSelection
 
 
@@ -67,10 +68,16 @@ class ToolPlanningTaskExecutor:
             result = TaskExecutionResult(
                 task_id=task.id,
                 status=TaskStatus.COMPLETED if all_succeeded else TaskStatus.FAILED,
-                result=output,
+                result_metadata=TaskResultMetadata(
+                    task_id=task.id,
+                    status=ResultStatus.SUCCESS if all_succeeded else ResultStatus.FAIL,
+                    result=output if all_succeeded else None,
+                    failure=FailureMetadata(error_type="ToolExecutionFailed", error_message=error_msg or "Tool execution failed") if not all_succeeded else None,
+                    duration=duration,
+                ),
                 error=error_msg,
                 duration=duration,
-                metadata={
+                attributes={
                     "start_time": start_time.isoformat(),
                     "end_time": datetime.now().isoformat(),
                     "tool_count": len(tool_results),
@@ -95,7 +102,13 @@ class ToolPlanningTaskExecutor:
                 status=TaskStatus.FAILED,
                 error=str(exc),
                 duration=duration,
-                metadata={
+                result_metadata=TaskResultMetadata(
+                    task_id=task.id,
+                    status=ResultStatus.FAIL,
+                    failure=FailureMetadata(error_type=type(exc).__name__, error_message=str(exc)),
+                    duration=duration,
+                ),
+                attributes={
                     "start_time": start_time.isoformat(),
                     "end_time": datetime.now().isoformat(),
                 },
@@ -132,7 +145,7 @@ Available Tools:
 Generate a JSON plan with a list of tool calls to accomplish this task. Each tool call should specify:
 - tool_name: name of the tool to use
 - reason: why this tool is needed
-- input_params: dictionary of input parameters
+- input_metadata: object containing strict metadata fields for the selected tool
 
 Output ONLY valid JSON in this format:
 {{
@@ -140,7 +153,7 @@ Output ONLY valid JSON in this format:
     {{
       "tool_name": "tool_name_here",
       "reason": "explanation",
-      "input_params": {{"param1": "value1"}}
+      "input_metadata": {{"task_description": "value", "language": "python"}}
     }}
   ]
 }}
@@ -178,45 +191,48 @@ Important:
 
         for index, tool_call in enumerate(tool_calls):
             tool_name = tool_call.get("tool_name")
-            input_params = dict(tool_call.get("input_params", {}))
+            raw_input = dict(tool_call.get("input_metadata", {}))
             reason_text = tool_call.get("reason", "")
-            input_params = self.runtime._resolve_chained_inputs(
+            input_metadata = ToolInputMetadata.from_mapping(tool_name, raw_input)
+            input_metadata = self.runtime._resolve_chained_metadata(
                 tool_name,
-                input_params,
+                input_metadata,
                 last_output,
                 last_code_output,
             )
+            input_payload = input_metadata.to_params()
 
-            self._show_tool_running(task, tool_name, input_params, reason_text, index, len(tool_calls))
+            self._show_tool_running(task, tool_name, input_payload, reason_text, index, len(tool_calls))
             selection = ToolSelection(
                 step_id=f"step_{index + 1}",
                 tool_name=tool_name,
                 reason=self.runtime._map_reason_to_enum(reason_text),
                 confidence=0.9,
-                input_params=input_params,
+                input_metadata=input_metadata,
                 requires_confirmation=False,
                 fallback_tools=[],
                 depends_on=[],
                 timeout_override=None,
             )
-            self._log_tool_start(task, tool_name, input_params)
+            self._log_tool_start(task, tool_name, input_payload)
             exec_result = self.runtime.tool_executor.execute_single(selection, context=None)
             self._show_tool_result(tool_name, exec_result)
-            log_output = self._summarize_tool_output(exec_result.output)
+            log_output = self._summarize_tool_output(exec_result.output_metadata)
+            output_result = exec_result.output_metadata.result if exec_result.output_metadata else None
             tool_results.append(
                 {
                     "tool": tool_name,
-                    "params": input_params,
-                    "result": exec_result.output,
+                    "params": input_payload,
+                    "result": output_result,
                     "success": exec_result.success,
                     "error": exec_result.error.error_message if exec_result.error else None,
                 }
             )
             self._log_tool_complete(task, tool_name, exec_result, log_output)
 
-            last_output = exec_result.output
+            last_output = exec_result.output_metadata
             if tool_name == "code_generator" and exec_result.success:
-                last_code_output = exec_result.output
+                last_code_output = exec_result.output_metadata
 
         return tool_results, last_output
 
@@ -224,7 +240,7 @@ Important:
         self,
         task: Task,
         tool_name: str,
-        input_params: dict[str, Any],
+        input_payload: dict[str, Any],
         reason_text: str,
         index: int,
         total: int,
@@ -235,19 +251,19 @@ Important:
         tool_status += f"Tool Execution: {index + 1}/{total}\n"
         tool_status += f"Tool: {tool_name}\n"
         if tool_name == "code_generator":
-            task_desc = input_params.get("task_description", "")
+            task_desc = input_payload.get("task_description", "")
             tool_status += "Action: Generating code\n"
             tool_status += f"Request: {task_desc[:120]}\n"
-            tool_status += f"Language: {input_params.get('language', 'unknown')}"
+            tool_status += f"Language: {input_payload.get('language', 'unknown')}"
         elif tool_name == "file_writer":
-            file_path = input_params.get("file_path", "unknown")
-            content_len = len(input_params.get("content", ""))
+            file_path = input_payload.get("file_path", "unknown")
+            content_len = len(input_payload.get("content", ""))
             tool_status += "Action: Writing file\n"
             tool_status += f"Path: {file_path}\n"
             tool_status += f"Size: {content_len} characters"
         elif tool_name == "code_executor":
             tool_status += "Action: Executing code\n"
-            tool_status += f"Language: {input_params.get('language', 'unknown')}"
+            tool_status += f"Language: {input_payload.get('language', 'unknown')}"
         else:
             tool_status += f"Action: {reason_text[:120]}"
         self.runtime.enhanced_ui.set_current_task_state(
@@ -262,10 +278,11 @@ Important:
         result_status = f"Tool: {tool_name}\n"
         if exec_result.success:
             result_status += "Status: Success\n"
-            if tool_name == "file_writer" and exec_result.output:
+            output = exec_result.output_metadata.result if exec_result.output_metadata else None
+            if tool_name == "file_writer" and output:
                 result_status += "File written successfully"
-            elif tool_name == "code_generator" and isinstance(exec_result.output, dict):
-                result_status += f"Generated {len(exec_result.output.get('code', ''))} characters of code"
+            elif tool_name == "code_generator" and isinstance(output, dict):
+                result_status += f"Generated {len(output.get('code', ''))} characters of code"
         else:
             result_status += "Status: Failed\n"
             if exec_result.error:
@@ -277,8 +294,8 @@ Important:
         )
         time.sleep(0.5)
 
-    def _log_tool_start(self, task: Task, tool_name: str, input_params: dict[str, Any]) -> None:
-        log_params = self.runtime._sanitize_tool_params(input_params)
+    def _log_tool_start(self, task: Task, tool_name: str, input_payload: dict[str, Any]) -> None:
+        log_params = self.runtime._sanitize_tool_metadata(input_payload)
         if tool_name == "code_generator":
             log_params["task_description_length"] = len(log_params.get("task_description", ""))
         self.runtime.logger.log_event(

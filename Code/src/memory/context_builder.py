@@ -86,7 +86,7 @@ class MemoryContextBuilder:
                 "role": message.role,
                 "content": message.content,
                 "timestamp": str(message.timestamp),
-                "metadata": dict(message.metadata),
+                "attributes": dict(message.attributes),
             }
             for message in messages
         ]
@@ -133,7 +133,7 @@ class MemoryContextBuilder:
             "content": memory.content,
             "tags": memory.tags,
             "confidence": memory.confidence,
-            "metadata": memory.metadata,
+            "attributes": memory.attributes,
         }
 
     def _vault_memory_payload(self, memory: dict[str, Any]) -> dict[str, Any]:
@@ -143,7 +143,7 @@ class MemoryContextBuilder:
             "content": memory.get("content", ""),
             "tags": list(memory.get("tags") or []),
             "confidence": float(memory.get("confidence", 0.5)),
-            "metadata": dict(memory.get("metadata") or {}),
+            "attributes": dict(memory.get("attributes") or {}),
             "score": float(memory.get("score", 0.0)),
         }
 

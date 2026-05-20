@@ -5,7 +5,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
+
+from metadata import ToolInputMetadata
 
 
 class SelectionReason(str, Enum):
@@ -27,8 +29,8 @@ class ToolSelection(BaseModel):
     reason: SelectionReason = Field(..., description="Why this tool was selected")
     confidence: float = Field(default=0.5, ge=0.0, le=1.0, description="Confidence in selection")
 
-    # Input parameters
-    input_params: dict[str, Any] = Field(default_factory=dict, description="Tool input parameters")
+    # Input metadata
+    input_metadata: ToolInputMetadata = Field(default_factory=ToolInputMetadata, description="Strict tool input metadata")
 
     # Execution control
     requires_confirmation: bool = Field(default=False, description="Whether user confirmation needed")
@@ -41,6 +43,21 @@ class ToolSelection(BaseModel):
     depends_on: list[str] = Field(default_factory=list, description="Step IDs this depends on")
 
     model_config = ConfigDict(use_enum_values=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_input_metadata(cls, data):
+        if isinstance(data, dict) and isinstance(data.get("input_metadata"), dict):
+            tool_name = str(data.get("tool_name") or "")
+            data = dict(data)
+            data["input_metadata"] = ToolInputMetadata.from_mapping(tool_name, data["input_metadata"])
+        return data
+
+    @model_validator(mode="after")
+    def _attach_tool_name_to_input_metadata(self) -> "ToolSelection":
+        if not self.input_metadata.tool_name:
+            self.input_metadata.tool_name = self.tool_name
+        return self
 
 
 class ParallelExecutionGroup(BaseModel):

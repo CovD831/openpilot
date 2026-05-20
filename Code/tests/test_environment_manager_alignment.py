@@ -8,6 +8,7 @@ from memory.agents.virtual_environment_manager import (
     VirtualEnvironmentManager,
 )
 from memory.agents.project_environment_tool import EnvironmentManager, project_environment_tool_executor
+from metadata import ToolInputMetadata
 
 
 class FakeEnvironmentManager:
@@ -58,12 +59,12 @@ def test_project_environment_tool_uses_injected_manager_without_real_venv(tmp_pa
     fake_manager = FakeEnvironmentManager()
 
     result = project_environment_tool_executor(
-        {
+        ToolInputMetadata.from_mapping("project_environment_tool", {
             "project_path": str(project),
             "written_files": ["app.py"],
             "install": True,
             "_environment_manager": fake_manager,
-        }
+        })
     )
 
     assert result["env_name"] == ".venv"
