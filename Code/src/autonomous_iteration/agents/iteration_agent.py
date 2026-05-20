@@ -30,7 +30,7 @@ from autonomous_iteration.models import (
 )
 from memory.memory_models import MemoryRecord, MemoryType
 from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
-from metadata import ToolInputMetadata, tool_result_payload
+from metadata import ToolInputMetadata
 
 
 ApplyImprovement = Callable[[int, EvaluationResult, list[str], dict[str, Any], bool], IterationResult]
@@ -594,7 +594,7 @@ class AutonomousIterationAgent:
             payload = project_state_reader_executor(
                 ToolInputMetadata.from_mapping("project_state_reader", {**params, "_memory_store": self.memory_store})
             )
-            payload = tool_result_payload(payload)
+            payload = payload.result.to_json_dict() if payload.result else {}
         return ProjectStateSnapshot(**payload)
 
     def _make_goals(

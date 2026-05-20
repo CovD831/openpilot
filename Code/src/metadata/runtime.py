@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
 from metadata.base import JsonValue, MetadataBase, MetadataKind
+from metadata.results import FailureMetadata, ResultStatus, TaskResultMetadata, ToolResultMetadata
+from metadata.tooling import ToolInputMetadata
 
 
 class LLMRequestMetadata(MetadataBase):
@@ -49,3 +51,48 @@ class LogEventMetadata(MetadataBase):
     output_summary: Any | None = None
     error: str | None = None
     trace_info: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class ToolExecutionEnvelopeMetadata(MetadataBase):
+    kind: Literal[MetadataKind.TOOL_EXECUTION_ENVELOPE] = MetadataKind.TOOL_EXECUTION_ENVELOPE
+    tool_name: str
+    step_id: str
+    status: ResultStatus
+    success: bool
+    input_metadata: ToolInputMetadata
+    output_metadata: ToolResultMetadata | None = None
+    failure: FailureMetadata | None = None
+    duration_seconds: float = 0.0
+    timeout_override: int | None = None
+    attempts_used: int = 1
+    retry_count: int = 0
+    retry_history: list[dict[str, JsonValue]] = Field(default_factory=list)
+
+    @property
+    def output(self) -> MetadataBase | None:
+        return self.output_metadata.result if self.output_metadata else None
+
+    @property
+    def error_message(self) -> str | None:
+        return self.failure.error_message if self.failure else None
+
+
+class AgentExecutionMetadata(MetadataBase):
+    kind: Literal[MetadataKind.AGENT_EXECUTION] = MetadataKind.AGENT_EXECUTION
+    agent_name: str
+    status: ResultStatus
+    success: bool
+    result_metadata: TaskResultMetadata | MetadataBase | None = None
+    failure: FailureMetadata | None = None
+    duration_seconds: float = 0.0
+    tool_calls: list[ToolExecutionEnvelopeMetadata] = Field(default_factory=list)
+
+
+class ModuleExecutionMetadata(MetadataBase):
+    kind: Literal[MetadataKind.MODULE_EXECUTION] = MetadataKind.MODULE_EXECUTION
+    module_name: str
+    status: ResultStatus
+    success: bool
+    result_metadata: TaskResultMetadata | MetadataBase | None = None
+    failure: FailureMetadata | None = None
+    duration_seconds: float = 0.0

@@ -29,7 +29,7 @@ def test_tool_result_requires_result_or_failure_by_status() -> None:
     success = ToolResultMetadata(
         tool_name="code_generator",
         status=ResultStatus.SUCCESS,
-        result={"kind": "code_artifact", "code": "print('ok')", "language": "python"},
+        result=CodeArtifactMetadata(code="print('ok')", language="python"),
     )
 
     assert isinstance(success.result, CodeArtifactMetadata)

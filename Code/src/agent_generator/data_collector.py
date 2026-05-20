@@ -10,7 +10,7 @@ from agent_generator.models import DataArtifact, DataArtifactKind, PipelineSpec,
 from tools.file_reader import file_reader_executor
 from tools.multi_file_reader import multi_file_reader_executor
 from tools.web_searcher import web_searcher_executor
-from metadata import ToolInputMetadata, tool_result_payload
+from metadata import CollectedDataMetadata, ResultStatus, SearchArtifactMetadata, ToolInputMetadata, ToolResultMetadata, payload_to_artifact
 
 
 def collect_data(
@@ -99,7 +99,8 @@ def _collect_from_files(
             "max_lines": 200,
             "max_size_mb": 10,
         }
-        output = tool_result_payload(file_reader_executor(ToolInputMetadata.from_mapping("file_reader", params)))
+        input_metadata = ToolInputMetadata.from_mapping("file_reader", params)
+        output = _ensure_tool_result("file_reader", file_reader_executor(input_metadata), input_metadata)
         selected_tool = "file_reader"
         files = [str(file_paths[0])]
     else:
@@ -108,7 +109,8 @@ def _collect_from_files(
             "encoding": "utf-8",
             "max_total_chars": 50000,
         }
-        output = tool_result_payload(multi_file_reader_executor(ToolInputMetadata.from_mapping("multi_file_reader", params)))
+        input_metadata = ToolInputMetadata.from_mapping("multi_file_reader", params)
+        output = _ensure_tool_result("multi_file_reader", multi_file_reader_executor(input_metadata), input_metadata)
         selected_tool = "multi_file_reader"
         files = output.get("files", [str(path) for path in file_paths])
 
@@ -120,14 +122,16 @@ def _collect_from_files(
         input_summary={"selected_tool": selected_tool, "file_count": len(files)},
     )
 
-    content = {
-        "mode": "file",
-        "task": task,
-        "tool": selected_tool,
-        "files": files,
-        "tool_output": output,
-        "slot_values": _slot_values(slots),
-    }
+    artifact_payload = output.result
+    content = CollectedDataMetadata(
+        mode="file",
+        task=task,
+        tool_name=selected_tool,
+        files=files,
+        artifact=artifact_payload,
+        tool_result=output,
+        slot_values=_slot_values(slots),
+    )
     text = str(output.get("content", ""))
     preview = f"Read {len(files)} file(s). Content excerpt: {_truncate(text, 180)}"
     artifact = DataArtifact(
@@ -198,14 +202,17 @@ def _collect_from_web(
 
     output, cleanup_fallback_warning = _execute_web_search_with_cleanup_fallback(params, logger=logger)
     _raise_for_unusable_web_search_output(output)
-    content = {
-        "mode": "web",
-        "task": task,
-        "tool": "web_searcher",
-        "query": query,
-        "tool_output": output,
-        "slot_values": _slot_values(slots),
-    }
+    artifact_payload = output.result
+    content = CollectedDataMetadata(
+        mode="web",
+        task=task,
+        tool_name="web_searcher",
+        query=query,
+        artifact=artifact_payload,
+        tool_result=output,
+        slot_values=_slot_values(slots),
+        cleanup_fallback_warning=cleanup_fallback_warning,
+    )
     source = f"web_search:{query}"
     key_points = output.get("key_points") or []
     summary = output.get("research_summary") or ""
@@ -253,9 +260,10 @@ def _execute_web_search_with_cleanup_fallback(
     params: dict[str, Any],
     *,
     logger: Any | None = None,
-) -> tuple[dict[str, Any], str | None]:
+) -> tuple[ToolResultMetadata, str | None]:
     try:
-        output = tool_result_payload(web_searcher_executor(ToolInputMetadata.from_mapping("web_searcher", params)))
+        input_metadata = ToolInputMetadata.from_mapping("web_searcher", params)
+        output = _ensure_tool_result("web_searcher", web_searcher_executor(input_metadata), input_metadata)
         cleanup_fallback_warning = _cleanup_fallback_warning(output)
         _log_agent_event(
             logger,
@@ -277,14 +285,16 @@ def _execute_web_search_with_cleanup_fallback(
         fallback_params = dict(params)
         fallback_params["llm_cleanup"] = False
         fallback_params.pop("_llm_client", None)
-        output = tool_result_payload(web_searcher_executor(ToolInputMetadata.from_mapping("web_searcher", fallback_params)))
+        input_metadata = ToolInputMetadata.from_mapping("web_searcher", fallback_params)
+        output = _ensure_tool_result("web_searcher", web_searcher_executor(input_metadata), input_metadata)
         warning = (
             "LLM cleanup disabled because the current SOCKS proxy setup is missing "
             "the socksio dependency. Install with: conda install -n openpilot -c conda-forge socksio."
         )
-        warnings = output.setdefault("warnings", [])
-        if isinstance(warnings, list):
-            warnings.append(warning)
+        if isinstance(output.result, SearchArtifactMetadata):
+            output.result.warnings.append(warning)
+        else:
+            output.setdefault("warnings", []).append(warning)
         _log_agent_event(
             logger,
             phase="web_cleanup",
@@ -301,7 +311,17 @@ def _execute_web_search_with_cleanup_fallback(
         return output, warning
 
 
-def _raise_for_unusable_web_search_output(output: dict[str, Any]) -> None:
+def _ensure_tool_result(tool_name: str, output: Any, input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+    if isinstance(output, ToolResultMetadata):
+        return output
+    return ToolResultMetadata(
+        tool_name=tool_name,
+        status=ResultStatus.SUCCESS,
+        result=payload_to_artifact(tool_name, output, input_metadata),
+    )
+
+
+def _raise_for_unusable_web_search_output(output: ToolResultMetadata) -> None:
     if int(output.get("count", 0) or 0) != 0:
         return
     attempts = output.get("search_attempts")
@@ -343,7 +363,7 @@ def _is_socks_dependency_error(exc: BaseException) -> bool:
     return "socks proxy" in text and ("socksio" in text or "httpx[socks]" in text)
 
 
-def _cleanup_fallback_warning(output: dict[str, Any]) -> str | None:
+def _cleanup_fallback_warning(output: ToolResultMetadata) -> str | None:
     cleanup_error = output.get("llm_cleanup_error")
     if cleanup_error:
         warnings = output.get("warnings")

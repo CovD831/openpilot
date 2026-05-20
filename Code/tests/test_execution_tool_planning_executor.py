@@ -8,7 +8,7 @@ from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskExecutor
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from autonomous_iteration.tool_io import ExecutionToolIO
-from metadata import FailureMetadata, ResultStatus, TaskResultMetadata, ToolResultMetadata
+from metadata import CodeArtifactMetadata, FileArtifactMetadata, ResultStatus, TaskResultMetadata, TextArtifactMetadata, ToolResultMetadata
 
 
 class FakeLLM:
@@ -40,7 +40,7 @@ class FakeToolExecutor:
                 output_metadata=ToolResultMetadata(
                     tool_name="code_generator",
                     status=ResultStatus.SUCCESS,
-                    result={"kind": "code_artifact", "code": "print('ok')", "language": "python"},
+                    result=CodeArtifactMetadata(code="print('ok')", language="python"),
                 ),
                 error=None,
                 execution_time_ms=10,
@@ -52,7 +52,7 @@ class FakeToolExecutor:
                 output_metadata=ToolResultMetadata(
                     tool_name="file_writer",
                     status=ResultStatus.SUCCESS,
-                    result={"kind": "file_artifact", "file_path": payload["file_path"], "content": payload["content"]},
+                    result=FileArtifactMetadata(file_path=payload["file_path"], content=payload["content"]),
                 ),
                 error=None,
                 execution_time_ms=5,
@@ -108,8 +108,8 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
     result = executor.execute_task(task, _context(task))
 
     assert result.status == TaskStatus.COMPLETED
-    assert result.result_metadata.result["all_tools_succeeded"] is True
-    assert result.result_metadata.result["tool_calls"][1]["params"]["content"] == "print('ok')"
+    assert result.result_metadata.result.attributes["all_tools_succeeded"] is True
+    assert result.result_metadata.result.attributes["tool_calls"][1]["input_metadata"]["content"] == "print('ok')"
     assert runtime.tool_executor.selections[1].input_metadata.to_params() == {"file_path": "app.py", "content": "print('ok')"}
     payloads = [
         json.loads(line)["payload"]
@@ -145,7 +145,11 @@ def test_intelligent_autopilot_execute_task_proxy_uses_tool_planning_agent(tmp_p
             return TaskExecutionResult(
                 task_id=task.id,
                 status=TaskStatus.COMPLETED,
-                result_metadata=TaskResultMetadata(task_id=task.id, status=ResultStatus.SUCCESS, result={"proxied": True}),
+                result_metadata=TaskResultMetadata(
+                    task_id=task.id,
+                    status=ResultStatus.SUCCESS,
+                    result=TextArtifactMetadata(content="proxied", attributes={"proxied": True}),
+                ),
                 duration=0.0,
             )
 
@@ -159,4 +163,4 @@ def test_intelligent_autopilot_execute_task_proxy_uses_tool_planning_agent(tmp_p
     result = autopilot._execute_task(task, _context(task))
 
     assert result.status == TaskStatus.COMPLETED
-    assert result.result_metadata.result == {"proxied": True}
+    assert result.result_metadata.result.get("proxied") is True

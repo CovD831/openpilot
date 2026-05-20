@@ -31,6 +31,7 @@ from metadata import (
     ToolInputMetadata,
     ToolResultMetadata,
     metadata_summary,
+    payload_to_artifact,
 )
 
 
@@ -571,7 +572,7 @@ class ToolExecutor:
         return ToolResultMetadata(
             tool_name=tool_name,
             status=ResultStatus.SUCCESS,
-            result=output,
+            result=payload_to_artifact(tool_name, output, None),
         )
 
     def _log_tool_event(

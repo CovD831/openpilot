@@ -6,6 +6,7 @@ from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.runner import AutonomousIterationRunner
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+from metadata import FailureMetadata, ResultStatus, ToolExecutionEnvelopeMetadata, ToolInputMetadata, ToolResultMetadata, payload_to_artifact
 
 
 class FakeIterationAgent:
@@ -74,8 +75,8 @@ class FakeAutopilot:
 
     def _sync_project_environment(self, **kwargs):
         if not self.environment_success:
-            return {"success": False, "error": "env failed"}
-        return {"success": True, "result": {"run_command": "python app.py"}}
+            return _tool_envelope("project_environment_tool", {"success": False, "error": "env failed"}, kwargs.get("input_metadata"))
+        return _tool_envelope("project_environment_tool", {"success": True, "result": {"run_command": "python app.py"}}, kwargs.get("input_metadata"))
 
     def _handle_iteration_progress(self, event, payload) -> None:
         self.progress_events.append(event)
@@ -96,16 +97,39 @@ class FakeAutopilot:
     def _execute_fast_tool(self, **kwargs):
         input_metadata = kwargs["input_metadata"]
         params = input_metadata.to_params() if hasattr(input_metadata, "to_params") else input_metadata
-        return {
-            "success": True,
-            "result": {
+        return _tool_envelope(
+            "project_state_reader",
+            {
+                "success": True,
+                "result": {
                 "project_path": params["project_path"],
                 "written_files": params["written_files"],
             },
-        }
+            },
+            input_metadata,
+        )
 
     def _dashboard_stage_id(self, stage_key):
         return None
+
+
+def _tool_envelope(tool_name: str, data: dict, input_metadata: ToolInputMetadata | None = None) -> ToolExecutionEnvelopeMetadata:
+    success = bool(data.get("success"))
+    output_metadata = (
+        ToolResultMetadata(tool_name=tool_name, status=ResultStatus.SUCCESS, result=payload_to_artifact(tool_name, data.get("result"), input_metadata))
+        if success
+        else None
+    )
+    failure = None if success else FailureMetadata(error_type="ToolError", error_message=str(data.get("error") or f"{tool_name} failed"))
+    return ToolExecutionEnvelopeMetadata(
+        tool_name=tool_name,
+        step_id=tool_name,
+        status=ResultStatus.SUCCESS if success else ResultStatus.FAIL,
+        success=success,
+        input_metadata=input_metadata or ToolInputMetadata(tool_name=tool_name),
+        output_metadata=output_metadata,
+        failure=failure,
+    )
 
 
 class FakeLLM:

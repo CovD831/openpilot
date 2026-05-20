@@ -10,6 +10,14 @@ from autonomous_iteration.improvement_context import ImprovementContextHelper
 from autonomous_iteration.task_executor import AutonomousTaskExecutor
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+from metadata import (
+    FailureMetadata,
+    ResultStatus,
+    ToolExecutionEnvelopeMetadata,
+    ToolInputMetadata,
+    ToolResultMetadata,
+    payload_to_artifact,
+)
 
 
 class FakeRuntime:
@@ -56,30 +64,55 @@ class FakeRuntime:
     def _sync_project_environment(self, **kwargs):
         self.calls.append({"tool": "project_environment_tool", **kwargs})
         if not self.environment_success:
-            return {"success": False, "error": "env failed"}
-        return {
-            "success": True,
-            "result": {
+            return _tool_envelope("project_environment_tool", {"success": False, "error": "env failed"}, kwargs.get("input_metadata"))
+        return _tool_envelope(
+            "project_environment_tool",
+            {
+                "success": True,
+                "result": {
                 "run_command": "python app.py",
                 "setup_commands": ["python -m venv .venv"],
                 "detected_packages": ["rich"],
             },
-        }
+            },
+            kwargs.get("input_metadata"),
+        )
 
     def _execute_fast_tool(self, **kwargs):
         self.calls.append(kwargs)
         tool_name = kwargs["tool_name"]
         if tool_name == "code_generator":
             if self.code_results:
-                return self.code_results.pop(0)
-            return {"success": True, "result": {"code": "print('improved')\n"}, "status": "completed"}
+                return _tool_envelope(tool_name, self.code_results.pop(0), kwargs.get("input_metadata"))
+            return _tool_envelope(tool_name, {"success": True, "result": {"code": "print('improved')\n"}, "status": "completed"}, kwargs.get("input_metadata"))
         if tool_name == "file_writer":
-            return self.write_result
+            return _tool_envelope(tool_name, self.write_result, kwargs.get("input_metadata"))
         if tool_name == "code_reviewer":
-            return self.review_result
+            return _tool_envelope(tool_name, self.review_result, kwargs.get("input_metadata"))
         if tool_name == "readme_tool":
-            return self.readme_result
+            return _tool_envelope(tool_name, self.readme_result, kwargs.get("input_metadata"))
         raise AssertionError(f"unexpected tool {tool_name}")
+
+
+def _tool_envelope(tool_name: str, data: dict, input_metadata: ToolInputMetadata | None = None) -> ToolExecutionEnvelopeMetadata:
+    success = bool(data.get("success"))
+    result_payload = data.get("result")
+    output_metadata = (
+        ToolResultMetadata(tool_name=tool_name, status=ResultStatus.SUCCESS, result=payload_to_artifact(tool_name, result_payload, input_metadata))
+        if success
+        else None
+    )
+    failure = None if success else FailureMetadata(error_type=str(data.get("error_type") or "ToolError"), error_message=str(data.get("error") or f"{tool_name} failed"))
+    return ToolExecutionEnvelopeMetadata(
+        tool_name=tool_name,
+        step_id=str(data.get("step_id") or tool_name),
+        status=ResultStatus.SUCCESS if success else (ResultStatus.TIMEOUT if str(data.get("status")) == "timeout" else ResultStatus.FAIL),
+        success=success,
+        input_metadata=input_metadata or ToolInputMetadata(tool_name=tool_name),
+        output_metadata=output_metadata,
+        failure=failure,
+        timeout_override=data.get("timeout_override"),
+    )
 
 
 class FakeLLM:

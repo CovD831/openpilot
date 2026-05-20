@@ -17,6 +17,13 @@ from metadata.base import (
     ensure_metadata,
     metadata_summary,
 )
+from metadata.data import CollectedDataMetadata, PresentationMetadata, ProcessedDataMetadata
+from metadata.project import (
+    AutonomyDecisionMetadata,
+    EnvironmentSyncMetadata,
+    ImprovementAnalysisMetadata,
+    ProjectStateMetadata,
+)
 from metadata.results import (
     ArtifactMetadata,
     FailureMetadata,
@@ -24,9 +31,18 @@ from metadata.results import (
     TaskResultMetadata,
     ToolResultMetadata,
     metadata_tool_result,
+    payload_to_artifact,
     tool_result_payload,
 )
-from metadata.runtime import ExecutionContextMetadata, LLMRequestMetadata, LLMResponseMetadata, LogEventMetadata
+from metadata.runtime import (
+    AgentExecutionMetadata,
+    ExecutionContextMetadata,
+    LLMRequestMetadata,
+    LLMResponseMetadata,
+    LogEventMetadata,
+    ModuleExecutionMetadata,
+    ToolExecutionEnvelopeMetadata,
+)
 from metadata.tooling import (
     ToolChainMetadata,
     ToolContractMetadata,
@@ -40,10 +56,15 @@ __all__ = [
     "CodeArtifactMetadata",
     "CommandArtifactMetadata",
     "CorrelationInfo",
+    "CollectedDataMetadata",
     "EmbeddingArtifactMetadata",
+    "EnvironmentSyncMetadata",
     "ExecutionContextMetadata",
     "FailureMetadata",
     "FileArtifactMetadata",
+    "AgentExecutionMetadata",
+    "AutonomyDecisionMetadata",
+    "ImprovementAnalysisMetadata",
     "JsonValue",
     "LLMRequestMetadata",
     "LLMResponseMetadata",
@@ -51,12 +72,18 @@ __all__ = [
     "MetadataBase",
     "MetadataKind",
     "MetadataSource",
+    "ModuleExecutionMetadata",
+    "PresentationMetadata",
+    "ProcessedDataMetadata",
+    "ProjectStateMetadata",
+    "payload_to_artifact",
     "ResultStatus",
     "SearchArtifactMetadata",
     "TaskResultMetadata",
     "TextArtifactMetadata",
     "ToolChainMetadata",
     "ToolContractMetadata",
+    "ToolExecutionEnvelopeMetadata",
     "ToolInputMetadata",
     "ToolResultMetadata",
     "ToolSelectionMetadata",

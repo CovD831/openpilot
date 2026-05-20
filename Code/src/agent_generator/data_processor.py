@@ -6,7 +6,7 @@ from typing import Any
 
 from agent_generator.models import DataArtifact, DataArtifactKind, PipelineSpec, PipelineStep, Slot, SlotKind, StepStrategy
 from tools.llm_summarizer import llm_summarizer_executor
-from metadata import ToolInputMetadata, tool_result_payload
+from metadata import CollectedDataMetadata, ProcessedDataMetadata, ToolInputMetadata, ToolResultMetadata, metadata_summary
 
 
 MAX_PROCESSING_CONTEXT_CHARS = 12000
@@ -45,7 +45,7 @@ def process_data(
     )
     processing_tool = "llm_summarizer"
     processing_warning = ""
-    summarizer_output: dict[str, Any] = {}
+    summarizer_output: ToolResultMetadata | None = None
     summarizer_attempts: list[dict[str, Any]] = []
     try:
         summarizer_output = _run_summarizer_attempt(
@@ -86,27 +86,27 @@ def process_data(
             output_format=output_format,
         )
 
-    content = {
-        "task": cleaned_task,
-        "processing_strategy": processing,
-        "output_format": output_format,
-        "result_format": output_format,
-        "result_text": result_text,
-        "processing_instruction": processing_instruction,
-        "processing_tool": processing_tool,
-        "input_artifacts": [artifact.model_dump(mode="json") for artifact in data],
-    }
-    if summarizer_attempts:
-        content["summarizer_output"] = {
-            "tokens_used": summarizer_output.get("tokens_used", 0),
-            "model": summarizer_output.get("model", ""),
-            "finish_reason": summarizer_output.get("finish_reason"),
-            "response_chars": summarizer_output.get("response_chars", 0),
-            "prompt_chars": summarizer_output.get("prompt_chars", 0),
+    content = ProcessedDataMetadata(
+        task=cleaned_task,
+        processing_strategy=processing,
+        output_format=output_format,
+        result_format=output_format,
+        result_text=result_text,
+        processing_instruction=processing_instruction,
+        processing_tool=processing_tool,
+        input_artifacts=[artifact.content for artifact in data],
+        summarizer_result=summarizer_output,
+        summarizer_output={
+            "tokens_used": summarizer_output.get("tokens_used", 0) if summarizer_output else 0,
+            "model": summarizer_output.get("model", "") if summarizer_output else "",
+            "finish_reason": summarizer_output.get("finish_reason") if summarizer_output else None,
+            "response_chars": summarizer_output.get("response_chars", 0) if summarizer_output else 0,
+            "prompt_chars": summarizer_output.get("prompt_chars", 0) if summarizer_output else 0,
             "attempts": summarizer_attempts,
-        }
-    if processing_warning:
-        content["warnings"] = [processing_warning]
+        } if summarizer_attempts else {},
+        summarizer_attempts=summarizer_attempts,
+        warnings=[processing_warning] if processing_warning else [],
+    )
 
     processed = DataArtifact(
         id="artifact_processed_result",
@@ -171,7 +171,7 @@ def _run_summarizer_attempt(
     instruction: str,
     output_format: str,
     llm_client: Any | None,
-) -> dict[str, Any]:
+) -> ToolResultMetadata:
     params: dict[str, Any] = {
         "text": text,
         "instruction": instruction,
@@ -179,10 +179,10 @@ def _run_summarizer_attempt(
     }
     if llm_client is not None:
         params["_llm_client"] = llm_client
-    return tool_result_payload(llm_summarizer_executor(ToolInputMetadata.from_mapping("llm_summarizer", params)))
+    return llm_summarizer_executor(ToolInputMetadata.from_mapping("llm_summarizer", params))
 
 
-def _summarizer_attempt_summary(name: str, output: dict[str, Any]) -> dict[str, Any]:
+def _summarizer_attempt_summary(name: str, output: ToolResultMetadata) -> dict[str, Any]:
     internal_attempts = output.get("attempts") if isinstance(output.get("attempts"), list) else []
     last_attempt = internal_attempts[-1] if internal_attempts and isinstance(internal_attempts[-1], dict) else {}
     return {
@@ -241,9 +241,9 @@ def _build_evidence_brief(
 
     for artifact in data:
         lines.extend([f"## Artifact: {artifact.name}", f"- Source: {artifact.source}", f"- Preview: {artifact.preview}", ""])
-        content = artifact.content if isinstance(artifact.content, dict) else {}
-        if content.get("mode") == "web":
-            output = content.get("tool_output") if isinstance(content.get("tool_output"), dict) else {}
+        content = artifact.content if isinstance(artifact.content, CollectedDataMetadata) else None
+        if content and content.mode == "web":
+            output = content.tool_result or content.artifact
             summary = str(output.get("research_summary") or "").strip()
             if summary:
                 lines.extend(["### Research Summary", _clip(summary, 1800), ""])
@@ -288,8 +288,8 @@ def _build_evidence_brief(
                     lines.append(f"- {_clip(str(title), 140)}" + (f" ({url})" if url else ""))
                     lines.append(f"  {_clip(str(page.get('content_excerpt') or ''), excerpt_limit)}")
                 lines.append("")
-        elif content.get("mode") == "file":
-            output = content.get("tool_output") if isinstance(content.get("tool_output"), dict) else {}
+        elif content and content.mode == "file":
+            output = content.tool_result or content.artifact
             file_excerpt = str(output.get("content") or "")[: min(excerpt_limit * 4, 2500)]
             if file_excerpt:
                 lines.extend(["### File Excerpt", file_excerpt, ""])
@@ -300,7 +300,7 @@ def _build_evidence_brief(
 
 
 def _compact_artifact_for_processing(artifact: DataArtifact) -> dict[str, Any]:
-    content = artifact.content if isinstance(artifact.content, dict) else {}
+    content = artifact.content if isinstance(artifact.content, CollectedDataMetadata) else None
     result = {
         "id": artifact.id,
         "name": artifact.name,
@@ -309,10 +309,10 @@ def _compact_artifact_for_processing(artifact: DataArtifact) -> dict[str, Any]:
         "confidence": artifact.confidence,
         "preview": artifact.preview,
     }
-    if content.get("mode") == "web":
-        output = content.get("tool_output") if isinstance(content.get("tool_output"), dict) else {}
+    if content and content.mode == "web":
+        output = content.tool_result or content.artifact
         result["web"] = {
-            "query": content.get("query") or output.get("query"),
+            "query": content.query or output.get("query"),
             "provider": output.get("provider"),
             "effective_query": output.get("effective_query"),
             "research_summary": output.get("research_summary") or "",
@@ -329,30 +329,30 @@ def _compact_artifact_for_processing(artifact: DataArtifact) -> dict[str, Any]:
                 if isinstance(page, dict) and page.get("content_excerpt")
             ][:4],
         }
-    elif content.get("mode") == "file":
-        output = content.get("tool_output") if isinstance(content.get("tool_output"), dict) else {}
+    elif content and content.mode == "file":
+        output = content.tool_result or content.artifact
         result["file"] = {
-            "files": output.get("files") or content.get("files") or [],
+            "files": output.get("files") or content.files or [],
             "content_excerpt": str(output.get("content") or "")[:5000],
         }
     else:
-        result["content"] = content if content else str(artifact.content)[:5000]
+        result["content"] = metadata_summary(artifact.content)
     return result
 
 
 def _compact_artifact_for_retry(artifact: DataArtifact) -> dict[str, Any]:
-    content = artifact.content if isinstance(artifact.content, dict) else {}
+    content = artifact.content if isinstance(artifact.content, CollectedDataMetadata) else None
     result = {
         "name": artifact.name,
         "preview": artifact.preview,
         "source": artifact.source,
     }
-    if content.get("mode") != "web":
-        result["content"] = str(artifact.content)[:2200]
+    if not content or content.mode != "web":
+        result["content"] = str(metadata_summary(artifact.content))[:2200]
         return result
-    output = content.get("tool_output") if isinstance(content.get("tool_output"), dict) else {}
+    output = content.tool_result or content.artifact
     result["web"] = {
-        "query": content.get("query") or output.get("query"),
+        "query": content.query or output.get("query"),
         "research_summary": output.get("research_summary") or "",
         "key_points": output.get("key_points") or [],
         "top_results": (output.get("results") or [])[:5],
@@ -430,9 +430,9 @@ def _fallback_result_text(
         lines.extend(["## 约束与偏好", *slot_values, ""])
     for artifact in data:
         lines.extend([f"## 可用证据：{artifact.name}", artifact.preview, ""])
-        content = artifact.content if isinstance(artifact.content, dict) else {}
-        if content.get("mode") == "web":
-            output = content.get("tool_output") if isinstance(content.get("tool_output"), dict) else {}
+        content = artifact.content if isinstance(artifact.content, CollectedDataMetadata) else None
+        if content and content.mode == "web":
+            output = content.tool_result or content.artifact
             summary = str(output.get("research_summary") or "").strip()
             if summary:
                 lines.extend(["### 摘要", summary, ""])

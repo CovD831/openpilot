@@ -30,14 +30,14 @@ class ExecutionToolIO:
         self._log_function("sanitize_tool_metadata", {"keys": list(params)}, {"keys": list(sanitized)})
         return sanitized
 
-    def summarize_tool_output(self, output: Any) -> dict[str, Any]:
+    def summarize_metadata_output(self, output: Any) -> dict[str, Any]:
         if isinstance(output, ToolResultMetadata):
-            return self.summarize_tool_output(output.result)
+            return self.summarize_metadata_output(output.result)
         if hasattr(output, "model_dump"):
-            return self.summarize_tool_output(output.model_dump(mode="json"))
+            return self.summarize_metadata_output(output.model_dump(mode="json"))
         if not isinstance(output, dict):
             summary = {"output_type": type(output).__name__} if output is not None else {}
-            self._log_function("summarize_tool_output", {"output_type": type(output).__name__}, summary)
+            self._log_function("summarize_metadata_output", {"output_type": type(output).__name__}, summary)
             return summary
 
         summary = {
@@ -52,7 +52,7 @@ class ExecutionToolIO:
             summary["content_length"] = len(summary["content"])
             summary["content_preview"] = summary["content"][:200]
             summary.pop("content", None)
-        self._log_function("summarize_tool_output", {"keys": list(output)}, {"keys": list(summary)})
+        self._log_function("summarize_metadata_output", {"keys": list(output)}, {"keys": list(summary)})
         return summary
 
     def json_safe_summary(self, value: Any) -> Any:

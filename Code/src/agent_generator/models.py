@@ -5,7 +5,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SerializeAsAny
+
+from metadata import MetadataBase
 
 
 class SlotKind(str, Enum):
@@ -55,13 +57,13 @@ class DataArtifact(BaseModel):
     id: str
     name: str
     kind: DataArtifactKind
-    content: Any
+    content: SerializeAsAny[MetadataBase]
     source: str
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     preview: str
     lineage: list[str] = Field(default_factory=list)
 
-    model_config = ConfigDict(use_enum_values=True)
+    model_config = ConfigDict(use_enum_values=True, arbitrary_types_allowed=True)
 
 
 class PipelineStep(BaseModel):

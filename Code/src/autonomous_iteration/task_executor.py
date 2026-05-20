@@ -10,7 +10,7 @@ from typing import Any
 
 from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.task_models import Task, TaskPriority
-from metadata import ToolInputMetadata
+from metadata import ToolExecutionEnvelopeMetadata, ToolInputMetadata
 
 
 class AutonomousTaskExecutor:
@@ -77,7 +77,7 @@ class AutonomousTaskExecutor:
             is_repair=is_repair,
         )
         retry_attempted = len(retry_history) > 1
-        if not code_result["success"] or not isinstance(code_result.get("result"), dict):
+        if not code_result.success or code_result.output is None:
             failure_reason = self.visible_tool_failure_summary(
                 tool="code_generator",
                 tool_result=code_result,
@@ -105,7 +105,7 @@ class AutonomousTaskExecutor:
                 retry_history=retry_history,
             )
 
-        improved_code = code_result["result"].get("code", "")
+        improved_code = str(code_result.output.get("code", ""))
         if improved_code.strip() == current_code.strip():
             reason = "Generated improvement did not change the target file."
             return self._failure(
@@ -145,12 +145,12 @@ class AutonomousTaskExecutor:
         self._log_agent(
             "file_writer_completed",
             {"iteration": iteration, "target_file": str(target_file)},
-            {"success": write_result.get("success")},
-            success=bool(write_result.get("success")),
-            error=write_result.get("error"),
+            {"success": write_result.success},
+            success=write_result.success,
+            error=write_result.error_message,
         )
-        if not write_result["success"]:
-            reason = write_result.get("error") or "Failed to write improved code."
+        if not write_result.success:
+            reason = write_result.error_message or "Failed to write improved code."
             return self._failure(
                 iteration,
                 actions,
@@ -172,12 +172,12 @@ class AutonomousTaskExecutor:
         self._log_agent(
             "environment_sync_completed",
             {"iteration": iteration, "project_path": str(project_path)},
-            {"success": environment_result.get("success")},
-            success=bool(environment_result.get("success")),
-            error=environment_result.get("error"),
+            {"success": environment_result.success},
+            success=environment_result.success,
+            error=environment_result.error_message,
         )
-        if not environment_result["success"] or not isinstance(environment_result.get("result"), dict):
-            reason = environment_result.get("error") or "Project environment sync failed."
+        if not environment_result.success or environment_result.output is None:
+            reason = environment_result.error_message or "Project environment sync failed."
             return IterationResult(
                 iteration=iteration,
                 validation_passed=False,
@@ -192,7 +192,7 @@ class AutonomousTaskExecutor:
                 retry_attempted=retry_attempted,
                 retry_history=retry_history,
             )
-        environment_payload = environment_result["result"]
+        environment_payload = environment_result.output
         run_command = str(environment_payload.get("run_command") or run_command)
 
         review_result = self.runtime._execute_fast_tool(
@@ -223,9 +223,9 @@ class AutonomousTaskExecutor:
         self._log_agent(
             "code_review_completed",
             {"iteration": iteration},
-            {"success": review_result.get("success")},
-            success=bool(review_result.get("success")),
-            error=review_result.get("error"),
+            {"success": review_result.success},
+            success=review_result.success,
+            error=review_result.error_message,
         )
         readme_result = self.runtime._execute_fast_tool(
             task=task,
@@ -248,23 +248,23 @@ class AutonomousTaskExecutor:
         self._log_agent(
             "readme_update_completed",
             {"iteration": iteration},
-            {"success": readme_result.get("success")},
-            success=bool(readme_result.get("success")),
-            error=readme_result.get("error"),
+            {"success": readme_result.success},
+            success=readme_result.success,
+            error=readme_result.error_message,
         )
 
-        review_payload = review_result.get("result") if isinstance(review_result.get("result"), dict) else {}
+        review_payload = review_result.output or {}
         review_approved = bool(review_payload.get("approved", True))
-        success = review_result["success"] and review_approved and readme_result["success"]
+        success = review_result.success and review_approved and readme_result.success
         if success:
             self.runtime._project_improvement_actions = (getattr(self.runtime, "_project_improvement_actions", []) or []) + actions
         if self.runtime.enhanced_ui:
             self.runtime._set_dashboard_task_status(self.runtime._dashboard_stage_id("execution"), "completed" if success else "failed")
-        failed_tool = None if success else ("code_reviewer" if (not review_result["success"] or not review_approved) else "readme_tool")
+        failed_tool = None if success else ("code_reviewer" if (not review_result.success or not review_approved) else "readme_tool")
         failure_reason = None
         if not success:
             failed_result = review_result if failed_tool == "code_reviewer" else readme_result
-            if failed_tool == "code_reviewer" and review_result["success"] and not review_approved:
+            if failed_tool == "code_reviewer" and review_result.success and not review_approved:
                 suggestions = review_payload.get("suggestions") or review_payload.get("warnings") or []
                 failure_reason = "; ".join(str(item) for item in suggestions[:2]) or "Code review rejected the product-fit of the generated code."
             else:
@@ -307,7 +307,7 @@ class AutonomousTaskExecutor:
         actions: list[str],
         improvement_report: dict[str, Any],
         is_repair: bool,
-    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    ) -> tuple[ToolExecutionEnvelopeMetadata, list[dict[str, Any]]]:
         attempts = [
             (
                 "full",
@@ -353,12 +353,12 @@ class AutonomousTaskExecutor:
             ),
         ]
         retry_history: list[dict[str, Any]] = []
-        last_result: dict[str, Any] | None = None
+        last_result: ToolExecutionEnvelopeMetadata | None = None
 
         for attempt_index, (mode, prompt_context) in enumerate(attempts, 1):
             prompt_length = len(json.dumps(prompt_context, ensure_ascii=False, default=str))
             if attempt_index > 1:
-                previous_error = last_result.get("error") if last_result else "unknown error"
+                previous_error = last_result.error_message if last_result else "unknown error"
                 self.runtime.logger.log_event(
                     "autonomous_iteration_code_generation_retry",
                     {
@@ -409,12 +409,25 @@ class AutonomousTaskExecutor:
             )
             retry_history.append(attempt_summary)
             self.append_code_generation_attempt_to_dashboard(iteration, attempt_summary)
-            if result.get("success") and isinstance(result.get("result"), dict):
+            if result.success and result.output is not None:
                 return result, retry_history
             if not self.should_retry_code_generation_attempt(result):
                 return result, retry_history
 
-        return last_result or {"success": False, "error": "No code generation attempts were executed."}, retry_history
+        if last_result is None:
+            last_result = ToolExecutionEnvelopeMetadata(
+                tool_name="code_generator",
+                step_id=f"iteration_{iteration}_code_generator",
+                status="fail",
+                success=False,
+                input_metadata=ToolInputMetadata(tool_name="code_generator"),
+                failure={
+                    "kind": "failure",
+                    "error_type": "CodeGenerationError",
+                    "error_message": "No code generation attempts were executed.",
+                },
+            )
+        return last_result, retry_history
 
     def build_code_generation_prompt_context(
         self,
@@ -508,22 +521,22 @@ class AutonomousTaskExecutor:
         *,
         mode: str,
         prompt: str,
-        result: dict[str, Any],
+        result: ToolExecutionEnvelopeMetadata,
         attempt: int,
     ) -> dict[str, Any]:
         return {
             "attempt": attempt,
             "mode": mode,
-            "step_id": result.get("step_id"),
+            "step_id": result.step_id,
             "prompt_length": len(prompt),
-            "status": result.get("status"),
-            "success": result.get("success", False),
-            "duration_seconds": result.get("duration_seconds"),
-            "error_type": result.get("error_type"),
-            "error": result.get("error"),
-            "timeout_override": result.get("timeout_override"),
-            "tool_retry_count": result.get("retry_count", 0),
-            "tool_retry_history": result.get("retry_history", []),
+            "status": result.status,
+            "success": result.success,
+            "duration_seconds": result.duration_seconds,
+            "error_type": result.failure.error_type if result.failure else None,
+            "error": result.error_message,
+            "timeout_override": result.timeout_override,
+            "tool_retry_count": result.retry_count,
+            "tool_retry_history": result.retry_history,
         }
 
     def append_code_generation_attempt_to_dashboard(self, iteration: int, attempt: dict[str, Any]) -> None:
@@ -545,8 +558,8 @@ class AutonomousTaskExecutor:
             status=status,
         )
 
-    def should_retry_code_generation_attempt(self, result: dict[str, Any]) -> bool:
-        if result.get("success"):
+    def should_retry_code_generation_attempt(self, result: ToolExecutionEnvelopeMetadata) -> bool:
+        if result.success:
             return False
         return self.is_timeout_tool_result(result)
 
@@ -627,7 +640,7 @@ class AutonomousTaskExecutor:
         simplified: bool,
         mode: str | None = None,
         prompt_context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> ToolExecutionEnvelopeMetadata:
         mode = mode or ("compact" if simplified else "full")
         step_prefix = "" if mode == "full" else f"{mode}_"
         input_metadata_payload = {
@@ -647,29 +660,30 @@ class AutonomousTaskExecutor:
         self._log_agent(
             "code_generation_completed",
             {"iteration": iteration, "mode": mode, "target_file": str(target_file)},
-            {"success": result.get("success"), "status": result.get("status")},
-            success=bool(result.get("success")),
-            error=result.get("error"),
+            {"success": result.success, "status": result.status},
+            success=result.success,
+            error=result.error_message,
         )
         return result
 
-    def is_timeout_tool_result(self, result: dict[str, Any]) -> bool:
-        if result.get("success"):
+    def is_timeout_tool_result(self, result: ToolExecutionEnvelopeMetadata) -> bool:
+        if result.success:
             return False
-        error_text = f"{result.get('error_type') or ''} {result.get('error') or ''} {result.get('status') or ''}"
+        error_type = result.failure.error_type if result.failure else ""
+        error_text = f"{error_type} {result.error_message or ''} {result.status or ''}"
         return "timeout" in error_text.lower()
 
     def visible_tool_failure_summary(
         self,
         *,
         tool: str,
-        tool_result: dict[str, Any],
+        tool_result: ToolExecutionEnvelopeMetadata,
         retry_attempted: bool = False,
     ) -> str:
-        raw_error = tool_result.get("error") or f"{tool} failed."
+        raw_error = tool_result.error_message or f"{tool} failed."
         timeout = self.is_timeout_tool_result(tool_result)
-        timeout_seconds = tool_result.get("timeout_override")
-        duration = tool_result.get("duration_seconds")
+        timeout_seconds = tool_result.timeout_override
+        duration = tool_result.duration_seconds
         if timeout:
             elapsed = timeout_seconds or (f"{duration:.0f}" if isinstance(duration, (int, float)) else None)
             elapsed_text = f" after {elapsed}s" if elapsed else ""
@@ -722,12 +736,12 @@ class AutonomousTaskExecutor:
         prompt_length: int,
         current_code_length: int,
         retry_attempted: bool,
-        tool_result: dict[str, Any],
+        tool_result: ToolExecutionEnvelopeMetadata,
         retry_history: list[dict[str, Any]] | None = None,
     ) -> None:
         visible_summary = self.visible_tool_failure_summary(
             tool=tool,
-            tool_result={**tool_result, "error": error},
+            tool_result=tool_result,
             retry_attempted=retry_attempted,
         )
         self.runtime.logger.log_event(
@@ -741,10 +755,10 @@ class AutonomousTaskExecutor:
                 "actions": actions,
                 "selected_actions": actions,
                 "error": visible_summary,
-                "error_type": tool_result.get("error_type"),
-                "status": tool_result.get("status"),
-                "timeout_override": tool_result.get("timeout_override"),
-                "duration_seconds": tool_result.get("duration_seconds"),
+                "error_type": tool_result.failure.error_type if tool_result.failure else None,
+                "status": tool_result.status,
+                "timeout_override": tool_result.timeout_override,
+                "duration_seconds": tool_result.duration_seconds,
                 "prompt_length": prompt_length,
                 "current_code_length": current_code_length,
                 "retry_attempted": retry_attempted,

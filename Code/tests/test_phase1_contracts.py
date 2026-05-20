@@ -21,7 +21,14 @@ from agent_generator.runner import _complete_empty_slots
 from agent_generator.slot_generator import generate_slots
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.openpilot_log import OpenPilotLogger
-from metadata import ToolContractMetadata, ToolInputMetadata
+from metadata import (
+    CollectedDataMetadata,
+    ResultStatus,
+    SearchArtifactMetadata,
+    ToolContractMetadata,
+    ToolInputMetadata,
+    ToolResultMetadata,
+)
 from tools.code_reviewer import code_reviewer_executor as _code_reviewer_executor
 from tools.builtin_tools import register_builtin_tools
 from tools.llm_summarizer import llm_summarizer_executor as _llm_summarizer_executor
@@ -409,36 +416,40 @@ def test_agent_generator_empty_slot_blank_input_skips(monkeypatch) -> None:
 
 
 def _sample_collected_web_artifact() -> DataArtifact:
+    search_artifact = SearchArtifactMetadata(
+        query="机器学习 概述",
+        provider="bing_html",
+        effective_query="机器学习 概述",
+        research_summary="Clean summary about machine learning.",
+        key_points=["Useful fact", "Another useful fact"],
+        source_notes=[{"url": "https://example.com/ml", "note": "Primary source"}],
+        results=[
+            {
+                "title": "Machine Learning Guide",
+                "url": "https://example.com/ml",
+                "snippet": "Introductory material.",
+            }
+        ],
+        pages=[
+            {
+                "title": "Machine Learning Guide",
+                "url": "https://example.com/ml",
+                "content_excerpt": "Readable page content with useful details.",
+            }
+        ],
+    )
     return DataArtifact(
         id="artifact_collected_web",
         name="Collected web research data",
         kind=DataArtifactKind.COLLECTED,
-        content={
-            "mode": "web",
-            "query": "机器学习 概述",
-            "tool_output": {
-                "query": "机器学习 概述",
-                "provider": "bing_html",
-                "effective_query": "机器学习 概述",
-                "research_summary": "Clean summary about machine learning.",
-                "key_points": ["Useful fact", "Another useful fact"],
-                "source_notes": [{"url": "https://example.com/ml", "note": "Primary source"}],
-                "results": [
-                    {
-                        "title": "Machine Learning Guide",
-                        "url": "https://example.com/ml",
-                        "snippet": "Introductory material.",
-                    }
-                ],
-                "pages": [
-                    {
-                        "title": "Machine Learning Guide",
-                        "url": "https://example.com/ml",
-                        "content_excerpt": "Readable page content with useful details.",
-                    }
-                ],
-            },
-        },
+        content=CollectedDataMetadata(
+            mode="web",
+            task="帮我调查一下机器学习",
+            tool_name="web_searcher",
+            query="机器学习 概述",
+            artifact=search_artifact,
+            tool_result=ToolResultMetadata(tool_name="web_searcher", status=ResultStatus.SUCCESS, result=search_artifact),
+        ),
         source="web_search:机器学习 概述",
         confidence=0.8,
         preview="Web search found 1 result(s).",
@@ -731,9 +742,9 @@ def test_data_processor_falls_back_to_rule_based_result_when_llm_fails() -> None
 
 def test_data_processor_fallback_uses_urls_and_excerpts_without_summary() -> None:
     artifact = _sample_collected_web_artifact()
-    output = artifact.content["tool_output"]
-    output["research_summary"] = ""
-    output["key_points"] = []
+    output = artifact.content.artifact
+    output.research_summary = ""
+    output.key_points = []
 
     processed_data, _pipeline = process_data(
         "帮我调查一下机器学习",
@@ -1076,7 +1087,7 @@ def test_tool_executor_uses_contract_metadata_defaults() -> None:
         executor.shutdown()
 
     assert result.success
-    assert result.output_metadata.result == {"query": "default query"}
+    assert result.output_metadata.result.get("query") == "default query"
     assert result.attributes.get("validation_warnings", []) == []
 
 
@@ -2064,7 +2075,7 @@ def test_agent_generator_collect_data_keeps_true_empty_search_artifact(monkeypat
 
     assert len(artifacts) == 1
     assert artifacts[0].confidence == 0.45
-    assert artifacts[0].content["tool_output"]["search_attempts"][0]["status"] == "empty"
+    assert artifacts[0].content.artifact.get("search_attempts")[0]["status"] == "empty"
 
 
 def test_agent_generator_collect_data_returns_web_artifact_when_cleanup_fails(monkeypatch) -> None:
@@ -2114,9 +2125,9 @@ def test_agent_generator_collect_data_returns_web_artifact_when_cleanup_fails(mo
     artifacts, pipeline = collect_data("research machine learning", slots, llm_client=FakeCleanupLLM(), logger=logger)
 
     assert len(artifacts) == 1
-    output = artifacts[0].content["tool_output"]
-    assert output["llm_cleanup"] is False
-    assert output["results"][0]["url"] == "https://example.com/a"
+    output = artifacts[0].content.artifact
+    assert output.get("llm_cleanup") is False
+    assert output.results[0]["url"] == "https://example.com/a"
     step_params = pipeline.steps[0].parameters
     assert step_params["llm_cleanup_requested"] is True
     assert step_params["llm_cleanup_executed"] is False

@@ -6,7 +6,7 @@ from enum import Enum
 from functools import wraps
 from typing import Annotated, Any, Callable, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, SerializeAsAny, model_validator
 
 from metadata.artifacts import (
     CodeArtifactMetadata,
@@ -17,6 +17,7 @@ from metadata.artifacts import (
     TextArtifactMetadata,
 )
 from metadata.base import JsonValue, MetadataBase, MetadataKind
+from metadata.project import EnvironmentSyncMetadata, ImprovementAnalysisMetadata, ProjectStateMetadata
 
 
 ArtifactMetadata = Annotated[
@@ -52,7 +53,7 @@ class ToolResultMetadata(MetadataBase):
     kind: MetadataKind = MetadataKind.TOOL_RESULT
     tool_name: str
     status: ResultStatus
-    result: ArtifactMetadata | dict[str, JsonValue] | None = None
+    result: SerializeAsAny[MetadataBase] | None = None
     failure: FailureMetadata | None = None
     logs: list[dict[str, JsonValue]] = Field(default_factory=list)
     resource_usage: dict[str, JsonValue] = Field(default_factory=dict)
@@ -67,41 +68,33 @@ class ToolResultMetadata(MetadataBase):
 
     def get(self, key: str, default: Any = None) -> Any:
         """Read a key from the result payload without changing the metadata envelope."""
-        if isinstance(self.result, dict):
-            return self.result.get(key, default)
         if isinstance(self.result, MetadataBase):
             return self.result.get(key, default)
         return default
 
     def __getitem__(self, key: str) -> Any:
-        if isinstance(self.result, dict):
-            return self.result[key]
         if isinstance(self.result, MetadataBase):
             return self.result[key]
         raise TypeError(f"{type(self.result).__name__} payload is not key-addressable")
 
     def __contains__(self, key: object) -> bool:
-        if isinstance(self.result, dict):
-            return key in self.result
         if isinstance(key, str) and isinstance(self.result, MetadataBase):
             return key in self.result
         return False
 
     def setdefault(self, key: str, default: Any) -> Any:
-        if not isinstance(self.result, dict):
-            attributes = getattr(self.result, "attributes", None)
-            if isinstance(attributes, dict):
-                return attributes.setdefault(key, default)
-            raise TypeError("ToolResultMetadata payload is not a mutable mapping")
-        return self.result.setdefault(key, default)
+        attributes = getattr(self.result, "attributes", None)
+        if isinstance(attributes, dict):
+            return attributes.setdefault(key, default)
+        raise TypeError("ToolResultMetadata payload is not a mutable mapping")
 
 
-def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None) -> ArtifactMetadata | dict[str, JsonValue] | Any:
+def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None) -> MetadataBase:
     """Convert common built-in tool payloads into artifact metadata."""
     if isinstance(payload, MetadataBase):
         return payload
     if not isinstance(payload, dict):
-        return payload
+        return TextArtifactMetadata(content=str(payload), title=tool_name, attributes={"value": payload})
 
     def attr_without(*keys: str) -> dict[str, JsonValue]:
         attributes = {key: value for key, value in payload.items() if key not in keys and key != "attributes"}
@@ -195,15 +188,93 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             cached=bool(payload.get("cached", False)),
             attributes=attr_without("query", "embedding", "dimension", "model", "provider", "cached"),
         )
+    if tool_name == "project_environment_tool":
+        return EnvironmentSyncMetadata(
+            project_path=str(payload.get("project_path") or ""),
+            env_name=str(payload.get("env_name") or ".venv"),
+            venv_path=str(payload.get("venv_path") or ""),
+            python_executable=str(payload.get("python_executable") or ""),
+            pip_executable=str(payload.get("pip_executable") or ""),
+            python_version=str(payload.get("python_version") or ""),
+            run_command=str(payload.get("run_command") or ""),
+            dependency_source=str(payload.get("dependency_source") or ""),
+            setup_commands=list(payload.get("setup_commands") or []),
+            detected_packages=list(payload.get("detected_packages") or []),
+            installed_packages=list(payload.get("installed_packages") or []),
+            missing_packages=list(payload.get("missing_packages") or []),
+            operations=list(payload.get("operations") or []),
+            warnings=list(payload.get("warnings") or []),
+            annotations=attr_without(
+                "project_path",
+                "venv_path",
+                "python_executable",
+                "run_command",
+                "setup_commands",
+                "detected_packages",
+                "installed_packages",
+                "missing_packages",
+                "warnings",
+            ),
+        )
+    if tool_name == "project_state_reader":
+        return ProjectStateMetadata(
+            project_path=str(payload.get("project_path") or ""),
+            goal=str(payload.get("goal") or ""),
+            written_files=list(payload.get("written_files") or []),
+            run_command=str(payload.get("run_command") or ""),
+            readme_path=str(payload.get("readme_path") or ""),
+            file_summaries=list(payload.get("file_summaries") or []),
+            readme_summary=str(payload.get("readme_summary") or ""),
+            safe_target_files=list(payload.get("safe_target_files") or []),
+            memory_records=list(payload.get("memory_records") or []),
+            validation_context=payload.get("validation_context") if isinstance(payload.get("validation_context"), dict) else {},
+            memory_context={"records": payload.get("memory_records") or []},
+            state_summary=str(payload.get("readme_summary") or ""),
+            annotations=attr_without(
+                "project_path",
+                "goal",
+                "written_files",
+                "run_command",
+                "readme_path",
+                "file_summaries",
+                "validation_context",
+                "memory_records",
+                "readme_summary",
+            ),
+        )
+    if tool_name == "project_improvement_tool":
+        return ImprovementAnalysisMetadata(
+            project_path=str(payload.get("project_path") or ""),
+            goal=str(payload.get("goal") or ""),
+            iteration=int(payload.get("iteration") or 0),
+            summary=str(payload.get("summary") or ""),
+            improvement_opportunities=[str(item) for item in payload.get("improvement_opportunities") or []],
+            recommended_actions=[str(item) for item in payload.get("recommended_actions") or []],
+            next_iteration_goal=str(payload.get("next_iteration_goal") or ""),
+            must_implement_next=[str(item) for item in payload.get("must_implement_next") or []],
+            blocking_risks=[str(item) for item in payload.get("blocking_risks") or []],
+            designed_tasks=list(payload.get("designed_tasks") or []),
+            product_judgment=payload.get("product_judgment") if isinstance(payload.get("product_judgment"), dict) else {},
+            annotations=attr_without(
+                "project_path",
+                "goal",
+                "iteration",
+                "summary",
+                "improvement_opportunities",
+                "recommended_actions",
+                "next_iteration_goal",
+                "must_implement_next",
+                "blocking_risks",
+                "designed_tasks",
+                "product_judgment",
+            ),
+        )
     if tool_name in {
         "llm_summarizer",
         "code_reviewer",
         "task_classifier",
         "memory_context",
-        "project_environment_tool",
         "autonomy_tool",
-        "project_state_reader",
-        "project_improvement_tool",
     }:
         content = (
             payload.get("summary")
@@ -214,7 +285,11 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             or ""
         )
         return TextArtifactMetadata(content=str(content), attributes=payload)
-    return payload
+    return TextArtifactMetadata(
+        content=str(payload.get("content") or payload.get("summary") or ""),
+        title=tool_name,
+        attributes=payload,
+    )
 
 
 def metadata_tool_result(tool_name: str) -> Callable[[Callable[..., Any]], Callable[..., ToolResultMetadata]]:
@@ -239,7 +314,7 @@ def metadata_tool_result(tool_name: str) -> Callable[[Callable[..., Any]], Calla
 
 
 def tool_result_payload(result: Any) -> Any:
-    """Return the payload inside result metadata for internal domain code."""
+    """Return the payload inside result metadata for UI/final display code."""
     if isinstance(result, ToolResultMetadata):
         return result.result
     return result
@@ -249,7 +324,7 @@ class TaskResultMetadata(MetadataBase):
     kind: MetadataKind = MetadataKind.TASK_RESULT
     task_id: str
     status: ResultStatus
-    result: ToolResultMetadata | ArtifactMetadata | dict[str, JsonValue] | None = None
+    result: SerializeAsAny[ToolResultMetadata | MetadataBase] | None = None
     failure: FailureMetadata | None = None
     duration: float | None = None
 

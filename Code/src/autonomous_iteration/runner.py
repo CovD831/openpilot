@@ -9,7 +9,7 @@ from typing import Any
 from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.task_models import Task, TaskPriority
 from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
-from metadata import ToolInputMetadata, tool_result_payload
+from metadata import ToolExecutionEnvelopeMetadata, ToolInputMetadata
 
 
 class AutonomousIterationRunner:
@@ -55,12 +55,12 @@ class AutonomousIterationRunner:
             written_files=written_files,
             run_command=run_command,
         )
-        if not environment_result["success"] or not isinstance(environment_result.get("result"), dict):
+        if not environment_result.success or environment_result.output is None:
             result = self._environment_failure_result(environment_result, run_command)
             self._log("environment_failed", {"project_path": str(project_path)}, {"reason": result["failure_reason"]}, success=False)
             return result
 
-        environment_payload = environment_result["result"]
+        environment_payload = environment_result.output
         run_command = str(environment_payload.get("run_command") or run_command)
 
         def on_progress(event: str, payload: dict[str, Any]) -> None:
@@ -150,7 +150,7 @@ class AutonomousIterationRunner:
         project_path: Path,
         written_files: list[str],
         run_command: str,
-    ) -> dict[str, Any]:
+    ) -> ToolExecutionEnvelopeMetadata:
         environment_task = Task(
             id=str(uuid.uuid4()),
             description="Prepare project virtual environment",
@@ -170,9 +170,9 @@ class AutonomousIterationRunner:
         self._log(
             "environment_prepared",
             {"project_path": str(project_path), "written_files": len(written_files)},
-            {"success": result.get("success")},
-            success=bool(result.get("success")),
-            error=result.get("error"),
+            {"success": result.success},
+            success=result.success,
+            error=result.error_message,
         )
         return result
 
@@ -208,14 +208,14 @@ class AutonomousIterationRunner:
             fallback = project_state_reader_executor(
                 ToolInputMetadata.from_mapping("project_state_reader", {**params, "_memory_store": self.autopilot.memory_store})
             )
-            payload = tool_result_payload(fallback)
+            payload = fallback.result
             self._log(
                 "project_state_read",
                 {"iteration": iteration},
-                {"source": "direct", "success": bool(payload)},
-                success=bool(payload),
+                {"source": "direct", "success": payload is not None},
+                success=payload is not None,
             )
-            return payload
+            return payload.to_json_dict() if payload else {}
 
         result = execute_reader(
             task=task,
@@ -223,25 +223,25 @@ class AutonomousIterationRunner:
             input_metadata=ToolInputMetadata.from_mapping("project_state_reader", params),
             parent_task_id=self.autopilot._dashboard_stage_id("project_state"),
         )
-        if result["success"] and isinstance(result.get("result"), dict):
+        if result.success and result.output is not None:
             self._log("project_state_read", {"iteration": iteration}, {"source": "tool", "success": True})
-            return result["result"]
+            return result.output.to_json_dict()
 
         fallback = project_state_reader_executor(
             ToolInputMetadata.from_mapping("project_state_reader", {**params, "_memory_store": self.autopilot.memory_store})
         )
-        payload = tool_result_payload(fallback)
+        payload = fallback.result
         self._log(
             "project_state_read",
             {"iteration": iteration},
-            {"source": "fallback", "success": bool(payload)},
-            success=bool(payload),
-            error=result.get("error"),
+            {"source": "fallback", "success": payload is not None},
+            success=payload is not None,
+            error=result.error_message,
         )
-        return payload
+        return payload.to_json_dict() if payload else {}
 
-    def _environment_failure_result(self, environment_result: dict[str, Any], run_command: str) -> dict[str, Any]:
-        reason = environment_result.get("error") or "Project environment sync failed."
+    def _environment_failure_result(self, environment_result: ToolExecutionEnvelopeMetadata, run_command: str) -> dict[str, Any]:
+        reason = environment_result.error_message or "Project environment sync failed."
         evaluation = EvaluationResult(
             validation_passed=False,
             runnable=False,

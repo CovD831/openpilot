@@ -34,7 +34,15 @@ from tools.tool_registry import ToolRegistry
 from tools.tool_executor import ToolExecutor
 from core.openpilot_log import OpenPilotLogger
 from core.exceptions import ErrorCategory, classify_error
-from metadata import ToolInputMetadata, tool_result_payload
+from metadata import (
+    FailureMetadata,
+    ResultStatus,
+    TaskResultMetadata,
+    TextArtifactMetadata,
+    ToolExecutionEnvelopeMetadata,
+    ToolInputMetadata,
+    ToolResultMetadata,
+)
 from autonomous_iteration.improvement_context import ImprovementContextHelper
 from autonomous_iteration.runner import AutonomousIterationRunner
 from autonomous_iteration.task_executor import AutonomousTaskExecutor
@@ -342,7 +350,7 @@ class IntelligentAutopilot:
             priority=TaskPriority.HIGH,
         )
         started = datetime.now()
-        tool_results: list[dict[str, Any]] = []
+        tool_results: list[ToolExecutionEnvelopeMetadata] = []
 
         code_prompt = (
             f"Create a complete, runnable single-file Python program for this user request: {goal}\n"
@@ -365,8 +373,8 @@ class IntelligentAutopilot:
         tool_results.append(code_result)
 
         code = ""
-        if code_result["success"] and isinstance(code_result["result"], dict):
-            code = code_result["result"].get("code", "")
+        if code_result.success and code_result.output is not None:
+            code = str(code_result.output.get("code", ""))
 
         syntax_error = None
         if code:
@@ -389,7 +397,7 @@ class IntelligentAutopilot:
                 }),
             )
             tool_results.append(write_result)
-            if write_result["success"]:
+            if write_result.success:
                 environment_result = self._sync_project_environment(
                     task=task,
                     step_id="fast_project_environment_tool",
@@ -399,21 +407,21 @@ class IntelligentAutopilot:
                     run_command=f"python {shlex.quote(target_file.name)}",
                 )
                 tool_results.append(environment_result)
-                if not environment_result["success"]:
+                if not environment_result.success:
                     if self.enhanced_ui:
                         self.enhanced_ui.set_current_task_state(
                             title="Environment Setup failed",
-                            details=str(environment_result.get("error") or "Project environment sync failed."),
+                            details=str(environment_result.error_message or "Project environment sync failed."),
                             status="failed",
                         )
                     readme_result = None
-                    environment_payload = {}
+                    environment_payload = None
                     run_command = f"python {shlex.quote(target_file.name)}"
                 else:
                     readme_result = None
-                    environment_payload = environment_result.get("result") if isinstance(environment_result.get("result"), dict) else {}
-                    run_command = str(environment_payload.get("run_command") or f"python {shlex.quote(target_file.name)}")
-                if environment_result["success"]:
+                    environment_payload = environment_result.output
+                    run_command = str(environment_payload.get("run_command") or f"python {shlex.quote(target_file.name)}") if environment_payload else f"python {shlex.quote(target_file.name)}"
+                if environment_result.success:
                     readme_result = self._execute_fast_tool(
                         task=task,
                         step_id="fast_readme_tool",
@@ -424,45 +432,46 @@ class IntelligentAutopilot:
                             "written_files": [str(target_file)],
                             "entry_files": [str(target_file)],
                             "run_command": run_command,
-                            "setup_commands": environment_payload.get("setup_commands") or [],
-                            "environment": self._readme_environment_context(environment_payload),
+                            "setup_commands": (environment_payload.get("setup_commands") or []) if environment_payload else [],
+                            "environment": self._readme_environment_context(environment_payload.to_json_dict() if environment_payload else {}),
                             "overwrite": True,
                         }),
                     )
                     tool_results.append(readme_result)
         elif syntax_error:
-            tool_results.append({
-                "tool": "syntax_validation",
-                "params": {"file_path": str(target_file)},
-                "result": None,
-                "success": False,
-                "error": syntax_error,
-            })
+            tool_results.append(ToolExecutionEnvelopeMetadata(
+                tool_name="syntax_validation",
+                step_id="fast_syntax_validation",
+                status=ResultStatus.FAIL,
+                success=False,
+                input_metadata=ToolInputMetadata.from_mapping("syntax_validation", {"file_path": str(target_file)}),
+                failure=FailureMetadata(error_type="SyntaxError", error_message=syntax_error),
+            ))
 
-        primary_results = [result for result in tool_results if result["tool"] != "readme_tool"]
-        success = all(result["success"] for result in primary_results)
+        primary_results = [result for result in tool_results if result.tool_name != "readme_tool"]
+        success = all(result.success for result in primary_results)
         duration = (datetime.now() - started).total_seconds()
         error_msg = None
         if not success:
-            errors = [r["error"] for r in primary_results if not r["success"]]
+            errors = [r.error_message for r in primary_results if not r.success]
             error_msg = "; ".join(error for error in errors if error) or "Fast-path code generation failed"
-        readme_result = next((r for r in tool_results if r["tool"] == "readme_tool"), None)
-        readme_error = readme_result["error"] if readme_result and not readme_result["success"] else None
+        readme_result = next((r for r in tool_results if r.tool_name == "readme_tool"), None)
+        readme_error = readme_result.error_message if readme_result and not readme_result.success else None
         improvement_result = None
         iteration_error_msg = None
         if success:
             run_command = f"python {shlex.quote(target_file.name)}"
-            environment_result = next((r for r in tool_results if r["tool"] == "project_environment_tool" and r["success"]), None)
-            if environment_result and isinstance(environment_result.get("result"), dict):
-                run_command = str(environment_result["result"].get("run_command") or run_command)
+            environment_result = next((r for r in tool_results if r.tool_name == "project_environment_tool" and r.success), None)
+            if environment_result and environment_result.output is not None:
+                run_command = str(environment_result.output.get("run_command") or run_command)
             improvement_result = self._run_iterative_improvement(
                 goal=goal,
                 project_path=target_file.parent,
                 written_files=[str(target_file)],
                 run_command=run_command,
                 readme_path=(
-                    readme_result.get("result", {}).get("file_path")
-                    if readme_result and isinstance(readme_result.get("result"), dict)
+                    readme_result.output.get("file_path")
+                    if readme_result and readme_result.output is not None
                     else target_file.parent / "README.md"
                 ),
             )
@@ -474,14 +483,20 @@ class IntelligentAutopilot:
         task_result = TaskExecutionResult(
             task_id=task.id,
             status=TaskStatus.COMPLETED if success else TaskStatus.FAILED,
-            result={
-                "task_id": task.id,
-                "description": task.description,
-                "status": "completed" if success else "failed",
-                "tool_calls": tool_results,
-                "all_tools_succeeded": success,
-                "final_output": tool_results[-1]["result"] if tool_results else None,
-            },
+            result_metadata=TaskResultMetadata(
+                task_id=task.id,
+                status=ResultStatus.SUCCESS if success else ResultStatus.FAIL,
+                result=TextArtifactMetadata(
+                    content="completed" if success else (error_msg or "failed"),
+                    attributes={
+                        "description": task.description,
+                        "tool_calls": [tool_result.to_json_dict() for tool_result in tool_results],
+                        "all_tools_succeeded": success,
+                        "final_output": tool_results[-1].output.to_json_dict() if tool_results and tool_results[-1].output else None,
+                    },
+                ) if success else None,
+                failure=None if success else FailureMetadata(error_type="FastPathError", error_message=error_msg or "Fast-path code generation failed"),
+            ),
             error=error_msg,
             duration=duration,
             annotations={"fast_path": True, "target_file": str(target_file)},
@@ -499,8 +514,8 @@ class IntelligentAutopilot:
                 if success
                 else f"Fast-path execution failed: {error_msg}"
             )
-            if success and readme_result and readme_result["success"] and isinstance(readme_result["result"], dict):
-                fast_details += f"\nREADME: {readme_result['result']['file_path']}"
+            if success and readme_result and readme_result.success and readme_result.output is not None:
+                fast_details += f"\nREADME: {readme_result.output.get('file_path', 'README.md')}"
             elif success and readme_error:
                 fast_details += f"\nREADME generation failed: {readme_error}"
             if improvement_result and improvement_result.get("validation"):
@@ -526,7 +541,7 @@ class IntelligentAutopilot:
                 "error": error_msg,
                 "iteration_error": iteration_error_msg,
                 "readme_error": readme_error,
-                "improvement": self._summarize_tool_output(improvement_result),
+                "improvement": self._summarize_metadata_output(improvement_result),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -588,7 +603,7 @@ class IntelligentAutopilot:
         input_metadata: ToolInputMetadata,
         timeout_override: int | None = None,
         parent_task_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ToolExecutionEnvelopeMetadata:
         if timeout_override is None:
             timeout_override = self._llm_tool_timeout_override(tool_name)
         typed_input = input_metadata
@@ -632,7 +647,7 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "timeout_override": timeout_override,
-                "params": self._sanitize_tool_metadata(typed_input),
+                "input_metadata_summary": self._sanitize_tool_metadata(typed_input),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -655,21 +670,23 @@ class IntelligentAutopilot:
                 details=detail,
                 status=status,
             )
-        result = {
-            "tool": tool_name,
-            "params": self._sanitize_tool_metadata(typed_input),
-            "result": exec_result.output_metadata.result if exec_result.output_metadata else None,
-            "success": exec_result.success,
-            "error": exec_result.error.error_message if exec_result.error else None,
-            "error_type": exec_result.error.error_type if exec_result.error else None,
-            "status": getattr(exec_result.status, "value", str(exec_result.status)),
-            "duration_seconds": exec_result.duration_seconds,
-            "step_id": step_id,
-            "timeout_override": timeout_override,
-            "attempts_used": getattr(exec_result, "attempt_number", 1),
-            "retry_count": getattr(exec_result, "retry_count", 0),
-            "retry_history": retry_history,
-        }
+        status_text = getattr(exec_result.status, "value", str(exec_result.status))
+        status = self._result_status_from_execution(status_text, exec_result.success)
+        failure = self._failure_metadata_from_execution(exec_result.error)
+        result = ToolExecutionEnvelopeMetadata(
+            tool_name=tool_name,
+            step_id=step_id,
+            status=status,
+            success=exec_result.success,
+            input_metadata=typed_input,
+            output_metadata=exec_result.output_metadata,
+            failure=failure,
+            duration_seconds=exec_result.duration_seconds,
+            timeout_override=timeout_override,
+            attempts_used=getattr(exec_result, "attempt_number", 1),
+            retry_count=getattr(exec_result, "retry_count", 0),
+            retry_history=retry_history,
+        )
         self.logger.log_event(
             "tool_executed",
             {
@@ -677,18 +694,38 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "success": exec_result.success,
-                "status": result["status"],
-                "error_type": result["error_type"],
-                "error": result["error"],
-                "duration_seconds": result["duration_seconds"],
-                "attempts_used": result["attempts_used"],
-                "retry_count": result["retry_count"],
-                "output": self._summarize_tool_output(exec_result.output_metadata),
+                "status": status.value,
+                "error_type": failure.error_type if failure else None,
+                "error": failure.error_message if failure else None,
+                "duration_seconds": result.duration_seconds,
+                "attempts_used": result.attempts_used,
+                "retry_count": result.retry_count,
+                "output": self._summarize_metadata_output(exec_result.output_metadata),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
         )
         return result
+
+    def _result_status_from_execution(self, status_text: str, success: bool) -> ResultStatus:
+        if success:
+            return ResultStatus.SUCCESS
+        if "timeout" in status_text.lower():
+            return ResultStatus.TIMEOUT
+        if "cancel" in status_text.lower():
+            return ResultStatus.CANCELLED
+        return ResultStatus.FAIL
+
+    def _failure_metadata_from_execution(self, error: Any) -> FailureMetadata | None:
+        if error is None:
+            return None
+        return FailureMetadata(
+            error_type=getattr(error, "error_type", type(error).__name__),
+            error_message=getattr(error, "error_message", str(error)),
+            error_code=getattr(error, "error_code", None),
+            recoverable=bool(getattr(error, "recoverable", False)),
+            retry_recommended=bool(getattr(error, "retry_recommended", False)),
+        )
 
     def _execute_tool_with_fast_retry(self, selection: ToolSelection):
         tool_def = self.tool_registry.get(selection.tool_name)
@@ -800,7 +837,7 @@ class IntelligentAutopilot:
         self,
         goal: str,
         results: list[TaskExecutionResult],
-    ) -> dict[str, Any] | None:
+    ) -> ToolExecutionEnvelopeMetadata | None:
         """Generate README.md once after successful project/file creation."""
         if self._results_include_tool(results, "readme_tool"):
             return None
@@ -832,16 +869,16 @@ class IntelligentAutopilot:
         )
 
         if self.enhanced_ui:
-            if readme_result["success"]:
-                output = readme_result.get("result") if isinstance(readme_result.get("result"), dict) else {}
-                self.enhanced_ui.log_activity("success", f"README generated: {output.get('file_path', 'README.md')}")
+            if readme_result.success:
+                output = readme_result.output
+                self.enhanced_ui.log_activity("success", f"README generated: {output.get('file_path', 'README.md') if output else 'README.md'}")
             else:
-                self.enhanced_ui.log_activity("error", f"README generation failed: {readme_result.get('error')}")
-        elif readme_result["success"]:
-            output = readme_result.get("result") if isinstance(readme_result.get("result"), dict) else {}
-            self.console.print(f"[green]README generated:[/green] {output.get('file_path', project_path / 'README.md')}")
+                self.enhanced_ui.log_activity("error", f"README generation failed: {readme_result.error_message}")
+        elif readme_result.success:
+            output = readme_result.output
+            self.console.print(f"[green]README generated:[/green] {output.get('file_path', project_path / 'README.md') if output else project_path / 'README.md'}")
         else:
-            self.console.print(f"[yellow]README generation failed:[/yellow] {readme_result.get('error')}")
+            self.console.print(f"[yellow]README generation failed:[/yellow] {readme_result.error_message}")
 
         self.logger.log_event(
             "readme_finalized",
@@ -849,9 +886,9 @@ class IntelligentAutopilot:
                 "goal": goal,
                 "project_path": str(project_path),
                 "written_files": written_files,
-                "success": readme_result["success"],
-                "error": readme_result.get("error"),
-                "output": self._summarize_tool_output(readme_result.get("result")),
+                "success": readme_result.success,
+                "error": readme_result.error_message,
+                "output": self._summarize_metadata_output(readme_result.output),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -886,7 +923,7 @@ class IntelligentAutopilot:
         entry_files: list[str],
         run_command: str,
         parent_task_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ToolExecutionEnvelopeMetadata:
         if self.enhanced_ui and parent_task_id:
             self._set_dashboard_task_status(parent_task_id, "running")
             self.enhanced_ui.set_current_task_state(
@@ -908,11 +945,11 @@ class IntelligentAutopilot:
             input_metadata=ToolInputMetadata.from_mapping("project_environment_tool", input_metadata_payload),
             parent_task_id=parent_task_id,
         )
-        if result.get("success") and isinstance(result.get("result"), dict):
-            payload = result["result"]
+        if result.success and result.output is not None:
+            payload = result.output
             if not hasattr(self, "_project_environments"):
                 self._project_environments = {}
-            self._project_environments[str(project_path.resolve())] = payload
+            self._project_environments[str(project_path.resolve())] = payload.to_json_dict()
             if self.enhanced_ui and parent_task_id:
                 packages = payload.get("detected_packages") or []
                 self._set_dashboard_task_status(parent_task_id, "completed")
@@ -945,7 +982,7 @@ class IntelligentAutopilot:
             self._append_dashboard_stage_child(
                 "environment",
                 child_id=f"sync_failed_{step_id}",
-                description=str(result.get("error") or "Project environment sync failed."),
+                description=str(result.error_message or "Project environment sync failed."),
                 kind="result",
                 status="failed",
             )
@@ -958,7 +995,7 @@ class IntelligentAutopilot:
         step_id: str,
         input_metadata: ToolInputMetadata,
         parent_task_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ToolExecutionEnvelopeMetadata:
         """Run the environment manager's agent-local tool without public registry selection."""
         from memory.agents.project_environment_tool import project_environment_tool_executor
 
@@ -987,53 +1024,49 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "timeout_override": None,
-                "params": self._sanitize_tool_metadata(typed_input),
+                "input_metadata_summary": self._sanitize_tool_metadata(typed_input),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
         )
 
         success = False
-        output: dict[str, Any] | None = None
+        output_metadata: ToolResultMetadata | None = None
         error: str | None = None
         error_type: str | None = None
         try:
             typed_input.runtime_handles["_memory_store"] = self.memory_store
-            output = tool_result_payload(project_environment_tool_executor(typed_input))
+            output_metadata = project_environment_tool_executor(typed_input)
             success = True
         except Exception as exc:
             error = str(exc)
             error_type = exc.__class__.__name__
 
         duration_seconds = time.monotonic() - started
-        status = "completed" if success else "failed"
-        result = {
-            "tool": tool_name,
-            "params": self._sanitize_tool_metadata(typed_input),
-            "result": output,
-            "success": success,
-            "error": error,
-            "error_type": error_type,
-            "status": status,
-            "duration_seconds": duration_seconds,
-            "step_id": step_id,
-            "timeout_override": None,
-            "attempts_used": 1,
-            "retry_count": 0,
-            "retry_history": [],
-        }
+        status = ResultStatus.SUCCESS if success else ResultStatus.FAIL
+        failure = None if success else FailureMetadata(error_type=error_type or "ToolError", error_message=error or "Project environment sync failed.")
+        result = ToolExecutionEnvelopeMetadata(
+            tool_name=tool_name,
+            step_id=step_id,
+            status=status,
+            success=success,
+            input_metadata=typed_input,
+            output_metadata=output_metadata,
+            failure=failure,
+            duration_seconds=duration_seconds,
+        )
 
         if self.enhanced_ui:
             self._set_dashboard_tool_status(
                 parent_task_id=parent_task_id,
                 tool_id=step_id,
                 tool_name=tool_name,
-                status=status,
+                status=status.value,
             )
             self.enhanced_ui.set_current_task_state(
                 title=f"Tool: {tool_name}",
                 details="Tool returned successfully" if success else (error or "Project environment sync failed."),
-                status=status,
+                status=status.value,
             )
 
         self.logger.log_event(
@@ -1043,13 +1076,13 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "success": success,
-                "status": status,
+                "status": status.value,
                 "error_type": error_type,
                 "error": error,
                 "duration_seconds": duration_seconds,
                 "attempts_used": 1,
                 "retry_count": 0,
-                "output": self._summarize_tool_output(output),
+                "output": self._summarize_metadata_output(output_metadata),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -1063,7 +1096,7 @@ class IntelligentAutopilot:
         step_id: str,
         input_metadata: ToolInputMetadata,
         parent_task_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ToolExecutionEnvelopeMetadata:
         """Run the autonomous-iteration project state reader without public registry selection."""
         from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
 
@@ -1086,7 +1119,7 @@ class IntelligentAutopilot:
         step_id: str,
         input_metadata: ToolInputMetadata,
         parent_task_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ToolExecutionEnvelopeMetadata:
         """Run the autonomous-iteration improvement analyzer without public registry selection."""
         from autonomous_iteration.tool.project_improvement_tool import project_improvement_tool_executor
 
@@ -1109,9 +1142,9 @@ class IntelligentAutopilot:
         step_id: str,
         tool_name: str,
         input_metadata: ToolInputMetadata,
-        executor: Callable[[ToolInputMetadata], dict[str, Any]],
+        executor: Callable[[ToolInputMetadata], ToolResultMetadata],
         parent_task_id: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> ToolExecutionEnvelopeMetadata:
         """Run a module-owned tool and return the same envelope as registry-backed tools."""
         typed_input = input_metadata
         input_payload = typed_input.to_params()
@@ -1137,52 +1170,48 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "timeout_override": None,
-                "params": self._sanitize_tool_metadata(typed_input),
+                "input_metadata_summary": self._sanitize_tool_metadata(typed_input),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
         )
 
         success = False
-        output: dict[str, Any] | None = None
+        output_metadata: ToolResultMetadata | None = None
         error: str | None = None
         error_type: str | None = None
         try:
-            output = tool_result_payload(executor(typed_input))
+            output_metadata = executor(typed_input)
             success = True
         except Exception as exc:
             error = str(exc)
             error_type = exc.__class__.__name__
 
         duration_seconds = time.monotonic() - started
-        status = "completed" if success else "failed"
-        result = {
-            "tool": tool_name,
-            "params": self._sanitize_tool_metadata(typed_input),
-            "result": output,
-            "success": success,
-            "error": error,
-            "error_type": error_type,
-            "status": status,
-            "duration_seconds": duration_seconds,
-            "step_id": step_id,
-            "timeout_override": None,
-            "attempts_used": 1,
-            "retry_count": 0,
-            "retry_history": [],
-        }
+        status = ResultStatus.SUCCESS if success else ResultStatus.FAIL
+        failure = None if success else FailureMetadata(error_type=error_type or "ToolError", error_message=error or f"{tool_name} failed.")
+        result = ToolExecutionEnvelopeMetadata(
+            tool_name=tool_name,
+            step_id=step_id,
+            status=status,
+            success=success,
+            input_metadata=typed_input,
+            output_metadata=output_metadata,
+            failure=failure,
+            duration_seconds=duration_seconds,
+        )
 
         if self.enhanced_ui:
             self._set_dashboard_tool_status(
                 parent_task_id=parent_task_id,
                 tool_id=step_id,
                 tool_name=tool_name,
-                status=status,
+                status=status.value,
             )
             self.enhanced_ui.set_current_task_state(
                 title=f"Tool: {tool_name}",
                 details="Tool returned successfully" if success else (error or f"{tool_name} failed."),
-                status=status,
+                status=status.value,
             )
 
         self.logger.log_event(
@@ -1192,13 +1221,13 @@ class IntelligentAutopilot:
                 "step_id": step_id,
                 "tool": tool_name,
                 "success": success,
-                "status": status,
+                "status": status.value,
                 "error_type": error_type,
                 "error": error,
                 "duration_seconds": duration_seconds,
                 "attempts_used": 1,
                 "retry_count": 0,
-                "output": self._summarize_tool_output(output),
+                "output": self._summarize_metadata_output(output_metadata),
             },
             session_id=self.session_id or "unknown",
             turn_id=1,
@@ -1263,8 +1292,8 @@ class IntelligentAutopilot:
             }),
             parent_task_id=self._dashboard_stage_id("goal_maker"),
         )
-        if tool_result["success"] and isinstance(tool_result.get("result"), dict):
-            return tool_result["result"]
+        if tool_result.success and tool_result.output is not None:
+            return tool_result.output.to_json_dict()
         fallback = {
             "summary": evaluation.summary,
             "improvement_opportunities": evaluation.improvement_opportunities,
@@ -1274,7 +1303,7 @@ class IntelligentAutopilot:
             "prompt_context": prompt_context,
             "product_judgment": prompt_context.get("product_judgment") or {},
             "source": "fallback",
-            "fallback_reason": tool_result.get("error") or "project_improvement_tool did not return a usable report.",
+            "fallback_reason": tool_result.error_message or "project_improvement_tool did not return a usable report.",
         }
         if not fallback.get("next_iteration_goal") and self._fallback_should_prefer_pygame(prompt_context):
             fallback.update(
@@ -1670,9 +1699,10 @@ class IntelligentAutopilot:
 
     def _results_include_tool(self, results: list[TaskExecutionResult], tool_name: str) -> bool:
         for result in results:
-            task_result = result.result_metadata.result if result.result_metadata and isinstance(result.result_metadata.result, dict) else {}
-            for tool_call in task_result.get("tool_calls", []):
-                if tool_call.get("tool") == tool_name:
+            task_payload = result.result_metadata.result if result.result_metadata else None
+            tool_calls = getattr(task_payload, "attributes", {}).get("tool_calls", []) if task_payload else []
+            for tool_call in tool_calls:
+                if tool_call.get("tool_name") == tool_name:
                     return True
         return False
 
@@ -1680,14 +1710,21 @@ class IntelligentAutopilot:
         files: list[str] = []
         seen: set[str] = set()
         for result in results:
-            task_result = result.result_metadata.result if result.result_metadata and isinstance(result.result_metadata.result, dict) else {}
-            for tool_call in task_result.get("tool_calls", []):
-                if tool_call.get("tool") != "file_writer" or not tool_call.get("success"):
+            task_payload = result.result_metadata.result if result.result_metadata else None
+            tool_calls = getattr(task_payload, "attributes", {}).get("tool_calls", []) if task_payload else []
+            for tool_call in tool_calls:
+                if tool_call.get("tool_name") != "file_writer" or not tool_call.get("success"):
                     continue
-                output = tool_call.get("result")
+                output_metadata = tool_call.get("output_metadata") or {}
+                output = (
+                    next((value for key, value in output_metadata.items() if key == "result"), None)
+                    if isinstance(output_metadata, dict)
+                    else None
+                )
                 path = output.get("file_path") if isinstance(output, dict) else None
                 if not path:
-                    path = tool_call.get("params", {}).get("file_path")
+                    input_metadata = tool_call.get("input_metadata") or {}
+                    path = input_metadata.get("file_path") if isinstance(input_metadata, dict) else None
                 if path and path not in seen:
                     files.append(path)
                     seen.add(path)
@@ -1715,8 +1752,8 @@ class IntelligentAutopilot:
     def _sanitize_tool_metadata(self, value: Any) -> dict[str, Any]:
         return self.tool_io.sanitize_tool_metadata(value)
 
-    def _summarize_tool_output(self, output: Any) -> dict[str, Any]:
-        return self.tool_io.summarize_tool_output(output)
+    def _summarize_metadata_output(self, output: Any) -> dict[str, Any]:
+        return self.tool_io.summarize_metadata_output(output)
 
     def _json_safe_summary(self, value: Any) -> Any:
         return self.tool_io.json_safe_summary(value)

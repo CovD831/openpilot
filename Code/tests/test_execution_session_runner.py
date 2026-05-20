@@ -9,6 +9,7 @@ from rich.console import Console
 from autonomous_iteration.task_models import Task, TaskDecompositionResult, TaskExecutionResult, TaskStatus
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.session_runner import AutopilotSessionRunner
+from metadata import FileArtifactMetadata, ResultStatus, ToolExecutionEnvelopeMetadata, ToolInputMetadata, ToolResultMetadata
 
 
 class FakeSemantic:
@@ -140,7 +141,18 @@ class FakeRuntime:
         ]
 
     def _finalize_project_readme(self, goal, results):
-        return {"success": True, "result": {"file_path": "README.md"}}
+        return ToolExecutionEnvelopeMetadata(
+            tool_name="readme_tool",
+            step_id="readme_tool",
+            status=ResultStatus.SUCCESS,
+            success=True,
+            input_metadata=ToolInputMetadata(tool_name="readme_tool"),
+            output_metadata=ToolResultMetadata(
+                tool_name="readme_tool",
+                status=ResultStatus.SUCCESS,
+                result=FileArtifactMetadata(file_path="README.md"),
+            ),
+        )
 
     def _collect_written_files(self, results):
         return self.written_files

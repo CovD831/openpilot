@@ -386,11 +386,10 @@ class ProjectEvaluatorAgent:
         try:
             from tools.code_reviewer import code_reviewer_executor
 
-            from metadata import ToolInputMetadata, tool_result_payload
+            from metadata import ToolInputMetadata
 
-            return tool_result_payload(
-                code_reviewer_executor(ToolInputMetadata.from_mapping("code_reviewer", {"code": code_text, "language": "python"}))
-            )
+            result = code_reviewer_executor(ToolInputMetadata.from_mapping("code_reviewer", {"code": code_text, "language": "python"}))
+            return result.result.to_json_dict() if result.result else {}
         except Exception:
             return {}
 

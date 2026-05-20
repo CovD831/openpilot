@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent_generator.models import DataArtifact
+from metadata import CollectedDataMetadata, ProcessedDataMetadata, metadata_summary
 
 
 def present_data(data: list[DataArtifact], console: Console | None = None) -> None:
@@ -40,25 +41,24 @@ def present_data(data: list[DataArtifact], console: Console | None = None) -> No
 
 def _artifact_panel(artifact: DataArtifact) -> Panel:
     content = artifact.content
-    if isinstance(content, dict):
-        mode = content.get("mode")
-        if mode == "web":
+    if isinstance(content, CollectedDataMetadata):
+        if content.mode == "web":
             body = _render_web_content(content)
-        elif mode == "file":
+        elif content.mode == "file":
             body = _render_file_content(content)
-        elif _is_processed_content(content):
-            body = _render_processed_content(content)
         else:
-            body = _render_generic_content(content)
+            body = _render_generic_content(metadata_summary(content))
+    elif isinstance(content, ProcessedDataMetadata):
+        body = _render_processed_content(content)
     else:
         body = _truncate(str(content), 2400)
     return Panel(body or "[dim]No displayable content.[/dim]", title=f"[bold]{artifact.name}[/bold]", border_style="cyan")
 
 
-def _render_web_content(content: dict[str, Any]) -> str:
-    output = content.get("tool_output") if isinstance(content.get("tool_output"), dict) else {}
+def _render_web_content(content: CollectedDataMetadata) -> str:
+    output = content.tool_result or content.artifact
     lines = [
-        f"[bold]Query:[/bold] {content.get('query') or output.get('query') or ''}",
+        f"[bold]Query:[/bold] {content.query or output.get('query') or ''}",
         f"[bold]Provider:[/bold] {output.get('provider', 'unknown')}",
         f"[bold]Results:[/bold] {output.get('count', 0)}",
     ]
@@ -115,9 +115,9 @@ def _render_web_content(content: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _render_file_content(content: dict[str, Any]) -> str:
-    output = content.get("tool_output") if isinstance(content.get("tool_output"), dict) else {}
-    files = output.get("files") or content.get("files") or []
+def _render_file_content(content: CollectedDataMetadata) -> str:
+    output = content.tool_result or content.artifact
+    files = output.get("files") or content.files or []
     if not files and output.get("file_path"):
         files = [output["file_path"]]
     file_content = str(output.get("content") or "")
@@ -134,42 +134,39 @@ def _render_file_content(content: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _render_processed_content(content: dict[str, Any]) -> str:
+def _render_processed_content(content: ProcessedDataMetadata) -> str:
     lines = [
-        f"[bold]Task:[/bold] {content.get('task', '')}",
-        f"[bold]Processing Strategy:[/bold] {content.get('processing_strategy', '')}",
-        f"[bold]Output Format:[/bold] {content.get('result_format') or content.get('output_format', '')}",
+        f"[bold]Task:[/bold] {content.task}",
+        f"[bold]Processing Strategy:[/bold] {content.processing_strategy}",
+        f"[bold]Output Format:[/bold] {content.result_format or content.output_format}",
     ]
-    result_text = str(content.get("result_text") or "").strip()
+    result_text = str(content.result_text or "").strip()
     if result_text:
         lines.extend(["", "[bold]Processed Result[/bold]", _truncate_preserve_lines(result_text, 3600)])
-    warnings = _string_list(content.get("warnings"))
+    warnings = _string_list(content.warnings)
     if warnings:
         lines.extend(["", "[bold yellow]Warnings[/bold yellow]"])
         lines.extend(f"- {_truncate(warning, 260)}" for warning in warnings[:4])
-    artifacts = content.get("input_artifacts") or []
+    artifacts = content.input_artifacts
     if artifacts:
         lines.extend(["", "[bold]Input Data Used[/bold]"])
         for artifact in artifacts[:4]:
-            if not isinstance(artifact, dict):
+            if not isinstance(artifact, CollectedDataMetadata):
+                lines.append(f"- {_truncate(str(metadata_summary(artifact)), 260)}")
                 continue
-            lines.append(f"- {artifact.get('name', artifact.get('id', 'artifact'))}: {_truncate(str(artifact.get('preview', '')), 260)}")
-            artifact_content = artifact.get("content")
-            if isinstance(artifact_content, dict):
-                mode = artifact_content.get("mode")
-                if mode == "web":
-                    output = artifact_content.get("tool_output") if isinstance(artifact_content.get("tool_output"), dict) else {}
-                    summary = output.get("research_summary") or ""
-                    if summary:
-                        lines.append(f"  Summary: {_truncate(str(summary), 320)}")
-                    key_points = _string_list(output.get("key_points"))
-                    for point in key_points[:3]:
-                        lines.append(f"  - {_truncate(point, 220)}")
-                elif mode == "file":
-                    output = artifact_content.get("tool_output") if isinstance(artifact_content.get("tool_output"), dict) else {}
-                    excerpt = str(output.get("content") or "")
-                    if excerpt:
-                        lines.append(f"  Excerpt: {_truncate(excerpt, 420)}")
+            lines.append(f"- {artifact.tool_name}: {_truncate(artifact.task, 260)}")
+            output = artifact.tool_result or artifact.artifact
+            if artifact.mode == "web":
+                summary = output.get("research_summary") or ""
+                if summary:
+                    lines.append(f"  Summary: {_truncate(str(summary), 320)}")
+                key_points = _string_list(output.get("key_points"))
+                for point in key_points[:3]:
+                    lines.append(f"  - {_truncate(point, 220)}")
+            elif artifact.mode == "file":
+                excerpt = str(output.get("content") or "")
+                if excerpt:
+                    lines.append(f"  Excerpt: {_truncate(excerpt, 420)}")
     return "\n".join(lines)
 
 
@@ -181,10 +178,6 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if item is not None and str(item).strip()]
-
-
-def _is_processed_content(content: dict[str, Any]) -> bool:
-    return "processing_strategy" in content and "input_artifacts" in content
 
 
 def _truncate(value: str, limit: int) -> str:

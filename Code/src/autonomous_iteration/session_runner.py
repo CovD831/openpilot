@@ -362,8 +362,8 @@ class AutopilotSessionRunner:
                 project_path=project_path,
                 written_files=written_files,
                 readme_path=(
-                    readme_result.get("result", {}).get("file_path")
-                    if readme_result and isinstance(readme_result.get("result"), dict)
+                    readme_result.output.get("file_path")
+                    if readme_result and getattr(readme_result, "output", None) is not None
                     else None
                 ),
             )
@@ -396,10 +396,10 @@ class AutopilotSessionRunner:
         if success:
             success_details = f"Goal completed successfully!\n\nCompleted {runtime.stats['tasks_completed']} tasks"
             if readme_result:
-                if readme_result["success"] and isinstance(readme_result.get("result"), dict):
-                    success_details += f"\nREADME: {readme_result['result'].get('file_path')}"
-                elif readme_result.get("error"):
-                    success_details += f"\nREADME generation failed: {readme_result['error']}"
+                if readme_result.success and readme_result.output is not None:
+                    success_details += f"\nREADME: {readme_result.output.get('file_path')}"
+                elif readme_result.error_message:
+                    success_details += f"\nREADME generation failed: {readme_result.error_message}"
             if improvement_result and improvement_result.get("validation"):
                 success_details += (
                     f"\nImprovements applied: {improvement_result.get('completed_improvements', 0)}/"

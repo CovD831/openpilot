@@ -3,7 +3,7 @@ from __future__ import annotations
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from autonomous_iteration.tool_io import ExecutionToolIO
 from core.tool_contracts import ToolDefinition
-from metadata import ResultStatus, ToolContractMetadata, ToolInputMetadata, ToolResultMetadata
+from metadata import CodeArtifactMetadata, ResultStatus, ToolContractMetadata, ToolInputMetadata, ToolResultMetadata
 from tools.tool_selection import ToolSelection
 
 
@@ -36,7 +36,7 @@ def test_tool_io_resolves_chained_metadata_for_writer_and_executor() -> None:
     generated = ToolResultMetadata(
         tool_name="code_generator",
         status=ResultStatus.SUCCESS,
-        result={"kind": "code_artifact", "code": "print('ok')", "language": "python"},
+        result=CodeArtifactMetadata(code="print('ok')", language="python"),
     )
 
     writer_metadata = helper.resolve_chained_metadata(
@@ -73,7 +73,7 @@ def test_tool_io_resolves_tool_selection_dependency_outputs() -> None:
             "generate": ToolResultMetadata(
                 tool_name="code_generator",
                 status=ResultStatus.SUCCESS,
-                result={"kind": "code_artifact", "code": "print('from step')", "language": "python"},
+                result=CodeArtifactMetadata(code="print('from step')", language="python"),
             )
         },
     )

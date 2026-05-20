@@ -9,7 +9,7 @@ from typing import Any
 
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.llm import LLMMessage, LLMRequest
-from metadata import FailureMetadata, ResultStatus, TaskResultMetadata, ToolInputMetadata
+from metadata import FailureMetadata, ResultStatus, TaskResultMetadata, TextArtifactMetadata, ToolInputMetadata
 from tools.tool_selection import ToolSelection
 
 
@@ -71,7 +71,7 @@ class ToolPlanningTaskExecutor:
                 result_metadata=TaskResultMetadata(
                     task_id=task.id,
                     status=ResultStatus.SUCCESS if all_succeeded else ResultStatus.FAIL,
-                    result=output if all_succeeded else None,
+                    result=TextArtifactMetadata(content="completed", attributes=output) if all_succeeded else None,
                     failure=FailureMetadata(error_type="ToolExecutionFailed", error_message=error_msg or "Tool execution failed") if not all_succeeded else None,
                     duration=duration,
                 ),
@@ -217,12 +217,12 @@ Important:
             self._log_tool_start(task, tool_name, input_payload)
             exec_result = self.runtime.tool_executor.execute_single(selection, context=None)
             self._show_tool_result(tool_name, exec_result)
-            log_output = self._summarize_tool_output(exec_result.output_metadata)
+            log_output = self._summarize_metadata_output(exec_result.output_metadata)
             output_result = exec_result.output_metadata.result if exec_result.output_metadata else None
             tool_results.append(
                 {
                     "tool": tool_name,
-                    "params": input_payload,
+                    "input_metadata": input_metadata.to_json_dict(),
                     "result": output_result,
                     "success": exec_result.success,
                     "error": exec_result.error.error_message if exec_result.error else None,
@@ -303,7 +303,7 @@ Important:
             {
                 "task_id": task.id,
                 "tool": tool_name,
-                "params": log_params,
+                "input_metadata_summary": log_params,
             },
             session_id=self._session_id(),
             turn_id=1,
@@ -324,7 +324,7 @@ Important:
             turn_id=1,
         )
 
-    def _summarize_tool_output(self, output: Any) -> dict[str, Any]:
+    def _summarize_metadata_output(self, output: Any) -> dict[str, Any]:
         if not output:
             return {}
         if not isinstance(output, dict):
