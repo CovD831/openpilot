@@ -896,16 +896,23 @@
         {
           "name": "provider",
           "type": "string",
-          "description": "Embedding provider",
+          "description": "Embedding provider; defaults to OPENPILOT_EMBEDDING_PROVIDER",
           "required": false,
-          "default": "openai"
+          "default": null
         },
         {
           "name": "model",
           "type": "string",
-          "description": "Embedding model name",
+          "description": "Embedding model name; defaults to OPENPILOT_EMBEDDING_MODEL",
           "required": false,
-          "default": "text-embedding-3-small"
+          "default": null
+        },
+        {
+          "name": "base_url",
+          "type": "string",
+          "description": "Embedding endpoint; defaults to OPENPILOT_EMBEDDING_BASE_URL or LLM base URL",
+          "required": false,
+          "default": null
         },
         {
           "name": "use_cache",

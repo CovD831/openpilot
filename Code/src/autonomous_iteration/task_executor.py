@@ -65,6 +65,16 @@ class AutonomousTaskExecutor:
             )
 
         improvement_report = improvement_report or {}
+        if is_repair and self._should_use_warning_bug_fix(evaluation):
+            return self._execute_warning_bug_fix(
+                task=task,
+                iteration=iteration,
+                target_file=target_file,
+                run_command=run_command or evaluation.run_command,
+                evaluation=evaluation,
+                actions=actions,
+            )
+
         code_result, retry_history = self.run_code_generation_retry_pipeline(
             task=task,
             iteration=iteration,
@@ -255,6 +265,47 @@ class AutonomousTaskExecutor:
 
         review_payload = review_result.output or {}
         review_approved = bool(review_payload.get("approved", True))
+        product_intent_retry_history: list[dict[str, Any]] = []
+        if review_result.success and not review_approved and self._is_product_intent_rejection(review_payload):
+            retry_result, product_intent_retry_history = self._run_product_intent_retry(
+                task=task,
+                iteration=iteration,
+                goal=goal,
+                target_file=target_file,
+                rejected_code=improved_code,
+                evaluation=evaluation,
+                actions=actions,
+                improvement_report=improvement_report,
+                review_payload=review_payload,
+                is_repair=is_repair,
+            )
+            retry_attempted = True
+            retry_history.extend(product_intent_retry_history)
+            if retry_result.get("success"):
+                improved_code = str(retry_result["code"])
+                review_result = retry_result["review_result"]
+                write_result = retry_result["write_result"]
+                review_payload = review_result.output or {}
+                review_approved = bool(review_payload.get("approved", True))
+                readme_result = self.runtime._execute_fast_tool(
+                    task=task,
+                    step_id=f"iteration_{iteration}_product_intent_retry_readme_tool",
+                    tool_name="readme_tool",
+                    input_metadata=ToolInputMetadata.from_mapping("readme_tool", {
+                        "project_path": str(project_path),
+                        "project_summary": f"{goal}\n\nRecent Improvements:\n- " + "\n- ".join(
+                            (getattr(self.runtime, "_project_improvement_actions", []) or []) + actions
+                        ),
+                        "written_files": written_files,
+                        "entry_files": [str(target_file)],
+                        "run_command": run_command,
+                        "setup_commands": environment_payload.get("setup_commands") or [],
+                        "environment": self.runtime._readme_environment_context(environment_payload),
+                        "overwrite": True,
+                    }),
+                    parent_task_id=self.runtime._dashboard_stage_id("execution"),
+                )
+
         success = review_result.success and review_approved and readme_result.success
         if success:
             self.runtime._project_improvement_actions = (getattr(self.runtime, "_project_improvement_actions", []) or []) + actions
@@ -294,6 +345,166 @@ class AutonomousTaskExecutor:
             retry_attempted=retry_attempted,
             retry_history=retry_history,
         )
+
+    def _is_product_intent_rejection(self, review_payload: Any) -> bool:
+        if not hasattr(review_payload, "get"):
+            return False
+        categories = [str(item) for item in review_payload.get("rejection_categories") or []]
+        warnings = " ".join(str(item) for item in (review_payload.get("warnings") or []) + (review_payload.get("suggestions") or []))
+        return "product_intent_drift" in categories or "Product intent drift" in warnings or "Product-fit rubric not satisfied" in warnings
+
+    def _run_product_intent_retry(
+        self,
+        *,
+        task: Task,
+        iteration: int,
+        goal: str,
+        target_file: Path,
+        rejected_code: str,
+        evaluation: EvaluationResult,
+        actions: list[str],
+        improvement_report: dict[str, Any],
+        review_payload: Any,
+        is_repair: bool,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        reviewer_feedback = []
+        if hasattr(review_payload, "get"):
+            reviewer_feedback = [str(item) for item in (review_payload.get("suggestions") or review_payload.get("warnings") or [])[:5]]
+        retry_report = {
+            **improvement_report,
+            "reviewer_rejection": {
+                "category": "product_intent_drift",
+                "feedback": reviewer_feedback,
+            },
+            "must_implement_next": [
+                *reviewer_feedback[:3],
+                "Regenerate the implementation so it fixes the issue while preserving product intent.",
+            ],
+        }
+        prompt_context = self.build_code_generation_prompt_context(
+            goal=goal,
+            target_file=target_file,
+            current_code=rejected_code,
+            evaluation=evaluation,
+            actions=actions,
+            improvement_report=retry_report,
+            is_repair=is_repair,
+            simplified=True,
+            mode="product_intent_retry",
+        )
+        prompt_context["reviewer_rejection"] = retry_report["reviewer_rejection"]
+        code_result = self.execute_code_generation_for_improvement(
+            task=task,
+            iteration=iteration,
+            target_file=target_file,
+            improvement_prompt="Regenerate after product intent drift rejection.",
+            simplified=True,
+            mode="product_intent_retry",
+            prompt_context=prompt_context,
+        )
+        history = [
+            self.code_generation_attempt_summary(
+                mode="product_intent_retry",
+                prompt=json.dumps(prompt_context, ensure_ascii=False, default=str),
+                result=code_result,
+                attempt=1,
+            )
+        ]
+        self.append_code_generation_attempt_to_dashboard(iteration, history[0])
+        if not code_result.success or code_result.output is None:
+            return {"success": False}, history
+        retry_code = str(code_result.output.get("code", ""))
+        try:
+            ast.parse(retry_code)
+        except SyntaxError:
+            return {"success": False}, history
+        write_result = self.runtime._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_product_intent_retry_file_writer",
+            tool_name="file_writer",
+            input_metadata=ToolInputMetadata.from_mapping("file_writer", {
+                "file_path": str(target_file),
+                "content": retry_code,
+                "encoding": "utf-8",
+                "create_dirs": True,
+                "overwrite": True,
+            }),
+            parent_task_id=self.runtime._dashboard_stage_id("execution"),
+        )
+        if not write_result.success:
+            return {"success": False, "write_result": write_result}, history
+        review_result = self.runtime._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_product_intent_retry_code_reviewer",
+            tool_name="code_reviewer",
+            input_metadata=ToolInputMetadata.from_mapping("code_reviewer", {
+                "code": retry_code,
+                "language": "python",
+                "prompt_context": prompt_context,
+            }),
+            parent_task_id=self.runtime._dashboard_stage_id("execution"),
+        )
+        return {
+            "success": review_result.success,
+            "code": retry_code,
+            "write_result": write_result,
+            "review_result": review_result,
+        }, history
+
+    def _should_use_warning_bug_fix(self, evaluation: EvaluationResult) -> bool:
+        warning_check = getattr(evaluation, "warning_check_result", None)
+        return bool(warning_check and warning_check.requires_fix)
+
+    def _execute_warning_bug_fix(
+        self,
+        *,
+        task: Task,
+        iteration: int,
+        target_file: Path,
+        run_command: str,
+        evaluation: EvaluationResult,
+        actions: list[str],
+    ) -> IterationResult:
+        warning_check = evaluation.warning_check_result
+        fix_instruction = (
+            "Fix only the runtime warning that harms user-visible behavior. "
+            "Do not change gameplay semantics, controls, scoring, or unrelated product behavior."
+        )
+        if warning_check:
+            fix_instruction += f"\nWarning reason: {warning_check.reason}"
+            fix_instruction += f"\nRecommended fix: {warning_check.recommended_fix}"
+        result = self.runtime._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_bug_fix_tool",
+            tool_name="bug_fix_tool",
+            input_metadata=ToolInputMetadata.from_mapping(
+                "bug_fix_tool",
+                {
+                    "command": run_command,
+                    "cwd": str(target_file.parent),
+                    "file_paths": [str(target_file)],
+                    "timeout": 30,
+                    "warning_check_required": True,
+                    "warning_check_result": warning_check.to_json_dict() if warning_check else None,
+                    "fix_instruction": fix_instruction,
+                    "_llm_client": getattr(self.runtime, "llm_client", None),
+                },
+            ),
+            parent_task_id=self.runtime._dashboard_stage_id("execution"),
+        )
+        if result.success:
+            return IterationResult(
+                iteration=iteration,
+                validation_passed=True,
+                completed_successful_iteration=False,
+                applied_actions=actions,
+                changed_files=[str(target_file)],
+                success=True,
+                failure_stage=None,
+                failed_tool=None,
+            )
+        reason = result.error_message or "bug_fix_tool failed to repair the runtime warning."
+        return self._failure(iteration, actions, reason, "bug_fix_tool")
 
     def run_code_generation_retry_pipeline(
         self,

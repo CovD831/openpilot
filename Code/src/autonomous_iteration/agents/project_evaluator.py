@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from autonomous_iteration.improvement_context import ImprovementContextHelper
 from autonomous_iteration.models import EvaluationResult
+from metadata import ProductIntentMetadata, ValidationIssueMetadata, WarningCheckResultMetadata
 
 
 class ProjectEvaluatorAgent:
@@ -93,9 +95,16 @@ class ProjectEvaluatorAgent:
         files = [Path(path).expanduser() for path in written_files]
         readme = Path(readme_path).expanduser() if readme_path else project / "README.md"
         static_review = static_review or {}
+        product_intent = ImprovementContextHelper().infer_product_intent(
+            original_goal=goal,
+            project_path=project,
+            written_files=written_files,
+        )
 
         errors: list[str] = []
         warnings: list[str] = []
+        validation_issues: list[ValidationIssueMetadata] = []
+        warning_check_result: WarningCheckResultMetadata | None = None
         opportunities: list[str] = []
         actions: list[str] = []
 
@@ -103,9 +112,20 @@ class ProjectEvaluatorAgent:
         if not existing_files:
             errors.append("No generated project files were found.")
             actions.append("Regenerate the missing project files in the requested directory.")
+            validation_issues.append(
+                self._issue(
+                    category="environment",
+                    message=errors[-1],
+                    recommended_action=actions[-1],
+                    product_intent=product_intent,
+                )
+            )
             return self._result(
                 errors=errors,
                 warnings=warnings,
+                product_intent=product_intent,
+                validation_issues=validation_issues,
+                warning_check_result=warning_check_result,
                 run_command=run_command,
                 opportunities=opportunities,
                 actions=actions,
@@ -116,6 +136,12 @@ class ProjectEvaluatorAgent:
         code_text = "\n\n".join(self._read_text(path) for path in existing_files if path.suffix == ".py")
         readme_text = self._read_text(readme)
         effective_run_command = (run_command or self._extract_run_command(readme_text)).strip()
+        product_intent = ImprovementContextHelper().infer_product_intent(
+            original_goal=goal,
+            project_path=project,
+            written_files=written_files,
+            current_code=code_text,
+        )
 
         for path in existing_files:
             if path.suffix != ".py":
@@ -125,14 +151,40 @@ class ProjectEvaluatorAgent:
             except SyntaxError as exc:
                 errors.append(f"Syntax error in {path.name} at line {exc.lineno}: {exc.msg}")
                 actions.append(f"Fix the syntax error in {path.name}.")
+                validation_issues.append(
+                    self._issue(
+                        category="runtime_error",
+                        message=errors[-1],
+                        recommended_action=actions[-1],
+                        product_intent=product_intent,
+                        target_files=[str(path)],
+                    )
+                )
 
         if "{{" in code_text or "}}" in code_text:
             errors.append("Generated code still contains template placeholders.")
             actions.append("Replace placeholder content with real implementation.")
+            validation_issues.append(
+                self._issue(
+                    category="code_quality",
+                    message=errors[-1],
+                    recommended_action=actions[-1],
+                    product_intent=product_intent,
+                    target_files=[str(path) for path in existing_files],
+                )
+            )
 
         if not effective_run_command:
             errors.append("README does not clearly explain how to run the project.")
             actions.append("Add a concrete run command to README.md.")
+            validation_issues.append(
+                self._issue(
+                    category="environment",
+                    message=errors[-1],
+                    recommended_action=actions[-1],
+                    product_intent=product_intent,
+                )
+            )
 
         if not static_review and code_text.strip():
             static_review = self._review_python_code(code_text)
@@ -141,14 +193,57 @@ class ProjectEvaluatorAgent:
         if review_errors:
             errors.extend(review_errors)
             actions.extend(static_review.get("suggestions") or [])
+            for review_error in review_errors:
+                validation_issues.append(
+                    self._issue(
+                        category="product_intent_drift" if "product-fit" in review_error.lower() else "code_quality",
+                        message=review_error,
+                        recommended_action=(static_review.get("suggestions") or ["Fix the blocking code review issue."])[0],
+                        product_intent=product_intent,
+                        target_files=[str(path) for path in existing_files],
+                    )
+                )
 
         if effective_run_command and not any(error.lower().startswith("syntax error") for error in errors):
             smoke = self._smoke_test(project, effective_run_command, existing_files)
+            warning_check_result = smoke.get("warning_check_result") or warning_check_result
             if not smoke["passed"]:
                 errors.append(smoke["message"])
-                actions.append("Fix the runtime error reported by the smoke test.")
+                if warning_check_result and warning_check_result.requires_fix:
+                    actions.append("Fix the runtime warning reported by the smoke test.")
+                    validation_issues.append(
+                        self._issue(
+                            category="runtime_warning",
+                            message=smoke["message"],
+                            recommended_action=actions[-1],
+                            product_intent=product_intent,
+                            target_files=[str(path) for path in existing_files],
+                        )
+                    )
+                else:
+                    actions.append("Fix the runtime error reported by the smoke test.")
+                    validation_issues.append(
+                        self._issue(
+                            category="runtime_error",
+                            message=smoke["message"],
+                            recommended_action=actions[-1],
+                            product_intent=product_intent,
+                            target_files=[str(path) for path in existing_files],
+                        )
+                    )
             elif smoke["warning"]:
                 warnings.append(smoke["message"])
+                if warning_check_result:
+                    validation_issues.append(
+                        self._issue(
+                            category="runtime_warning",
+                            severity="warning",
+                            message=smoke["message"],
+                            recommended_action=warning_check_result.recommended_fix,
+                            product_intent=product_intent,
+                            target_files=[str(path) for path in existing_files],
+                        )
+                    )
 
         goal_lower = goal.lower()
         is_game = any(keyword in goal_lower for keyword in ("snake", "贪吃蛇", "game", "小游戏"))
@@ -170,6 +265,9 @@ class ProjectEvaluatorAgent:
         return self._result(
             errors=errors,
             warnings=warnings,
+            product_intent=product_intent,
+            validation_issues=validation_issues,
+            warning_check_result=warning_check_result,
             run_command=effective_run_command,
             opportunities=opportunities,
             actions=actions,
@@ -182,6 +280,9 @@ class ProjectEvaluatorAgent:
         *,
         errors: list[str],
         warnings: list[str],
+        product_intent: ProductIntentMetadata | None = None,
+        validation_issues: list[ValidationIssueMetadata] | None = None,
+        warning_check_result: WarningCheckResultMetadata | None = None,
         run_command: str,
         opportunities: list[str],
         actions: list[str],
@@ -200,10 +301,33 @@ class ProjectEvaluatorAgent:
             summary=summary,
             validation_errors=deduped_errors,
             warnings=deduped_warnings,
+            product_intent=product_intent,
+            validation_issues=validation_issues or [],
+            warning_check_result=warning_check_result,
             run_command=run_command,
             improvement_opportunities=deduped_opportunities,
             recommended_actions=deduped_actions,
             next_iteration_goal=self._build_next_iteration_goal(goal, deduped_actions, deduped_errors),
+        )
+
+    def _issue(
+        self,
+        *,
+        category: str,
+        message: str,
+        recommended_action: str,
+        product_intent: ProductIntentMetadata | None,
+        severity: str = "blocking",
+        target_files: list[str] | None = None,
+    ) -> ValidationIssueMetadata:
+        return ValidationIssueMetadata(
+            category=category,
+            severity=severity,
+            message=message,
+            recommended_action=recommended_action,
+            target_files=target_files or [],
+            product_intent=product_intent,
+            preserves_product_intent=category != "product_intent_drift",
         )
 
     def _smoke_test(self, project_path: Path, run_command: str, files: list[Path] | None = None) -> dict[str, Any]:
@@ -244,18 +368,36 @@ class ProjectEvaluatorAgent:
             combined = f"{exc.stdout or ''}\n{exc.stderr or ''}"
             if self._looks_like_traceback(combined):
                 return {"passed": False, "warning": False, "message": self._short_error("Smoke test timed out with error output", combined)}
+            warning_check = self._assess_runtime_warnings(
+                command=run_command,
+                cwd=project_path,
+                stdout=str(exc.stdout or ""),
+                stderr=str(exc.stderr or ""),
+            )
+            if warning_check and warning_check.requires_fix:
+                return self._warning_fix_failure(warning_check)
             return {
                 "passed": True,
                 "warning": True,
                 "message": f"Smoke test timed out after {self.smoke_timeout_seconds}s; treating as runnable for an interactive app.",
+                "warning_check_result": warning_check,
             }
 
         combined_output = f"{result.stdout or ''}\n{result.stderr or ''}"
+        warning_check = self._assess_runtime_warnings(
+            command=run_command,
+            cwd=project_path,
+            stdout=result.stdout or "",
+            stderr=result.stderr or "",
+        )
+        if warning_check and warning_check.requires_fix and result.returncode == 0 and not self._looks_like_traceback(combined_output):
+            return self._warning_fix_failure(warning_check)
         if self._is_interactive_environment_error(combined_output):
             return {
                 "passed": True,
                 "warning": True,
                 "message": "Smoke test skipped full run: interactive terminal program requires a real terminal.",
+                "warning_check_result": warning_check,
             }
         if result.returncode != 0:
             return {
@@ -265,6 +407,9 @@ class ProjectEvaluatorAgent:
             }
         if self._looks_like_traceback(combined_output):
             return {"passed": False, "warning": False, "message": self._short_error("Smoke test printed a traceback", combined_output)}
+        if warning_check and (warning_check.warnings or warning_check.ignored_warnings):
+            message = warning_check.reason or "Smoke test emitted runtime warnings."
+            return {"passed": True, "warning": True, "message": message, "warning_check_result": warning_check}
         return {"passed": True, "warning": False, "message": "Smoke test passed."}
 
     def _looks_interactive_python_project(self, files: list[Path], args: list[str]) -> bool:
@@ -315,6 +460,14 @@ class ProjectEvaluatorAgent:
             combined = f"{exc.stdout or ''}\n{exc.stderr or ''}"
             if self._looks_like_traceback(combined):
                 return {"passed": False, "warning": False, "message": self._short_error("Import-only smoke test timed out with error output", combined)}
+            warning_check = self._assess_runtime_warnings(
+                command=" ".join(command),
+                cwd=project_path,
+                stdout=str(exc.stdout or ""),
+                stderr=str(exc.stderr or ""),
+            )
+            if warning_check and warning_check.requires_fix:
+                return self._warning_fix_failure(warning_check)
             if self._has_main_guard(entry) and not self._has_unprotected_interactive_startup(entry):
                 return {
                     "passed": True,
@@ -323,6 +476,7 @@ class ProjectEvaluatorAgent:
                         f"Import-only smoke test timed out after {self.import_smoke_timeout_seconds}s; "
                         "interactive import was slow, so full run was skipped."
                     ),
+                    "warning_check_result": warning_check,
                 }
             return {
                 "passed": False,
@@ -334,13 +488,66 @@ class ProjectEvaluatorAgent:
             }
 
         combined_output = f"{result.stdout or ''}\n{result.stderr or ''}"
+        warning_check = self._assess_runtime_warnings(
+            command=" ".join(command),
+            cwd=project_path,
+            stdout=result.stdout or "",
+            stderr=result.stderr or "",
+        )
+        if warning_check and warning_check.requires_fix and result.returncode == 0 and not self._looks_like_traceback(combined_output):
+            return self._warning_fix_failure(warning_check)
         if result.returncode != 0:
             return {
                 "passed": False,
                 "warning": False,
                 "message": self._short_error(f"Import-only smoke test exited with code {result.returncode}", combined_output),
             }
+        if warning_check and (warning_check.warnings or warning_check.ignored_warnings):
+            message = warning_check.reason or "Import-only smoke test emitted runtime warnings."
+            return {"passed": True, "warning": True, "message": message, "warning_check_result": warning_check}
         return {"passed": True, "warning": False, "message": "Import-only smoke test passed."}
+
+    def _assess_runtime_warnings(
+        self,
+        *,
+        command: str,
+        cwd: Path,
+        stdout: str,
+        stderr: str,
+    ) -> WarningCheckResultMetadata | None:
+        combined_lower = f"{stdout}\n{stderr}".lower()
+        if not any(marker in combined_lower for marker in ("warning", "fc-list", "system fonts cannot be loaded")):
+            return None
+        from metadata import ToolInputMetadata
+        from tools.warning_check_tool import warning_check_tool_executor
+
+        result = warning_check_tool_executor(
+            ToolInputMetadata.from_mapping(
+                "warning_check_tool",
+                {
+                    "command": command,
+                    "cwd": str(cwd),
+                    "stdout": stdout,
+                    "stderr": stderr,
+                },
+            )
+        )
+        if isinstance(result.result, WarningCheckResultMetadata):
+            return result.result
+        return None
+
+    def _warning_fix_failure(self, warning_check: WarningCheckResultMetadata) -> dict[str, Any]:
+        reason = warning_check.reason or "Runtime warning requires repair."
+        fix = warning_check.recommended_fix
+        message = f"Runtime warning requires repair: {reason}"
+        if fix:
+            message += f" Recommended fix: {fix}"
+        return {
+            "passed": False,
+            "warning": False,
+            "message": message,
+            "warning_check_result": warning_check,
+        }
 
     def _normalize_python_args(self, project_path: Path, args: list[str]) -> list[str]:
         if not args:

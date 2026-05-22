@@ -116,7 +116,7 @@ code_execution, shell_execution, email, calendar, database, network.
 Allowed preferred_tool values:
 multi_file_reader, llm_summarizer, file_writer, command_executor,
 code_generator, code_reviewer, code_executor, readme_tool, web_searcher,
-bug_fix_tool,
+bug_fix_tool, warning_check_tool,
 unsupported_file_mutation.
 
 Use these operation_type values when appropriate:
@@ -147,6 +147,10 @@ Code Generation Policy:
   * capability: "code_execution"
   * operation_type: "execute_code"
   * preferred_tool: "bug_fix_tool"
+- If the step describes checking whether a runtime warning needs repair, classify as:
+  * capability: "code_execution"
+  * operation_type: "execute_code"
+  * preferred_tool: "warning_check_tool"
 - For code generation workflows, the typical chain is:
   generate_code → (optional: review_code) → file_writer → readme_tool
 - If the step describes creating usage instructions or README documentation for

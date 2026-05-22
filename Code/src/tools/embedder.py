@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+from core.config import EmbeddingSettings
 
 from core.tool_contracts import (
     PermissionLevel,
@@ -26,7 +27,7 @@ EMBEDDER_DEFINITION = ToolDefinition(
         input_metadata_type="ToolInputMetadata",
         output_metadata_type="ToolResultMetadata",
         required_input_fields=['query'],
-        input_defaults={'provider': 'openai', 'model': 'text-embedding-3-small', 'use_cache': True},
+        input_defaults={'provider': None, 'model': None, 'base_url': None, 'use_cache': True},
     ),
     timeout_seconds=60,
     max_retries=1,
@@ -55,14 +56,16 @@ def embedder_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
     if not query:
         raise ValueError("Empty query: provide non-empty text to embed")
 
-    provider = str(params.get("provider") or "openai")
-    model = str(params.get("model") or "text-embedding-3-small")
+    settings = EmbeddingSettings()
+    provider = str(params.get("provider") or settings.provider)
+    model = str(params.get("model") or settings.model)
+    base_url = str(params.get("base_url") or settings.base_url or "")
     use_cache = bool(params.get("use_cache", True))
     service = params.get("_embedding_service")
     if service is None:
         from core.embedding import EmbeddingService
 
-        service = EmbeddingService(provider=provider, model=model)
+        service = EmbeddingService(provider=provider, model=model, base_url=base_url or None, settings=settings)
 
     cached = _is_cached(service, query, use_cache)
     embedding = service.embed_text(query, use_cache=use_cache)

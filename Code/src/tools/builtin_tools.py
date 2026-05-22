@@ -15,6 +15,7 @@ from tools.embedder import EMBEDDER_DEFINITION, embedder_executor
 from tools.web_searcher import WEB_SEARCHER_DEFINITION, web_searcher_executor
 from tools.task_classifier import TASK_CLASSIFIER_DEFINITION, task_classifier_executor
 from tools.bug_fix_tool import BUG_FIX_TOOL_DEFINITION, bug_fix_tool_executor
+from tools.warning_check_tool import WARNING_CHECK_TOOL_DEFINITION, warning_check_tool_executor
 
 
 __all__ = [
@@ -52,6 +53,8 @@ __all__ = [
     "task_classifier_executor",
     "BUG_FIX_TOOL_DEFINITION",
     "bug_fix_tool_executor",
+    "WARNING_CHECK_TOOL_DEFINITION",
+    "warning_check_tool_executor",
     # Registration
     "register_builtin_tools",
 ]
@@ -77,3 +80,4 @@ def register_builtin_tools(registry) -> None:
     registry.register(WEB_SEARCHER_DEFINITION, web_searcher_executor)
     registry.register(TASK_CLASSIFIER_DEFINITION, task_classifier_executor)
     registry.register(BUG_FIX_TOOL_DEFINITION, bug_fix_tool_executor)
+    registry.register(WARNING_CHECK_TOOL_DEFINITION, warning_check_tool_executor)

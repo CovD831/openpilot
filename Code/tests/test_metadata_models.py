@@ -9,11 +9,15 @@ from metadata import (
     CommandArtifactMetadata,
     FailureMetadata,
     MetadataKind,
+    ProductIntentMetadata,
     ResultStatus,
     TaskResultMetadata,
     TaskRouteMetadata,
     ToolInputMetadata,
     ToolResultMetadata,
+    ValidationIssueMetadata,
+    WarningCheckResultMetadata,
+    WarningItemMetadata,
     artifact_to_tool_input,
 )
 
@@ -124,3 +128,54 @@ def test_bug_fix_metadata_serializes_attempts_and_failure_result() -> None:
     assert payload["result"]["kind"] == MetadataKind.BUG_FIX_RESULT
     assert payload["result"]["attempts"][0]["kind"] == MetadataKind.BUG_FIX_ATTEMPT
     assert payload["result"]["requires_user_decision"] is True
+
+
+def test_warning_check_metadata_serializes_items() -> None:
+    item = WarningItemMetadata(
+        warning_text="System fonts cannot be loaded",
+        warning_source="pygame.sysfont",
+        category="font_rendering",
+        severity="fix_required",
+        affects_user_experience=True,
+        requires_fix=True,
+        reason="Text may render as boxes.",
+    )
+    result = WarningCheckResultMetadata(
+        command="python main.py",
+        cwd="/tmp/project",
+        warnings=[item],
+        requires_fix=True,
+        reason=item.reason,
+        recommended_fix="Use a bundled font or pygame.font.Font(None, size).",
+    )
+
+    payload = result.to_json_dict()
+
+    assert payload["kind"] == MetadataKind.WARNING_CHECK_RESULT
+    assert payload["warnings"][0]["kind"] == MetadataKind.WARNING_ITEM
+    assert payload["requires_fix"] is True
+
+
+def test_product_intent_and_validation_issue_metadata_serialize() -> None:
+    intent = ProductIntentMetadata(
+        experience_type="interactive_app",
+        runtime_mode="standalone_gui",
+        delivery_surface="native_window",
+        core_capabilities=["visible_feedback"],
+        non_regression_constraints=["Preserve native window delivery."],
+        disallowed_substitutions=["terminal_ui"],
+    )
+    issue = ValidationIssueMetadata(
+        category="product_intent_drift",
+        severity="blocking",
+        message="Implementation changed delivery surface.",
+        recommended_action="Regenerate while preserving product intent.",
+        product_intent=intent,
+        preserves_product_intent=False,
+    )
+
+    payload = issue.to_json_dict()
+
+    assert payload["kind"] == MetadataKind.VALIDATION_ISSUE
+    assert payload["product_intent"]["kind"] == MetadataKind.PRODUCT_INTENT
+    assert payload["product_intent"]["disallowed_substitutions"] == ["terminal_ui"]

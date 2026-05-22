@@ -11,13 +11,14 @@ def _contains_node(node: dict, node_id: str) -> bool:
     return any(_contains_node(child, node_id) for child in node.get("children") or [])
 
 
-def _contains_summary(node: dict) -> bool:
-    if node.get("kind") == "summary":
+def _contains_hidden_summary(node: dict) -> bool:
+    description = str(node.get("description") or "")
+    if node.get("kind") == "summary" or "details hidden" in description:
         return True
-    return any(_contains_summary(child) for child in node.get("children") or [])
+    return any(_contains_hidden_summary(child) for child in node.get("children") or [])
 
 
-def test_task_graph_live_view_keeps_deep_active_node_visible() -> None:
+def test_task_graph_live_view_grows_with_full_history() -> None:
     ui = EnhancedUI(Console(record=True, width=100))
     active_tool_id = "iteration_1_tool_18"
     stages = []
@@ -48,9 +49,12 @@ def test_task_graph_live_view_keeps_deep_active_node_visible() -> None:
             "children": stages,
         }
     ]
+    full_rows = ui._task_graph_visible_rows(tasks)
 
     live_tasks = ui._task_graph_live_tasks(tasks, active_tool_id)
 
-    assert ui._task_graph_visible_rows(live_tasks) <= ui._task_graph_live_row_limit()
+    assert live_tasks == tasks
+    assert ui._task_graph_visible_rows(live_tasks) == full_rows
+    assert ui._task_graph_panel_height(full_rows) == full_rows + 4
     assert _contains_node(live_tasks[0], active_tool_id)
-    assert _contains_summary(live_tasks[0])
+    assert not _contains_hidden_summary(live_tasks[0])

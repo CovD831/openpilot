@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from metadata import ProductIntentMetadata, ValidationIssueMetadata, WarningCheckResultMetadata
+
 
 class EvaluationResult(BaseModel):
     """Hard project validation and improvement target result."""
@@ -14,6 +16,9 @@ class EvaluationResult(BaseModel):
     summary: str
     validation_errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    product_intent: ProductIntentMetadata | None = None
+    validation_issues: list[ValidationIssueMetadata] = Field(default_factory=list)
+    warning_check_result: WarningCheckResultMetadata | None = None
     run_command: str = ""
     improvement_opportunities: list[str] = Field(default_factory=list)
     recommended_actions: list[str] = Field(default_factory=list)

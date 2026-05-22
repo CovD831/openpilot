@@ -105,7 +105,12 @@ def code_reviewer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetad
         result = reviewer.review_code(generated_code)
 
         product_warnings = _product_fit_warnings(code, prompt_context)
+        product_intent_warnings = _product_intent_warnings(code, prompt_context)
+        rejection_categories = []
+        if product_warnings or product_intent_warnings:
+            rejection_categories.append("product_intent_drift")
         approved = bool(result.approved and not product_warnings)
+        approved = bool(approved and not product_intent_warnings)
         return {
             "review": (
                 "Approved"
@@ -113,10 +118,11 @@ def code_reviewer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetad
                 else "Review found issues"
             ),
             "issues": [issue.dict() if hasattr(issue, 'dict') else str(issue) for issue in result.dangerous_operations],
-            "suggestions": result.recommendations + product_warnings,
+            "suggestions": result.recommendations + product_warnings + product_intent_warnings,
             "approved": approved,
             "syntax_errors": result.syntax_errors,
-            "warnings": result.warnings + product_warnings,
+            "warnings": result.warnings + product_warnings + product_intent_warnings,
+            "rejection_categories": rejection_categories,
             "quality_score": result.quality_score,
             "complexity_score": result.complexity_score,
         }
@@ -141,6 +147,62 @@ def _product_fit_warnings(code: str, prompt_context: dict[str, Any]) -> list[str
     return [
         "Product-fit rubric not satisfied: default Python snake game should use a standalone pygame GUI unless terminal was requested."
     ]
+
+
+def _product_intent_warnings(code: str, prompt_context: dict[str, Any]) -> list[str]:
+    product_intent = prompt_context.get("product_intent")
+    if not isinstance(product_intent, dict):
+        return []
+
+    lowered = code.lower()
+    warnings: list[str] = []
+    delivery_surface = str(product_intent.get("delivery_surface") or "")
+    runtime_mode = str(product_intent.get("runtime_mode") or "")
+    disallowed = [str(item).lower() for item in product_intent.get("disallowed_substitutions") or []]
+
+    if _code_matches_disallowed_substitution(lowered, disallowed):
+        warnings.append(
+            "Product intent drift: implementation uses a disallowed substitute instead of preserving the requested delivery surface/runtime mode."
+        )
+
+    if runtime_mode == "standalone_gui" and _looks_terminal_only(lowered):
+        warnings.append("Product intent drift: standalone GUI intent was replaced by terminal-only interaction.")
+    if runtime_mode == "terminal" and _looks_gui_only(lowered):
+        warnings.append("Product intent drift: terminal intent was replaced by GUI-only interaction.")
+
+    if delivery_surface and delivery_surface not in {"project_native", "best_fit_for_goal"}:
+        if delivery_surface == "pygame" and "pygame" not in lowered:
+            warnings.append("Product intent drift: expected delivery surface 'pygame' is absent from the implementation.")
+
+    return _dedupe(warnings)
+
+
+def _code_matches_disallowed_substitution(lowered_code: str, disallowed: list[str]) -> bool:
+    if any(item in disallowed for item in ("terminal_ui", "text_only_substitute")) and _looks_terminal_only(lowered_code):
+        return True
+    if "gui_only_substitute" in disallowed and _looks_gui_only(lowered_code):
+        return True
+    if any(item.startswith("substitute_away_from_pygame") for item in disallowed) and "pygame" not in lowered_code:
+        return True
+    return False
+
+
+def _looks_terminal_only(lowered_code: str) -> bool:
+    return "import curses" in lowered_code or "curses." in lowered_code or "stdscr" in lowered_code
+
+
+def _looks_gui_only(lowered_code: str) -> bool:
+    return "pygame" in lowered_code or "tkinter" in lowered_code or "display.set_mode" in lowered_code
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for item in items:
+        if item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
 
 
 class CodeReviewer:

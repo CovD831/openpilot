@@ -106,6 +106,86 @@ if __name__ == "__main__":
     assert any("ImportError: boom" in error for error in result.validation_errors)
 
 
+def test_pygame_font_warning_requires_repair(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+import pygame
+
+def main():
+    pygame.init()
+
+if __name__ == "__main__":
+    main()
+""",
+    )
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr=(
+                "/site-packages/pygame/sysfont.py:226: UserWarning: Process running "
+                "'/usr/X11/bin/fc-list' timed-out! System fonts cannot be loaded on your platform"
+            ),
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build snake game",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert result.validation_passed is False
+    assert result.warning_check_result is not None
+    assert result.warning_check_result.requires_fix is True
+    assert result.product_intent is not None
+    assert result.validation_issues[0].category == "runtime_warning"
+    assert result.validation_issues[0].product_intent is not None
+    assert any("Runtime warning requires repair" in error for error in result.validation_errors)
+    assert "Fix the runtime warning" in result.recommended_actions[0]
+
+
+def test_ignored_platform_warning_keeps_validation_passed(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+import pygame
+
+def main():
+    pygame.init()
+
+if __name__ == "__main__":
+    main()
+""",
+    )
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr="TSM AdjustCapsLockLEDForKeyTransitionHandling - _ISSetPhysicalKeyboardCapsLockLED Inhibit",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build snake game",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert result.validation_passed is True
+    assert result.warning_check_result is None
+    assert result.validation_errors == []
+
+
 def test_modification_evaluator_failure_defaults_to_project_evaluator_tool() -> None:
     agent = AutonomousIterationAgent(ProjectEvaluatorAgent())
     iteration_result = IterationResult(

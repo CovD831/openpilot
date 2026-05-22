@@ -17,7 +17,7 @@ from typing import Any, Literal
 import numpy as np
 from openai import OpenAI
 
-from core.config import LLMSettings
+from core.config import EmbeddingSettings
 from core.exceptions import OpenPilotError
 
 
@@ -31,11 +31,14 @@ class EmbeddingService:
 
     def __init__(
         self,
-        provider: Literal["openai", "local"] = "openai",
-        model: str = "text-embedding-3-small",
+        provider: Literal["openai", "openai-compatible", "local"] | str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        settings: EmbeddingSettings | None = None,
         cache_dir: str | Path = "data/embeddings_cache",
         batch_size: int = 100,
-        timeout: int = 30,
+        timeout: int | float | None = None,
     ):
         """Initialize embedding service.
 
@@ -46,28 +49,40 @@ class EmbeddingService:
             batch_size: Maximum batch size for batch processing
             timeout: Request timeout in seconds
         """
-        self.provider = provider
-        self.model = model
+        settings = settings or EmbeddingSettings()
+        self.provider = provider or settings.provider
+        self.model = model or settings.model
+        self.base_url = base_url or settings.base_url
+        self.api_key = api_key or settings.api_key
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.batch_size = batch_size
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else settings.timeout_seconds
 
         # Initialize client based on provider
-        if provider == "openai":
-            settings = LLMSettings()
-            self.client = OpenAI(api_key=settings.api_key, timeout=timeout)
-            self.dimension = self._get_openai_dimension(model)
-        elif provider == "local":
+        if self.provider in {"openai", "openai-compatible"}:
+            self._require_ready()
+            self.client = OpenAI(api_key=self.api_key, base_url=self.base_url, timeout=self.timeout)
+            self.dimension = self._get_openai_dimension(self.model)
+        elif self.provider == "local":
             # Placeholder for local embedding models
             # Could use sentence-transformers or similar
             raise NotImplementedError("Local embedding provider not yet implemented")
         else:
-            raise ValueError(f"Unknown provider: {provider}")
+            raise ValueError(f"Unknown provider: {self.provider}")
 
         # Cache for embeddings
         self._cache: dict[str, list[float]] = {}
         self._load_cache()
+
+    def _require_ready(self) -> None:
+        missing = []
+        if not self.base_url or not str(self.base_url).strip():
+            missing.append("embedding base_url")
+        if not self.api_key or not str(self.api_key).strip():
+            missing.append("embedding api_key")
+        if missing:
+            raise EmbeddingError(f"Missing embedding configuration: {', '.join(missing)}")
 
     def _get_openai_dimension(self, model: str) -> int:
         """Get embedding dimension for OpenAI model.
@@ -94,7 +109,7 @@ class EmbeddingService:
         Returns:
             Cache key (hash of text and model)
         """
-        content = f"{self.model}:{text}"
+        content = f"{self.provider}:{self.base_url}:{self.model}:{text}"
         return hashlib.sha256(content.encode()).hexdigest()
 
     def _load_cache(self) -> None:

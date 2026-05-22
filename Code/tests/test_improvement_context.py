@@ -34,8 +34,26 @@ def test_improvement_context_target_file_and_product_fit(tmp_path) -> None:
     assert judgment["current_runtime"] == "terminal_curses"
     assert helper.fallback_should_prefer_pygame({"product_judgment": judgment}) is True
     assert any("pygame" in item for item in rubric)
+    assert context["product_intent"]["runtime_mode"] == "standalone_gui"
+    assert context["product_intent"]["delivery_surface"] == "pygame"
+    assert "terminal_ui" in context["product_intent"]["disallowed_substitutions"]
     assert context["project_context"]["environment"]["run_command"] == "python app.py"
+    assert helper.prompt_context_layer_summary(context)["has_product_intent"] is True
     assert helper.prompt_context_layer_summary(context)["code_context_chars"] == len("print('small')")
+
+
+def test_product_intent_is_generic_for_non_game_goal(tmp_path) -> None:
+    helper = ImprovementContextHelper()
+    intent = helper.infer_product_intent(
+        original_goal="Create a CSV analysis report script",
+        project_path=tmp_path,
+        written_files=[],
+    )
+
+    assert intent.experience_type == "general_project"
+    assert intent.runtime_mode == "best_fit_for_goal"
+    assert intent.delivery_surface == "project_native"
+    assert "structured_output" in intent.core_capabilities
 
 
 def test_improvement_context_structured_logs_are_jsonl(tmp_path) -> None:

@@ -741,6 +741,22 @@ class AutonomousIterationAgent:
         )
 
     def _repair_goal(self, evaluation: EvaluationResult) -> ImprovementGoal:
+        primary_issue = self._primary_validation_issue(evaluation)
+        if primary_issue is not None:
+            title = primary_issue.recommended_action or f"Fix {primary_issue.category}: {primary_issue.message}"
+            criteria = [primary_issue.message]
+            intent = primary_issue.product_intent or evaluation.product_intent
+            if intent is not None:
+                criteria.extend(intent.non_regression_constraints[:3])
+                criteria.extend([f"Do not use substitute: {item}" for item in intent.disallowed_substitutions[:3]])
+            return ImprovementGoal(
+                id=f"repair_goal_{uuid.uuid4().hex[:8]}",
+                title=title,
+                category="robustness" if primary_issue.category != "product_intent_drift" else "ux",
+                rationale=evaluation.summary,
+                acceptance_criteria=criteria or ["The project passes validation while preserving product intent."],
+                priority="high",
+            )
         repair_actions = self._select_repair_actions(evaluation)
         title = repair_actions[0] if repair_actions else "Fix the blocking validation failure."
         criteria = repair_actions or evaluation.validation_errors or ["The project passes the failing validation path."]
@@ -760,7 +776,11 @@ class AutonomousIterationAgent:
         evaluation: EvaluationResult,
     ) -> DesignedImprovementTask:
         target_files = project_state.safe_target_files[:1] or project_state.written_files[:1]
-        risk_notes = evaluation.validation_errors[:3] or evaluation.warnings[:3]
+        primary_issue = self._primary_validation_issue(evaluation)
+        intent = (primary_issue.product_intent if primary_issue else None) or evaluation.product_intent
+        risk_notes = [issue.message for issue in evaluation.validation_issues[:3]] or evaluation.validation_errors[:3] or evaluation.warnings[:3]
+        if intent is not None:
+            risk_notes.extend(intent.non_regression_constraints[:3])
         return DesignedImprovementTask(
             id=f"repair_task_{uuid.uuid4().hex[:8]}",
             goal_id=goal.id,
@@ -769,6 +789,21 @@ class AutonomousIterationAgent:
             acceptance_criteria=goal.acceptance_criteria,
             risk_notes=risk_notes,
         )
+
+    def _primary_validation_issue(self, evaluation: EvaluationResult):
+        priority = {
+            "product_intent_drift": 0,
+            "runtime_error": 1,
+            "runtime_warning": 2,
+            "environment": 3,
+            "code_quality": 4,
+        }
+        issues = list(getattr(evaluation, "validation_issues", []) or [])
+        blocking = [issue for issue in issues if getattr(issue, "severity", "blocking") == "blocking"]
+        candidates = blocking or issues
+        if not candidates:
+            return None
+        return sorted(candidates, key=lambda issue: priority.get(getattr(issue, "category", ""), 99))[0]
 
     def _actions_from_tasks(self, tasks: list[DesignedImprovementTask]) -> list[str]:
         actions = []
@@ -890,6 +925,14 @@ class AutonomousIterationAgent:
         return report if isinstance(report, dict) else {}
 
     def _select_repair_actions(self, evaluation: EvaluationResult) -> list[str]:
+        primary_issue = self._primary_validation_issue(evaluation)
+        if primary_issue is not None:
+            action = primary_issue.recommended_action or primary_issue.message
+            constraints = []
+            intent = primary_issue.product_intent or evaluation.product_intent
+            if intent is not None:
+                constraints = intent.non_regression_constraints[:2]
+            return [item for item in [action, *constraints] if item][:2]
         if evaluation.recommended_actions:
             return evaluation.recommended_actions[:2]
         if evaluation.validation_errors:

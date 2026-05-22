@@ -23,7 +23,9 @@ from metadata.project import (
     AutonomyDecisionMetadata,
     EnvironmentSyncMetadata,
     ImprovementAnalysisMetadata,
+    ProductIntentMetadata,
     ProjectStateMetadata,
+    ValidationIssueMetadata,
 )
 from metadata.results import (
     ArtifactMetadata,
@@ -52,6 +54,7 @@ from metadata.tooling import (
     ToolSelectionMetadata,
     artifact_to_tool_input,
 )
+from metadata.warnings import WarningCheckResultMetadata, WarningItemMetadata
 
 __all__ = [
     "ArtifactMetadata",
@@ -80,6 +83,7 @@ __all__ = [
     "ModuleExecutionMetadata",
     "PresentationMetadata",
     "ProcessedDataMetadata",
+    "ProductIntentMetadata",
     "ProjectStateMetadata",
     "payload_to_artifact",
     "ResultStatus",
@@ -93,6 +97,9 @@ __all__ = [
     "ToolInputMetadata",
     "ToolResultMetadata",
     "ToolSelectionMetadata",
+    "ValidationIssueMetadata",
+    "WarningCheckResultMetadata",
+    "WarningItemMetadata",
     "artifact_to_tool_input",
     "ensure_metadata",
     "metadata_summary",

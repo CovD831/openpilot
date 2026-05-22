@@ -30,6 +30,7 @@ class FakeRuntime:
         self.code_results = list(code_results or [])
         self.environment_success = True
         self.review_result = {"success": True, "result": {"approved": True}}
+        self.review_results: list[dict] = []
         self.readme_result = {"success": True, "result": {"file_path": str(tmp_path / "README.md")}}
         self.write_result = {"success": True, "result": {"file_path": str(tmp_path / "app.py")}}
         self._project_improvement_actions: list[str] = []
@@ -88,6 +89,8 @@ class FakeRuntime:
         if tool_name == "file_writer":
             return _tool_envelope(tool_name, self.write_result, kwargs.get("input_metadata"))
         if tool_name == "code_reviewer":
+            if self.review_results:
+                return _tool_envelope(tool_name, self.review_results.pop(0), kwargs.get("input_metadata"))
             return _tool_envelope(tool_name, self.review_result, kwargs.get("input_metadata"))
         if tool_name == "readme_tool":
             return _tool_envelope(tool_name, self.readme_result, kwargs.get("input_metadata"))
@@ -189,6 +192,52 @@ def test_autonomous_task_executor_retries_full_compact_surgical_on_timeout(tmp_p
     assert result.success is True
     assert [item["mode"] for item in result.retry_history] == ["full", "compact", "surgical"]
     assert result.retry_attempted is True
+
+
+def test_autonomous_task_executor_retries_product_intent_reviewer_rejection(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    app.write_text("print('old')\n", encoding="utf-8")
+    runtime = FakeRuntime(
+        tmp_path,
+        code_results=[
+            {"success": True, "result": {"code": "import curses\n\ndef main(stdscr):\n    pass\n"}, "status": "completed"},
+            {"success": True, "result": {"code": "import pygame\npygame.init()\n"}, "status": "completed"},
+        ],
+    )
+    runtime.review_results = [
+        {
+            "success": True,
+            "result": {
+                "approved": False,
+                "warnings": ["Product intent drift: standalone GUI intent was replaced by terminal-only interaction."],
+                "suggestions": ["Regenerate while preserving product intent."],
+                "rejection_categories": ["product_intent_drift"],
+            },
+        },
+        {"success": True, "result": {"approved": True, "warnings": [], "suggestions": [], "rejection_categories": []}},
+    ]
+
+    result = AutonomousTaskExecutor(runtime).execute_improvement(
+        goal="Build an interactive visual game",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        run_command="",
+        readme_path=tmp_path / "README.md",
+        iteration=1,
+        evaluation=_evaluation(),
+        actions=["Fix runtime issue without changing product intent."],
+        improvement_report={},
+        is_repair=True,
+    )
+
+    assert result.success is True
+    assert result.retry_attempted is True
+    assert any(item["mode"] == "product_intent_retry" for item in result.retry_history)
+    code_retry_calls = [
+        call for call in runtime.calls
+        if call.get("tool_name") == "code_generator" and call["input_metadata"].prompt_context.get("reviewer_rejection")
+    ]
+    assert code_retry_calls
 
 
 @pytest.mark.parametrize(

@@ -8,7 +8,7 @@ from typing import Any, Sequence
 
 from rich.console import Console
 
-from core.config import LLMSettings
+from core.config import EmbeddingSettings, LLMSettings
 
 
 DEFAULT_OPENPILOT_LOG = Path(__file__).resolve().parents[2] / "logs" / "openpilot.jsonl"
@@ -68,6 +68,7 @@ def _run_openpilot(args, console: Console, llm_client: Any | None) -> int:
 
 def _config_check(console: Console) -> int:
     settings = LLMSettings()
+    embedding_settings = EmbeddingSettings()
     rows = [
         ("provider", settings.provider),
         ("base_url", "set" if settings.base_url.strip() else "missing"),
@@ -75,6 +76,11 @@ def _config_check(console: Console) -> int:
         ("timeout_seconds", str(settings.timeout_seconds)),
         ("temperature", str(settings.temperature)),
         ("api_key", "set" if settings.api_key and settings.api_key.strip() else "missing"),
+        ("embedding_provider", embedding_settings.provider),
+        ("embedding_base_url", "set" if embedding_settings.base_url and embedding_settings.base_url.strip() else "missing"),
+        ("embedding_model", embedding_settings.model),
+        ("embedding_timeout_seconds", str(embedding_settings.timeout_seconds)),
+        ("embedding_api_key", "set" if embedding_settings.api_key and embedding_settings.api_key.strip() else "missing"),
     ]
 
     console.print("OpenPilot LLM Configuration")
@@ -82,11 +88,18 @@ def _config_check(console: Console) -> int:
         console.print(f"{field}: {value}")
 
     missing = settings.missing_fields()
+    embedding_missing = embedding_settings.missing_fields()
     if missing:
         console.print(
             f"Missing LLM configuration: {', '.join(missing)}. "
             "Real LLM calls will fail."
         )
+    if embedding_missing:
+        console.print(
+            f"Missing embedding configuration: {', '.join(embedding_missing)}. "
+            "Real embedding calls will fail."
+        )
+    if missing or embedding_missing:
         return 0
     console.print("Configuration is ready.")
     return 0

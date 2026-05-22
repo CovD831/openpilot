@@ -1,4 +1,4 @@
-﻿"""Configuration loading for OpenAI-compatible LLM providers."""
+﻿"""Configuration loading for OpenAI-compatible LLM and embedding providers."""
 
 from __future__ import annotations
 
@@ -52,3 +52,51 @@ class LLMSettings(BaseSettings):
                 f"Missing LLM configuration: {', '.join(missing)}."
             )
 
+
+class EmbeddingSettings(BaseSettings):
+    """Runtime settings for an OpenAI-compatible embedding endpoint."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    provider: str = Field(default="openai-compatible", alias="OPENPILOT_EMBEDDING_PROVIDER")
+    base_url: str | None = Field(default=None, alias="OPENPILOT_EMBEDDING_BASE_URL")
+    api_key: str | None = Field(default=None, alias="OPENPILOT_EMBEDDING_API_KEY")
+    model: str = Field(default="text-embedding-3-small", alias="OPENPILOT_EMBEDDING_MODEL")
+    timeout_seconds: float = Field(default=30.0, alias="OPENPILOT_EMBEDDING_TIMEOUT_SECONDS")
+
+    def __init__(self, **data):
+        super().__init__(**data)
+        llm_settings = LLMSettings()
+        if not self.base_url or not self.base_url.strip():
+            self.base_url = llm_settings.base_url
+        if not self.api_key or not self.api_key.strip():
+            self.api_key = llm_settings.api_key
+
+    def missing_fields(self) -> list[str]:
+        """Return required embedding settings that are blank or missing after LLM fallback."""
+
+        missing: list[str] = []
+        if not self.base_url or not self.base_url.strip():
+            missing.append("OPENPILOT_EMBEDDING_BASE_URL or OPENPILOT_LLM_BASE_URL")
+        if not self.api_key or not self.api_key.strip():
+            missing.append("OPENPILOT_EMBEDDING_API_KEY or OPENPILOT_LLM_API_KEY")
+        return missing
+
+    def is_ready(self) -> bool:
+        """Return whether settings are complete enough for real embedding calls."""
+
+        return not self.missing_fields()
+
+    def require_ready(self) -> None:
+        """Raise if settings are incomplete for a real embedding provider request."""
+
+        missing = self.missing_fields()
+        if missing:
+            raise MissingAPIKeyError(
+                f"Missing embedding configuration: {', '.join(missing)}."
+            )

@@ -60,7 +60,7 @@ class IterationDashboardAdapter:
 
     def ensure_dashboard_iteration(self, iteration_number: int | None = None) -> str:
         current_id = getattr(self.autopilot, "_dashboard_current_iteration_id", None)
-        if current_id:
+        if current_id and self._can_reuse_dashboard_iteration(current_id, iteration_number):
             return current_id
 
         counter = int(getattr(self.autopilot, "_dashboard_iteration_counter", 0) or 0)
@@ -86,6 +86,25 @@ class IterationDashboardAdapter:
         )
         self._log("ensure_dashboard_iteration", {"iteration_number": iteration_number}, {"iteration_id": iteration_id})
         return iteration_id
+
+    def _can_reuse_dashboard_iteration(self, iteration_id: str, iteration_number: int | None = None) -> bool:
+        node = self.find_dashboard_node(iteration_id)
+        if node and str(node.get("status") or "").lower() in {"completed", "failed", "error", "cancelled"}:
+            return False
+        if iteration_number is not None and self._iteration_number_from_id(iteration_id) != iteration_number:
+            return False
+        return True
+
+    def _iteration_number_from_id(self, iteration_id: str | None) -> int | None:
+        if not iteration_id:
+            return None
+        prefix = "iteration_"
+        if not iteration_id.startswith(prefix):
+            return None
+        try:
+            return int(iteration_id[len(prefix):].split("_", 1)[0])
+        except ValueError:
+            return None
 
     def dashboard_iteration_stage_nodes(self, iteration_id: str) -> list[dict[str, Any]]:
         return [
@@ -370,6 +389,40 @@ class IterationDashboardAdapter:
                     f"Changed files: {len(result.changed_files)}"
                 ),
                 status="failed",
+            )
+            return
+
+        if event == "iteration_completed":
+            iteration = payload.get("iteration")
+            iteration_id = getattr(self.autopilot, "_dashboard_current_iteration_id", None)
+            if not iteration_id and iteration is not None:
+                candidate_id = f"iteration_{iteration}"
+                if self.find_dashboard_node(candidate_id):
+                    iteration_id = candidate_id
+            if not iteration_id:
+                iteration_id = self.ensure_dashboard_iteration(iteration)
+            result = payload.get("result")
+            success = bool(getattr(result, "success", False))
+            completed_successfully = bool(getattr(result, "completed_successful_iteration", False))
+            status = "completed" if success and completed_successfully else "failed"
+            self.set_dashboard_running_descendants_status(iteration_id, status)
+            if status == "completed":
+                for stage_key in ("execution", "evaluation", "mind_system"):
+                    self.set_dashboard_task_status(f"{iteration_id}_{stage_key}", "completed")
+            self.set_dashboard_task_status(iteration_id, status)
+            self.autopilot._dashboard_current_iteration_id = None
+            self.enhanced_ui.set_task_graph_state(
+                tasks=self.enhanced_ui.task_graph_state.get("tasks") or [],
+                current_task_id=None,
+            )
+            self.enhanced_ui.set_current_task_state(
+                title=f"Iteration {iteration} {'completed' if status == 'completed' else 'stopped'}",
+                details=(
+                    "Iteration completed successfully"
+                    if status == "completed"
+                    else "Iteration finished without satisfying the required improvement"
+                ),
+                status=status,
             )
             return
 

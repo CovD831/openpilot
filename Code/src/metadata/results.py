@@ -19,6 +19,7 @@ from metadata.artifacts import (
 from metadata.base import JsonValue, MetadataBase, MetadataKind
 from metadata.bugfix import BugFixAttemptMetadata, BugFixResultMetadata
 from metadata.project import EnvironmentSyncMetadata, ImprovementAnalysisMetadata, ProjectStateMetadata
+from metadata.warnings import WarningCheckResultMetadata, WarningItemMetadata
 
 
 ArtifactMetadata = Annotated[
@@ -226,6 +227,29 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
                 "requires_user_decision",
                 "user_terminated",
             ),
+        )
+    if tool_name == "warning_check_tool":
+        warnings = [
+            item
+            if isinstance(item, WarningItemMetadata)
+            else WarningItemMetadata.model_validate(item)
+            for item in payload.get("warnings", [])
+        ]
+        ignored_warnings = [
+            item
+            if isinstance(item, WarningItemMetadata)
+            else WarningItemMetadata.model_validate(item)
+            for item in payload.get("ignored_warnings", [])
+        ]
+        return WarningCheckResultMetadata(
+            command=str(payload.get("command") or getattr(input_metadata, "command", "") or ""),
+            cwd=str(payload.get("cwd") or getattr(input_metadata, "cwd", "") or ""),
+            warnings=warnings,
+            ignored_warnings=ignored_warnings,
+            requires_fix=bool(payload.get("requires_fix", False)),
+            reason=str(payload.get("reason") or ""),
+            recommended_fix=str(payload.get("recommended_fix") or ""),
+            annotations=attr_without("command", "cwd", "warnings", "ignored_warnings", "requires_fix", "reason", "recommended_fix"),
         )
     if tool_name == "project_environment_tool":
         return EnvironmentSyncMetadata(

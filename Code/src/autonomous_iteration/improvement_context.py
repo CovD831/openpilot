@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from metadata import ProductIntentMetadata
+
 
 class ImprovementContextHelper:
     """Build deterministic improvement context outside the executor class."""
@@ -62,6 +64,12 @@ class ImprovementContextHelper:
             written_files=written_files or [],
             current_code=current_code,
         )
+        product_intent = self.infer_product_intent(
+            original_goal=original_goal,
+            project_path=project_path,
+            written_files=written_files or [],
+            current_code=current_code,
+        )
         quality_rubric = self.quality_rubric_for_product(product_judgment)
         project_context = {
             "project_path": str(project_path) if project_path else "",
@@ -71,6 +79,10 @@ class ImprovementContextHelper:
             "environment": self.environment_context_getter(project_path),
             "validation_passed": getattr(evaluation, "validation_passed", None),
             "validation_errors": getattr(evaluation, "validation_errors", [])[:3] if evaluation else [],
+            "validation_issues": [
+                issue.to_json_dict() if hasattr(issue, "to_json_dict") else issue
+                for issue in (getattr(evaluation, "validation_issues", [])[:5] if evaluation else [])
+            ],
             "warnings": getattr(evaluation, "warnings", [])[:3] if evaluation else [],
             "retry_mode": mode,
         }
@@ -79,6 +91,7 @@ class ImprovementContextHelper:
         result = {
             "original_goal": original_goal,
             "project_context": project_context,
+            "product_intent": product_intent.to_json_dict(),
             "product_judgment": product_judgment,
             "quality_rubric": quality_rubric,
             "agent_instruction": agent_instruction,
@@ -88,6 +101,50 @@ class ImprovementContextHelper:
         }
         self._log("build_prompt_context", {"goal": original_goal, "mode": mode}, self.prompt_context_layer_summary(result))
         return result
+
+    def infer_product_intent(
+        self,
+        *,
+        original_goal: str,
+        project_path: Path | None,
+        written_files: list[str],
+        current_code: str = "",
+    ) -> ProductIntentMetadata:
+        judgment = self.infer_product_judgment(
+            original_goal=original_goal,
+            project_path=project_path,
+            written_files=written_files,
+            current_code=current_code,
+        )
+        goal_text = original_goal.lower()
+        code_text = current_code.lower()
+        experience_type = str(judgment.get("project_type") or "general_project")
+        runtime_mode = str(judgment.get("preferred_runtime") or "best_fit_for_goal")
+        delivery_surface = str(judgment.get("preferred_stack") or "project_native")
+        core_capabilities = self._core_capabilities_from_goal(goal_text)
+        constraints = [
+            "Repair runtime, warning, environment, and quality issues without changing the intended user experience.",
+            f"Preserve delivery surface: {delivery_surface}.",
+            f"Preserve runtime mode: {runtime_mode}.",
+        ]
+        disallowed = self._disallowed_substitutions(judgment, code_text)
+        evidence = [
+            f"goal:{original_goal[:200]}",
+            f"current_runtime:{judgment.get('current_runtime')}",
+            f"preferred_runtime:{runtime_mode}",
+            f"preferred_stack:{delivery_surface}",
+        ]
+        return ProductIntentMetadata(
+            experience_type=experience_type,
+            runtime_mode=runtime_mode,
+            delivery_surface=delivery_surface,
+            target_platforms=["local_python"] if "python" in code_text or written_files else [],
+            core_capabilities=core_capabilities,
+            non_regression_constraints=constraints,
+            disallowed_substitutions=disallowed,
+            evidence=evidence,
+            confidence=0.82 if experience_type != "general_project" else 0.62,
+        )
 
     def infer_product_judgment(
         self,
@@ -147,6 +204,42 @@ class ImprovementContextHelper:
         self._log("infer_product_judgment", {"goal": original_goal}, result)
         return result
 
+    def _core_capabilities_from_goal(self, goal_text: str) -> list[str]:
+        capabilities = []
+        if any(term in goal_text for term in ("game", "游戏", "snake", "贪吃蛇")):
+            capabilities.extend(["interactive_play", "visual_feedback", "user_controls", "score_or_status"])
+        if any(term in goal_text for term in ("web", "website", "网页", "site")):
+            capabilities.extend(["browser_view", "responsive_ui"])
+        if any(term in goal_text for term in ("cli", "terminal", "命令行", "终端")):
+            capabilities.extend(["terminal_interaction"])
+        if any(term in goal_text for term in ("report", "报告", "analysis", "分析")):
+            capabilities.extend(["structured_output"])
+        return capabilities or ["satisfy_original_goal"]
+
+    def _disallowed_substitutions(self, judgment: dict[str, Any], code_text: str) -> list[str]:
+        disallowed = []
+        preferred_runtime = judgment.get("preferred_runtime")
+        preferred_stack = judgment.get("preferred_stack")
+        if preferred_runtime == "standalone_gui":
+            disallowed.extend(["terminal_ui", "headless_only", "text_only_substitute"])
+        if preferred_runtime == "terminal":
+            disallowed.extend(["gui_only_substitute", "web_only_substitute"])
+        current_runtime = judgment.get("current_runtime")
+        current_matches_intent = (
+            current_runtime
+            and current_runtime != "unknown"
+            and (
+                preferred_runtime == "best_fit_for_goal"
+                or (preferred_runtime == "standalone_gui" and str(current_runtime).endswith("_gui"))
+                or (preferred_runtime == "terminal" and str(current_runtime).startswith("terminal"))
+            )
+        )
+        if current_matches_intent:
+            disallowed.append(f"unrequested_runtime_change_from_{current_runtime}")
+        if preferred_stack and preferred_stack != "project_native":
+            disallowed.append(f"substitute_away_from_{preferred_stack}")
+        return disallowed
+
     def fallback_should_prefer_pygame(self, prompt_context: dict[str, Any]) -> bool:
         product_judgment = prompt_context.get("product_judgment") or {}
         result = (
@@ -181,6 +274,7 @@ class ImprovementContextHelper:
         project_context = prompt_context.get("project_context") or {}
         return {
             "has_original_goal": bool(prompt_context.get("original_goal")),
+            "has_product_intent": bool(prompt_context.get("product_intent")),
             "preferred_runtime": product.get("preferred_runtime"),
             "preferred_stack": product.get("preferred_stack"),
             "current_runtime": product.get("current_runtime"),

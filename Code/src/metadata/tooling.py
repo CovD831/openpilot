@@ -56,6 +56,7 @@ class ToolInputMetadata(MetadataBase):
     query: str | None = None
     provider: str | None = None
     model: str | None = None
+    base_url: str | None = None
     use_cache: bool | None = None
     max_results: int | None = None
     max_pages: int | None = None
@@ -75,6 +76,11 @@ class ToolInputMetadata(MetadataBase):
     timeout: int | None = None
     cwd: str | None = None
     env: dict[str, str] | None = None
+    stdout: str | None = None
+    stderr: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    warning_check_required: bool | None = None
+    warning_check_result: dict[str, JsonValue] | None = None
     max_iterations: int | None = None
     continuation_iterations: int | None = None
     fix_instruction: str | None = None

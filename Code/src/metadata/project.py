@@ -25,6 +25,30 @@ class ProjectStateMetadata(MetadataBase):
     state_summary: str = ""
 
 
+class ProductIntentMetadata(MetadataBase):
+    kind: Literal[MetadataKind.PRODUCT_INTENT] = MetadataKind.PRODUCT_INTENT
+    experience_type: str = "general_project"
+    runtime_mode: str = "best_fit_for_goal"
+    delivery_surface: str = "project_native"
+    target_platforms: list[str] = Field(default_factory=list)
+    core_capabilities: list[str] = Field(default_factory=list)
+    non_regression_constraints: list[str] = Field(default_factory=list)
+    disallowed_substitutions: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+
+
+class ValidationIssueMetadata(MetadataBase):
+    kind: Literal[MetadataKind.VALIDATION_ISSUE] = MetadataKind.VALIDATION_ISSUE
+    category: str = "runtime_error"
+    severity: str = "blocking"
+    message: str
+    recommended_action: str = ""
+    target_files: list[str] = Field(default_factory=list)
+    product_intent: ProductIntentMetadata | None = None
+    preserves_product_intent: bool = True
+
+
 class ImprovementAnalysisMetadata(MetadataBase):
     kind: Literal[MetadataKind.IMPROVEMENT_ANALYSIS] = MetadataKind.IMPROVEMENT_ANALYSIS
     project_path: str = ""

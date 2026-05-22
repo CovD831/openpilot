@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Sequence
 
 from rich.console import Console
 
-from core.config import LLMSettings
+from core.config import EmbeddingSettings, LLMSettings
 from core.instrumented_llm import InstrumentedLLMClient
 from core.openpilot_log import OpenPilotLogger
 from ui.enhanced_ui import EnhancedUI
@@ -350,6 +350,12 @@ def _show_config(
     table.add_row("Temperature", str(settings.temperature))
     table.add_row("Timeout", f"{settings.timeout_seconds}s")
     table.add_row("API Key", "✓ Set" if settings.api_key else "✗ Not set")
+    embedding_settings = EmbeddingSettings()
+    table.add_row("Embedding Provider", embedding_settings.provider)
+    table.add_row("Embedding Model", embedding_settings.model)
+    table.add_row("Embedding Base URL", embedding_settings.base_url or "[dim]inherits LLM[/dim]")
+    table.add_row("Embedding Timeout", f"{embedding_settings.timeout_seconds}s")
+    table.add_row("Embedding API Key", "✓ Set" if embedding_settings.api_key else "✗ Not set")
     if runtime_options is not None:
         if runtime_options.prompt_for_project_improvement_iterations:
             table.add_row("Improvement Iterations", "ask per generated project")

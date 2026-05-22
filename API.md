@@ -58,6 +58,11 @@ OpenAI-compatible providers are configured with environment variables:
 | `OPENPILOT_LLM_MODEL` | No | `gpt-4o-mini` | Chat completion model name. |
 | `OPENPILOT_LLM_TIMEOUT_SECONDS` | No | `60` | Provider timeout. |
 | `OPENPILOT_LLM_TEMPERATURE` | No | `0.2` | Default sampling temperature. |
+| `OPENPILOT_EMBEDDING_PROVIDER` | No | `openai-compatible` | Embedding provider label. |
+| `OPENPILOT_EMBEDDING_BASE_URL` | No | Inherits `OPENPILOT_LLM_BASE_URL` | OpenAI-compatible embedding endpoint. |
+| `OPENPILOT_EMBEDDING_API_KEY` | No | Inherits `OPENPILOT_LLM_API_KEY` | Embedding API key. |
+| `OPENPILOT_EMBEDDING_MODEL` | No | `text-embedding-3-small` | Embedding model name. |
+| `OPENPILOT_EMBEDDING_TIMEOUT_SECONDS` | No | `30` | Embedding request timeout. |
 
 CLI readiness checks treat blank `OPENPILOT_LLM_BASE_URL` and blank
 `OPENPILOT_LLM_API_KEY` as missing. Diagnostics may show whether a value is set, but

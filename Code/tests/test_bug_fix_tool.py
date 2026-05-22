@@ -83,6 +83,72 @@ def test_bug_fix_tool_repairs_python_syntax_error_and_verifies_command(tmp_path)
     assert app.read_text(encoding="utf-8") == "print('fixed')\n"
 
 
+def test_bug_fix_tool_warning_mode_does_not_stop_on_exit_zero(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    app.write_text(
+        "import sys\n"
+        "print(\"/site-packages/pygame/sysfont.py:226: UserWarning: Process running '/usr/X11/bin/fc-list' timed-out! System fonts cannot be loaded on your platform\", file=sys.stderr)\n",
+        encoding="utf-8",
+    )
+    llm = FakeBugFixLLM(
+        [
+            {
+                "rationale": "Use a local fallback font path and stop touching pygame sysfont.",
+                "files": [{"file_path": "app.py", "content": "print('ok')\n"}],
+            }
+        ]
+    )
+
+    result = bug_fix_tool_executor(
+        _input(
+            _python_file_command(app),
+            tmp_path,
+            ["app.py"],
+            warning_check_required=True,
+            _llm_client=llm,
+        )
+    )
+
+    assert result.status == ResultStatus.SUCCESS
+    assert result.result.fixed is True
+    assert result.result.iterations_used == 1
+    assert llm.requests
+    assert app.read_text(encoding="utf-8") == "print('ok')\n"
+
+
+def test_bug_fix_tool_warning_mode_requests_decision_when_warning_remains(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    warning_source = (
+        "import sys\n"
+        "print(\"/site-packages/pygame/sysfont.py:226: UserWarning: Process running '/usr/X11/bin/fc-list' timed-out! System fonts cannot be loaded on your platform\", file=sys.stderr)\n"
+    )
+    app.write_text(warning_source, encoding="utf-8")
+    llm = FakeBugFixLLM(
+        [
+            {
+                "rationale": "Still emits the warning.",
+                "files": [{"file_path": "app.py", "content": warning_source}],
+            }
+        ]
+    )
+
+    result = bug_fix_tool_executor(
+        _input(
+            _python_file_command(app),
+            tmp_path,
+            ["app.py"],
+            max_iterations=1,
+            warning_check_required=True,
+            _llm_client=llm,
+        )
+    )
+
+    assert result.status == ResultStatus.FAIL
+    assert result.failure.error_type == "MaxBugFixIterationsReached"
+    assert "Runtime warning still requires repair" in result.failure.error_message
+    assert result.result.requires_user_decision is True
+
+
 def test_bug_fix_tool_rejects_llm_changes_outside_declared_files(tmp_path) -> None:
     app = tmp_path / "app.py"
     app.write_text("print('broken'\n", encoding="utf-8")

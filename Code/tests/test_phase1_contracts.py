@@ -194,7 +194,7 @@ def test_builtin_tools_register_expected_contracts() -> None:
     names = {tool.name for tool in registry.list_all()}
     removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 13
+    assert len(names) == 14
     assert {
         "bug_fix_tool",
         "command_executor",
@@ -203,6 +203,7 @@ def test_builtin_tools_register_expected_contracts() -> None:
         "file_writer",
         "multi_file_reader",
         "task_classifier",
+        "warning_check_tool",
         "web_searcher",
     }.issubset(names)
     assert removed_directory_tool not in names
@@ -810,6 +811,38 @@ def test_config_check_cli_returns_success() -> None:
     assert main(["config", "check"]) == 0
 
 
+def test_embedding_settings_inherit_llm_endpoint_when_unset(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENPILOT_LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("OPENPILOT_LLM_API_KEY", "llm-key")
+    monkeypatch.delenv("OPENPILOT_EMBEDDING_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENPILOT_EMBEDDING_API_KEY", raising=False)
+    monkeypatch.delenv("OPENPILOT_EMBEDDING_MODEL", raising=False)
+    from core.config import EmbeddingSettings
+
+    settings = EmbeddingSettings()
+
+    assert settings.base_url == "https://llm.example/v1"
+    assert settings.api_key == "llm-key"
+    assert settings.model == "text-embedding-3-small"
+
+
+def test_embedding_settings_allow_independent_endpoint_and_model(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENPILOT_LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("OPENPILOT_LLM_API_KEY", "llm-key")
+    monkeypatch.setenv("OPENPILOT_EMBEDDING_BASE_URL", "https://embed.example/v1")
+    monkeypatch.setenv("OPENPILOT_EMBEDDING_API_KEY", "embed-key")
+    monkeypatch.setenv("OPENPILOT_EMBEDDING_MODEL", "embedding-special")
+    from core.config import EmbeddingSettings
+
+    settings = EmbeddingSettings()
+
+    assert settings.base_url == "https://embed.example/v1"
+    assert settings.api_key == "embed-key"
+    assert settings.model == "embedding-special"
+
+
 def test_tool_executor_rejects_missing_required_input() -> None:
     registry = _registered_registry()
     executor = ToolExecutor(registry)
@@ -1054,6 +1087,27 @@ def test_code_reviewer_allows_pygame_code_without_product_fit_warning() -> None:
 
     assert not any("Product-fit rubric not satisfied" in item for item in result["warnings"])
     assert not any("Product-fit rubric not satisfied" in item for item in result["suggestions"])
+
+
+def test_code_reviewer_rejects_generic_product_intent_drift() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "import curses\n\ndef main(stdscr):\n    pass\n",
+            "language": "python",
+            "prompt_context": {
+                "product_intent": {
+                    "runtime_mode": "standalone_gui",
+                    "delivery_surface": "native_window",
+                    "core_capabilities": ["visible_feedback"],
+                    "disallowed_substitutions": ["terminal_ui"],
+                }
+            },
+        }
+    )
+
+    assert result["approved"] is False
+    assert "product_intent_drift" in result["rejection_categories"]
+    assert any("Product intent drift" in item for item in result["warnings"])
 
 
 def test_tool_executor_uses_contract_metadata_defaults() -> None:
@@ -2181,6 +2235,101 @@ def test_embedder_uses_injected_service_without_network() -> None:
     assert result.output_metadata.result["model"] == "fake-embedding"
     assert result.output_metadata.result["provider"] == "fake"
     assert result.output_metadata.result["cached"] is False
+
+
+def test_embedding_service_uses_embedding_settings_and_cache_namespace(tmp_path, monkeypatch) -> None:
+    class FakeOpenAI:
+        def __init__(self, *, api_key, base_url=None, timeout=None):
+            self.api_key = api_key
+            self.base_url = base_url
+            self.timeout = timeout
+            self.embeddings = SimpleNamespace(
+                create=lambda **kwargs: SimpleNamespace(
+                    data=[SimpleNamespace(embedding=[0.4, 0.5, 0.6])]
+                )
+            )
+
+    monkeypatch.setattr("core.embedding.OpenAI", FakeOpenAI)
+    from core.config import EmbeddingSettings
+    from core.embedding import EmbeddingService
+
+    settings = EmbeddingSettings(
+        OPENPILOT_EMBEDDING_BASE_URL="https://embed.example/v1",
+        OPENPILOT_EMBEDDING_API_KEY="embed-key",
+        OPENPILOT_EMBEDDING_MODEL="embedding-special",
+        OPENPILOT_EMBEDDING_TIMEOUT_SECONDS=12,
+    )
+    service = EmbeddingService(settings=settings, cache_dir=tmp_path)
+
+    assert service.model == "embedding-special"
+    assert service.base_url == "https://embed.example/v1"
+    assert service.timeout == 12
+    assert service.client.base_url == "https://embed.example/v1"
+    assert service._get_cache_key("same text") != EmbeddingService(
+        settings=EmbeddingSettings(
+            OPENPILOT_EMBEDDING_BASE_URL="https://other.example/v1",
+            OPENPILOT_EMBEDDING_API_KEY="embed-key",
+            OPENPILOT_EMBEDDING_MODEL="embedding-special",
+        ),
+        cache_dir=tmp_path / "other",
+    )._get_cache_key("same text")
+
+
+def test_embedder_uses_configured_embedding_model_by_default(tmp_path, monkeypatch) -> None:
+    created: dict[str, str] = {}
+
+    class FakeEmbeddingService:
+        provider = "openai-compatible"
+
+        def __init__(self, *, provider, model, base_url=None, settings=None):
+            created["provider"] = provider
+            created["model"] = model
+            created["base_url"] = base_url or ""
+            self.provider = provider
+            self.model = model
+
+        def embed_text(self, text: str, use_cache: bool = True) -> list[float]:
+            return [0.7, 0.8]
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENPILOT_LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("OPENPILOT_LLM_API_KEY", "llm-key")
+    monkeypatch.setenv("OPENPILOT_EMBEDDING_MODEL", "configured-embedding")
+    monkeypatch.setattr("core.embedding.EmbeddingService", FakeEmbeddingService)
+
+    result = _registered_registry().get_executor("embedder")(
+        ToolInputMetadata.from_mapping("embedder", {"query": "semantic text"})
+    )
+
+    assert result.result["model"] == "configured-embedding"
+    assert created["model"] == "configured-embedding"
+    assert created["base_url"] == "https://llm.example/v1"
+
+
+def test_embedder_explicit_model_overrides_embedding_settings(tmp_path, monkeypatch) -> None:
+    created: dict[str, str] = {}
+
+    class FakeEmbeddingService:
+        def __init__(self, *, provider, model, base_url=None, settings=None):
+            created["model"] = model
+            self.provider = provider
+            self.model = model
+
+        def embed_text(self, text: str, use_cache: bool = True) -> list[float]:
+            return [0.9]
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENPILOT_LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("OPENPILOT_LLM_API_KEY", "llm-key")
+    monkeypatch.setenv("OPENPILOT_EMBEDDING_MODEL", "configured-embedding")
+    monkeypatch.setattr("core.embedding.EmbeddingService", FakeEmbeddingService)
+
+    result = _registered_registry().get_executor("embedder")(
+        ToolInputMetadata.from_mapping("embedder", {"query": "semantic text", "model": "explicit-embedding"})
+    )
+
+    assert result.result["model"] == "explicit-embedding"
+    assert created["model"] == "explicit-embedding"
 
 
 def test_logger_writes_legacy_and_structured_jsonl(tmp_path) -> None:

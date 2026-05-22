@@ -29,6 +29,22 @@ class FakeAutopilot:
         self._dashboard_current_iteration_id = None
 
 
+class FakeState:
+    written_files = ["main.py"]
+    safe_target_files = ["main.py"]
+    memory_records = []
+
+
+def _successful_iteration_result(iteration: int) -> IterationResult:
+    return IterationResult(
+        iteration=iteration,
+        validation_passed=True,
+        completed_successful_iteration=True,
+        success=True,
+        changed_files=["main.py"],
+    )
+
+
 def test_iteration_dashboard_stage_helpers_update_nested_graph() -> None:
     autopilot = FakeAutopilot()
     adapter = IterationDashboardAdapter(autopilot)
@@ -222,3 +238,78 @@ def test_iteration_started_completes_missing_pre_execution_stages() -> None:
     assert by_description["Task Decomposer"]["status"] == "completed"
     assert by_description["Task Executor"]["status"] == "running"
     assert by_description["Goal Maker"]["children"][0]["description"] == "Repair path prepared"
+
+
+def test_iteration_completed_closes_current_iteration_after_mind_system() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    adapter.handle_iteration_progress("iteration_started", {"iteration": 1, "actions": ["Improve app.py"]})
+    adapter.handle_iteration_progress(
+        "successful_improvement",
+        {"completed_improvements": 1, "required_improvements": 3},
+    )
+    adapter.handle_iteration_progress("mind_system", {"iteration": 1, "note": "Iteration 1 succeeded"})
+    adapter.handle_iteration_progress(
+        "iteration_completed",
+        {"iteration": 1, "result": _successful_iteration_result(1)},
+    )
+
+    tasks = autopilot.enhanced_ui.task_graph_state["tasks"]
+    assert autopilot._dashboard_current_iteration_id is None
+    assert autopilot.enhanced_ui.task_graph_state["current_task_id"] is None
+    assert tasks[0]["id"] == "iteration_1"
+    assert tasks[0]["status"] == "completed"
+
+
+def test_next_iteration_creates_sibling_after_previous_completed() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    adapter.handle_iteration_progress("iteration_started", {"iteration": 1, "actions": ["Improve app.py"]})
+    adapter.handle_iteration_progress("mind_system", {"iteration": 1, "note": "Iteration 1 succeeded"})
+    adapter.handle_iteration_progress(
+        "iteration_completed",
+        {"iteration": 1, "result": _successful_iteration_result(1)},
+    )
+    adapter.handle_iteration_progress("project_state", {"iteration": 1, "state": FakeState()})
+    adapter.handle_iteration_progress("iteration_started", {"iteration": 2, "actions": ["Improve again"]})
+
+    tasks = autopilot.enhanced_ui.task_graph_state["tasks"]
+    assert [task["id"] for task in tasks] == ["iteration_1", "iteration_2"]
+    assert tasks[0]["status"] == "completed"
+    assert tasks[1]["status"] == "running"
+    iteration_2_project_state = next(child for child in tasks[1]["children"] if child["id"] == "iteration_2_project_state")
+    assert iteration_2_project_state["status"] == "completed"
+
+
+def test_explicit_new_iteration_number_does_not_reuse_current_node() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    first_id = adapter.ensure_dashboard_iteration(1)
+    second_id = adapter.ensure_dashboard_iteration(2)
+
+    tasks = autopilot.enhanced_ui.task_graph_state["tasks"]
+    assert first_id == "iteration_1"
+    assert second_id == "iteration_2"
+    assert [task["id"] for task in tasks] == ["iteration_1", "iteration_2"]
+    assert autopilot._dashboard_current_iteration_id == "iteration_2"
+
+
+def test_three_successful_iterations_render_as_sibling_nodes() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    for iteration in (1, 2, 3):
+        adapter.handle_iteration_progress("iteration_started", {"iteration": iteration, "actions": [f"Improve {iteration}"]})
+        adapter.handle_iteration_progress("mind_system", {"iteration": iteration, "note": f"Iteration {iteration} succeeded"})
+        adapter.handle_iteration_progress(
+            "iteration_completed",
+            {"iteration": iteration, "result": _successful_iteration_result(iteration)},
+        )
+
+    tasks = autopilot.enhanced_ui.task_graph_state["tasks"]
+    assert [task["description"] for task in tasks] == ["Iteration 1", "Iteration 2", "Iteration 3"]
+    assert [task["status"] for task in tasks] == ["completed", "completed", "completed"]
+    assert autopilot._dashboard_current_iteration_id is None

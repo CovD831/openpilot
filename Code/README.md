@@ -18,7 +18,12 @@ Configure the LLM connection in `.env` or environment variables:
 OPENPILOT_LLM_BASE_URL=https://your-provider.example/v1
 OPENPILOT_LLM_API_KEY=your-api-key
 OPENPILOT_LLM_MODEL=your-model
+# Optional: use a separate embedding model or endpoint.
+OPENPILOT_EMBEDDING_MODEL=text-embedding-3-small
 ```
+
+Embedding settings inherit the LLM base URL and API key unless
+`OPENPILOT_EMBEDDING_BASE_URL` or `OPENPILOT_EMBEDDING_API_KEY` are set.
 
 Check configuration:
 

@@ -17,6 +17,7 @@ from metadata import (
     ToolContractMetadata,
     ToolInputMetadata,
     ToolResultMetadata,
+    WarningCheckResultMetadata,
 )
 from tools.command_tool import command_executor
 from tools.file_reader import file_reader_executor
@@ -39,7 +40,15 @@ BUG_FIX_TOOL_DEFINITION = ToolDefinition(
         input_metadata_type="ToolInputMetadata",
         output_metadata_type="ToolResultMetadata",
         required_input_fields=["command", "file_paths"],
-        input_defaults={"timeout": 30, "max_iterations": 5, "continuation_iterations": 3, "cwd": None, "fix_instruction": None},
+        input_defaults={
+            "timeout": 30,
+            "max_iterations": 5,
+            "continuation_iterations": 3,
+            "cwd": None,
+            "fix_instruction": None,
+            "warning_check_required": False,
+            "warning_check_result": None,
+        },
     ),
     timeout_seconds=900,
     max_retries=0,
@@ -79,6 +88,13 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
     max_iterations = _positive_int(params.get("max_iterations"), default=5)
     continuation_iterations = _positive_int(params.get("continuation_iterations"), default=3)
     fix_instruction = str(params.get("fix_instruction") or "").strip()
+    warning_check_required = bool(params.get("warning_check_required"))
+    warning_check_context = _warning_check_context(input_metadata)
+    if warning_check_context and warning_check_context.recommended_fix:
+        fix_instruction = (fix_instruction + "\n" if fix_instruction else "") + (
+            "Runtime warning repair requirement: "
+            f"{warning_check_context.reason}. {warning_check_context.recommended_fix}"
+        )
     ask_user_to_continue = params.get("_ask_user_to_continue")
 
     allowed_files = _resolve_allowed_files(input_metadata.file_paths, cwd)
@@ -86,7 +102,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
 
     initial_command = _run_command(command, cwd, timeout)
     attempts.append(_attempt(iteration=0, command_result=initial_command, modified_files=[], rationale="initial validation"))
-    if initial_command.success:
+    initial_warning_check = _check_command_warnings(
+        command_result=initial_command,
+        command=command,
+        cwd=cwd,
+        warning_check_required=warning_check_required,
+    )
+    last_warning_check = initial_warning_check
+    if initial_command.success and not _warning_requires_fix(initial_warning_check):
         result = _bug_fix_result(
             command=command,
             cwd=cwd,
@@ -158,6 +181,13 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
 
             modified_files = _write_changes(changes)
             last_command_result = _run_command(command, cwd, timeout)
+            latest_warning_check = _check_command_warnings(
+                command_result=last_command_result,
+                command=command,
+                cwd=cwd,
+                warning_check_required=warning_check_required,
+            )
+            last_warning_check = latest_warning_check
             attempts.append(
                 _attempt(
                     iteration=iteration,
@@ -167,7 +197,7 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                     llm_payload=fix_payload,
                 )
             )
-            if last_command_result.success:
+            if last_command_result.success and not _warning_requires_fix(latest_warning_check):
                 result = _bug_fix_result(
                     command=command,
                     cwd=cwd,
@@ -218,7 +248,11 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
             result=result,
             failure=FailureMetadata(
                 error_type="MaxBugFixIterationsReached",
-                error_message=f"Command still fails after {iteration} bug-fix iteration(s).",
+                error_message=(
+                    f"Runtime warning still requires repair after {iteration} bug-fix iteration(s): {last_warning_check.reason}"
+                    if _warning_requires_fix(last_warning_check)
+                    else f"Command still fails after {iteration} bug-fix iteration(s)."
+                ),
                 recoverable=True,
                 retry_recommended=True,
                 recovery_strategy="Ask the user whether to continue with more bug-fix iterations.",
@@ -264,6 +298,47 @@ def _run_command(command: str, cwd: str, timeout: int) -> CommandArtifactMetadat
     return result.result
 
 
+def _warning_check_context(input_metadata: ToolInputMetadata) -> WarningCheckResultMetadata | None:
+    raw = input_metadata.warning_check_result
+    if isinstance(raw, WarningCheckResultMetadata):
+        return raw
+    if isinstance(raw, dict):
+        try:
+            return WarningCheckResultMetadata.model_validate(raw)
+        except Exception:
+            return None
+    return None
+
+
+def _check_command_warnings(
+    *,
+    command_result: CommandArtifactMetadata,
+    command: str,
+    cwd: str,
+    warning_check_required: bool,
+) -> WarningCheckResultMetadata | None:
+    if not warning_check_required:
+        return None
+    from tools.warning_check_tool import warning_check_tool_executor
+
+    result = warning_check_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "warning_check_tool",
+            {
+                "command": command,
+                "cwd": cwd or None,
+                "stdout": command_result.stdout,
+                "stderr": command_result.stderr,
+            },
+        )
+    )
+    return result.result if isinstance(result.result, WarningCheckResultMetadata) else None
+
+
+def _warning_requires_fix(warning_check: WarningCheckResultMetadata | None) -> bool:
+    return bool(warning_check and warning_check.requires_fix)
+
+
 def _read_allowed_files(allowed_files: dict[str, Path]) -> dict[str, str]:
     contents: dict[str, str] = {}
     for path in sorted(set(allowed_files.values()), key=lambda item: str(item)):
@@ -300,7 +375,8 @@ def _request_fix(
                 role="system",
                 content=(
                     "You are OpenPilot's Bug Fix Tool. Fix only program execution bugs: syntax errors, "
-                    "runtime exceptions, import errors, command failures, or missing wiring that prevents the command from running. "
+                    "runtime exceptions, import errors, command failures, missing wiring that prevents the command from running, "
+                    "or runtime warnings explicitly marked as requiring repair because they harm user-visible behavior. "
                     "Do not optimize, redesign, change product behavior, or improve semantic output quality. "
                     "Return only JSON."
                 ),
@@ -311,6 +387,10 @@ def _request_fix(
                     {
                         "iteration": iteration,
                         "success_standard": "The command must exit with code 0. Do not judge stdout semantics.",
+                        "warning_success_standard": (
+                            "If runtime warning repair is required, the command must also run without warnings "
+                            "classified as requiring repair."
+                        ),
                         "command": command,
                         "cwd": cwd,
                         "target_files": target_files,

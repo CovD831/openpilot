@@ -266,6 +266,7 @@ class CodeGenerator:
         prompt_context = request.prompt_context or {}
         constraints = self._constraint_lines(request)
         context_json = json.dumps(prompt_context, ensure_ascii=False, indent=2, default=str)
+        product_intent = prompt_context.get("product_intent") if isinstance(prompt_context.get("product_intent"), dict) else {}
         product_judgment = prompt_context.get("product_judgment") or {}
         quality_rubric = prompt_context.get("quality_rubric") or []
         if isinstance(quality_rubric, str):
@@ -275,6 +276,19 @@ class CodeGenerator:
             rubric_text = "- Satisfy the original user goal with visible, user-facing behavior."
 
         runtime_guidance = ""
+        intent_constraints = product_intent.get("non_regression_constraints") or []
+        disallowed_substitutions = product_intent.get("disallowed_substitutions") or []
+        intent_guidance = ""
+        if product_intent:
+            intent_guidance = (
+                "\nProduct-intent invariants: preserve the requested delivery surface, runtime mode, "
+                "and core capabilities while fixing the current issue. Do not substitute a different "
+                "interaction model just because it is easier to run."
+            )
+            if intent_constraints:
+                intent_guidance += "\nNon-regression constraints:\n" + "\n".join(f"- {item}" for item in intent_constraints[:6])
+            if disallowed_substitutions:
+                intent_guidance += "\nDisallowed substitutions:\n" + "\n".join(f"- {item}" for item in disallowed_substitutions[:6])
         if product_judgment.get("preferred_stack") == "pygame":
             runtime_guidance = (
                 "\nProduct-fit guidance: for this game request, prefer a standalone pygame window "
@@ -294,6 +308,7 @@ TOOL TASK:
 
 PRODUCT QUALITY RUBRIC:
 {rubric_text}
+{intent_guidance}
 {runtime_guidance}
 
 TOOL OUTPUT REQUIREMENTS:
