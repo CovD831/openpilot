@@ -125,16 +125,17 @@ class IterationDashboardAdapter:
         parent_id = self.dashboard_stage_id(stage_key)
         if not parent_id:
             return
+        full_child_id = f"{parent_id}_{child_id}"
         self.append_dashboard_child(
             parent_id=parent_id,
             child={
-                "id": f"{parent_id}_{child_id}",
+                "id": full_child_id,
                 "description": self.short_dashboard_text(description),
                 "status": status,
                 "kind": kind,
                 **({"children": children} if children else {}),
             },
-            current_task_id=parent_id,
+            current_task_id=full_child_id if status in {"running", "in_progress"} else parent_id,
         )
 
     def handle_iteration_progress(self, event: str, payload: dict[str, Any]) -> None:
@@ -298,6 +299,42 @@ class IterationDashboardAdapter:
             )
             return
 
+        if event == "modification_evaluation_started":
+            iteration = payload["iteration"]
+            self.ensure_dashboard_iteration(iteration)
+            self.set_dashboard_running_descendants_status(self.dashboard_stage_id("execution"), "completed")
+            self.set_dashboard_task_status(self.dashboard_stage_id("execution"), "completed")
+            self.set_dashboard_task_status(self.dashboard_stage_id("evaluation"), "running")
+            self.enhanced_ui.set_current_task_state(
+                title="Modification Evaluator",
+                details="Running post-change validation and product-fit checks",
+                status="running",
+            )
+            return
+
+        if event == "modification_evaluation":
+            self.ensure_dashboard_iteration(payload.get("iteration"))
+            evaluation = payload.get("evaluation")
+            result = payload.get("result")
+            validation_passed = bool(getattr(evaluation, "validation_passed", False))
+            completed_successfully = bool(getattr(result, "completed_successful_iteration", False))
+            status = "completed" if validation_passed and completed_successfully else "failed"
+            self.set_dashboard_task_status(self.dashboard_stage_id("evaluation"), status)
+            summary = getattr(evaluation, "summary", "") or ("Validation passed" if validation_passed else "Validation did not pass")
+            self.append_dashboard_stage_child(
+                "evaluation",
+                child_id=f"validation_{payload.get('iteration', 0)}",
+                description=summary,
+                kind="result",
+                status=status,
+            )
+            self.enhanced_ui.set_current_task_state(
+                title="Modification Evaluator",
+                details=self.short_dashboard_text(summary, 500),
+                status=status,
+            )
+            return
+
         if event == "iteration_failed":
             iteration = payload["iteration"]
             result = payload["result"]
@@ -456,7 +493,7 @@ class IterationDashboardAdapter:
                 "status": status,
                 "kind": "tool",
             },
-            current_task_id=parent_task_id,
+            current_task_id=tool_id if status in {"running", "in_progress"} else parent_task_id,
         )
 
     def find_dashboard_node(self, node_id: str | None) -> dict[str, Any] | None:

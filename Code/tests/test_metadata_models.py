@@ -11,6 +11,7 @@ from metadata import (
     MetadataKind,
     ResultStatus,
     TaskResultMetadata,
+    TaskRouteMetadata,
     ToolInputMetadata,
     ToolResultMetadata,
     artifact_to_tool_input,
@@ -26,6 +27,20 @@ def test_metadata_base_fields_and_json_serialization() -> None:
     assert payload["schema_version"] == "1.0"
     assert payload["code"] == "print('ok')"
     assert payload["content"] == "print('ok')"
+
+
+def test_task_route_metadata_serializes_typed_route_fields() -> None:
+    route = TaskRouteMetadata(
+        route="agent_generator",
+        confidence=0.88,
+        reason="Task asks for a reusable agent.",
+    )
+
+    payload = route.to_json_dict()
+
+    assert payload["kind"] == MetadataKind.TASK_ROUTE
+    assert payload["route"] == "agent_generator"
+    assert payload["confidence"] == 0.88
 
 
 def test_tool_result_requires_result_or_failure_by_status() -> None:

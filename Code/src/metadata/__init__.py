@@ -35,6 +35,7 @@ from metadata.results import (
     payload_to_artifact,
     tool_result_payload,
 )
+from metadata.routing import ExecutionRoute, TaskRouteMetadata
 from metadata.runtime import (
     AgentExecutionMetadata,
     ExecutionContextMetadata,
@@ -67,6 +68,7 @@ __all__ = [
     "FileArtifactMetadata",
     "AgentExecutionMetadata",
     "AutonomyDecisionMetadata",
+    "ExecutionRoute",
     "ImprovementAnalysisMetadata",
     "JsonValue",
     "LLMRequestMetadata",
@@ -83,6 +85,7 @@ __all__ = [
     "ResultStatus",
     "SearchArtifactMetadata",
     "TaskResultMetadata",
+    "TaskRouteMetadata",
     "TextArtifactMetadata",
     "ToolChainMetadata",
     "ToolContractMetadata",

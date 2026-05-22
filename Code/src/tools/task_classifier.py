@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+from metadata import TaskRouteMetadata, ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 
 from core.tool_contracts import (
     PermissionLevel,
@@ -173,31 +173,31 @@ def task_classifier_executor(input_metadata: ToolInputMetadata) -> ToolResultMet
     )
 
     if has_creation and (has_agent_target or has_reusable_intent):
-        return {
-            "route": AGENT_GENERATOR_ROUTE,
-            "confidence": 0.88 if has_agent_target and has_reusable_intent else 0.78,
-            "reason": "Task asks to create a reusable agent, workflow, template, or automation, so route to agent_generator.",
-        }
+        return TaskRouteMetadata(
+            route=AGENT_GENERATOR_ROUTE,
+            confidence=0.88 if has_agent_target and has_reusable_intent else 0.78,
+            reason="Task asks to create a reusable agent, workflow, template, or automation, so route to agent_generator.",
+        )
 
     if has_execution_intent:
-        return {
-            "route": AUTONOMOUS_ITERATION_ROUTE,
-            "confidence": 0.86,
-            "reason": "Task includes code, project, file, bug, test, or run/install execution intent, so route to autonomous_iteration.",
-        }
+        return TaskRouteMetadata(
+            route=AUTONOMOUS_ITERATION_ROUTE,
+            confidence=0.86,
+            reason="Task includes code, project, file, bug, test, or run/install execution intent, so route to autonomous_iteration.",
+        )
 
     if has_knowledge_work:
-        return {
-            "route": AGENT_GENERATOR_ROUTE,
-            "confidence": 0.84,
-            "reason": "Task asks for research, investigation, summarization, reporting, explanation, or other knowledge work, so route to agent_generator.",
-        }
+        return TaskRouteMetadata(
+            route=AGENT_GENERATOR_ROUTE,
+            confidence=0.84,
+            reason="Task asks for research, investigation, summarization, reporting, explanation, or other knowledge work, so route to agent_generator.",
+        )
 
-    return {
-        "route": AUTONOMOUS_ITERATION_ROUTE,
-        "confidence": 0.82,
-        "reason": "Task asks to modify/build directly or is ambiguous, so default execution path is autonomous iteration.",
-    }
+    return TaskRouteMetadata(
+        route=AUTONOMOUS_ITERATION_ROUTE,
+        confidence=0.82,
+        reason="Task asks to modify/build directly or is ambiguous, so default execution path is autonomous iteration.",
+    )
 
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:

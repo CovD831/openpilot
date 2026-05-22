@@ -19,7 +19,7 @@ from memory.agents.virtual_environment_manager import VirtualEnvironmentManager
 from memory.memory_models import MemoryRecord, MemoryType
 from memory.memory_store import MemoryStore
 from tools.task_classifier import task_classifier_executor
-from metadata import ToolInputMetadata
+from metadata import TaskRouteMetadata, ToolInputMetadata
 from tools.builtin_tools import register_builtin_tools
 from tools.tool_executor import ToolExecutor
 from tools.tool_selection import ToolSelection
@@ -176,6 +176,7 @@ def test_tool_executor_structured_logs_include_source_type(tmp_path) -> None:
 def test_task_classifier_routes_direct_project_work_to_autonomous_iteration() -> None:
     result = task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": "帮我在项目里做一个贪吃蛇"}))
 
+    assert isinstance(result.result, TaskRouteMetadata)
     assert result["route"] == "autonomous_iteration"
     assert result["confidence"] >= 0.8
 
@@ -183,6 +184,7 @@ def test_task_classifier_routes_direct_project_work_to_autonomous_iteration() ->
 def test_task_classifier_routes_reusable_agent_requests_to_agent_generator() -> None:
     result = task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": "生成一个可复用的研究报告 agent"}))
 
+    assert isinstance(result.result, TaskRouteMetadata)
     assert result["route"] == "agent_generator"
     assert result["confidence"] >= 0.8
 
@@ -258,14 +260,9 @@ def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> No
     monkeypatch.setattr(enhanced_cli, "_execute_agent_generator", fake_agent)
     monkeypatch.setattr(enhanced_cli, "_execute_autopilot", fake_autopilot)
 
-    monkeypatch.setattr(
-        enhanced_cli,
-        "_classify_task_route",
-        lambda task: {"route": "agent_generator", "confidence": 0.9, "reason": "test"},
-    )
     assert (
         enhanced_cli._execute_goal_interactive(
-            "生成一个可复用 agent",
+            "生成一个可复用的研究报告 agent",
             UI(),
             tracker=None,
             llm_client=None,
@@ -274,12 +271,8 @@ def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> No
         )
         == "agent-result"
     )
+    assert calls[-1] == ("agent", "生成一个可复用的研究报告 agent")
 
-    monkeypatch.setattr(
-        enhanced_cli,
-        "_classify_task_route",
-        lambda task: {"route": "autonomous_iteration", "confidence": 0.9, "reason": "test"},
-    )
     assert (
         enhanced_cli._execute_goal_interactive(
             "帮我做一个项目",
@@ -291,4 +284,5 @@ def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> No
         )
         == "autopilot-result"
     )
-    assert calls == [("agent", "生成一个可复用 agent"), ("autopilot", "帮我做一个项目")]
+    assert calls[-1] == ("autopilot", "帮我做一个项目")
+    assert calls == [("agent", "生成一个可复用的研究报告 agent"), ("autopilot", "帮我做一个项目")]

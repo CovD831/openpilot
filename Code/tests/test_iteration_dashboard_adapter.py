@@ -162,6 +162,48 @@ def test_iteration_stage_started_events_show_running_agent() -> None:
     }
 
 
+def test_running_tool_becomes_current_task_id() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    adapter.ensure_dashboard_iteration(1)
+    adapter.set_dashboard_tool_status(
+        parent_task_id=adapter.dashboard_stage_id("execution"),
+        tool_id="iteration_1_code_generator",
+        tool_name="code_generator",
+        status="running",
+    )
+
+    assert autopilot.enhanced_ui.task_graph_state["current_task_id"] == "iteration_1_code_generator"
+
+    adapter.set_dashboard_tool_status(
+        parent_task_id=adapter.dashboard_stage_id("execution"),
+        tool_id="iteration_1_code_generator",
+        tool_name="code_generator",
+        status="completed",
+    )
+
+    assert autopilot.enhanced_ui.task_graph_state["current_task_id"] == "iteration_1_execution"
+
+
+def test_modification_evaluation_started_marks_evaluator_running() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    adapter.ensure_dashboard_iteration(1)
+    adapter.handle_iteration_progress("iteration_started", {"iteration": 1, "actions": ["Update app.py"]})
+    adapter.handle_iteration_progress("modification_evaluation_started", {"iteration": 1})
+
+    children = autopilot.enhanced_ui.task_graph_state["tasks"][0]["children"]
+    by_description = {child["description"]: child for child in children}
+
+    assert by_description["Task Executor"]["status"] == "completed"
+    assert by_description["Modification Evaluator"]["status"] == "running"
+    assert autopilot.enhanced_ui.task_graph_state["current_task_id"] == "iteration_1_evaluation"
+    assert autopilot.enhanced_ui.current_states[-1]["title"] == "Modification Evaluator"
+    assert autopilot.enhanced_ui.current_states[-1]["status"] == "running"
+
+
 def test_iteration_started_completes_missing_pre_execution_stages() -> None:
     autopilot = FakeAutopilot()
     adapter = IterationDashboardAdapter(autopilot)

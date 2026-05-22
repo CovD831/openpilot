@@ -311,7 +311,6 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
     if tool_name in {
         "llm_summarizer",
         "code_reviewer",
-        "task_classifier",
         "memory_context",
         "autonomy_tool",
     }:

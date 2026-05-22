@@ -23,6 +23,7 @@ class MetadataKind(str, Enum):
     EMBEDDING_ARTIFACT = "embedding_artifact"
     BUG_FIX_ATTEMPT = "bug_fix_attempt"
     BUG_FIX_RESULT = "bug_fix_result"
+    TASK_ROUTE = "task_route"
     TOOL_INPUT = "tool_input"
     TOOL_SELECTION = "tool_selection"
     TOOL_CONTRACT = "tool_contract"

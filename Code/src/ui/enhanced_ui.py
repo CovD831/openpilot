@@ -411,6 +411,7 @@ class EnhancedUI:
             "note": "Note",
             "prompt_context": "Prompt Context",
             "rubric": "Rubric",
+            "summary": "Hidden",
         }
         prefix = prefixes.get(kind)
         return f"{prefix}: {description}" if prefix else description
@@ -445,10 +446,87 @@ class EnhancedUI:
                 )
                 collapsed.pop("children", None)
                 display_tasks.append(collapsed)
+            elif should_keep_expanded and current_task_id and self._task_graph_contains_node(task, current_task_id):
+                display_tasks.append(self._task_graph_prune_to_active_path(task, current_task_id, row_limit))
             else:
                 display_tasks.append(task)
 
         return display_tasks
+
+    def _task_graph_prune_to_active_path(
+        self,
+        node: dict[str, Any],
+        active_node_id: str,
+        row_limit: int,
+    ) -> dict[str, Any]:
+        """Collapse sibling history so the active node remains visible in the live panel."""
+        if self._task_graph_visible_rows([node]) <= row_limit:
+            return node
+        active_path = self._task_graph_active_path(node, active_node_id)
+        if not active_path:
+            return node
+        pruned = self._task_graph_prune_node_for_path(node, active_path[1:])
+        if self._task_graph_visible_rows([pruned]) <= row_limit:
+            return pruned
+        return self._task_graph_prune_node_for_path(node, active_path[1:], sibling_window=0)
+
+    def _task_graph_active_path(self, node: dict[str, Any], active_node_id: str) -> list[str] | None:
+        node_id = node.get("id")
+        if node_id == active_node_id:
+            return [str(node_id)]
+        for child in node.get("children") or []:
+            child_path = self._task_graph_active_path(child, active_node_id)
+            if child_path:
+                return [str(node_id), *child_path]
+        return None
+
+    def _task_graph_prune_node_for_path(
+        self,
+        node: dict[str, Any],
+        remaining_path: list[str],
+        sibling_window: int = 1,
+    ) -> dict[str, Any]:
+        children = node.get("children") or []
+        if not children or not remaining_path:
+            return dict(node)
+
+        active_child_id = remaining_path[0]
+        active_index = next(
+            (index for index, child in enumerate(children) if child.get("id") == active_child_id),
+            None,
+        )
+        if active_index is None:
+            return dict(node)
+
+        kept_children: list[dict[str, Any]] = []
+
+        def append_hidden_summary(hidden: list[dict[str, Any]], position: str) -> None:
+            if not hidden:
+                return
+            hidden_rows = self._task_graph_visible_rows(hidden)
+            kept_children.append(
+                {
+                    "id": f"{node.get('id')}_hidden_{position}_{len(kept_children)}",
+                    "description": f"... {hidden_rows} details hidden",
+                    "status": "completed",
+                    "kind": "summary",
+                }
+            )
+
+        before = children[:active_index]
+        after = children[active_index + 1 :]
+        visible_before = before[-sibling_window:] if sibling_window else []
+        hidden_before = before[: max(0, len(before) - len(visible_before))]
+        visible_after = after[:sibling_window] if sibling_window else []
+        hidden_after = after[len(visible_after) :]
+
+        append_hidden_summary(hidden_before, "before")
+        kept_children.extend(dict(child) for child in visible_before)
+        kept_children.append(self._task_graph_prune_node_for_path(children[active_index], remaining_path[1:], sibling_window=sibling_window))
+        kept_children.extend(dict(child) for child in visible_after)
+        append_hidden_summary(hidden_after, "after")
+
+        return {**node, "children": kept_children}
 
     def _task_graph_active_root_id(self, tasks: list[dict[str, Any]], current_task_id: str | None) -> str | None:
         if current_task_id:

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+from autonomous_iteration.task_models import Task, TaskPriority
 from autonomous_iteration.tool_io import ExecutionToolIO
 from core.tool_contracts import ToolDefinition
 from metadata import CodeArtifactMetadata, ResultStatus, ToolContractMetadata, ToolInputMetadata, ToolResultMetadata
@@ -8,7 +11,13 @@ from tools.tool_selection import ToolSelection
 
 
 class FakeLLM:
-    pass
+    def __init__(self, content: str = "```python\nprint('ok')\n```") -> None:
+        self.content = content
+        self.requests = []
+
+    def complete(self, request):
+        self.requests.append(request)
+        return SimpleNamespace(content=self.content)
 
 
 def test_tool_io_sanitizes_large_payloads_without_private_params() -> None:
@@ -102,3 +111,40 @@ def test_intelligent_autopilot_tool_io_proxy_matches_helper(tmp_path) -> None:
     assert autopilot._map_reason_to_enum("best performance") == "best_performance"
     assert autopilot.memory_context_builder is not None
     assert autopilot.iterative_improvement.memory_context_builder is autopilot.memory_context_builder
+
+
+def test_contextual_code_generator_executor_accepts_tool_input_metadata(tmp_path) -> None:
+    llm = FakeLLM()
+    autopilot = IntelligentAutopilot(llm, log_file=tmp_path / "autopilot.jsonl")
+    executor = autopilot.tool_registry.get_executor("code_generator")
+
+    result = executor(
+        ToolInputMetadata.from_mapping(
+            "code_generator",
+            {"task_description": "write hello world", "language": "python"},
+        )
+    )
+
+    assert isinstance(result, ToolResultMetadata)
+    assert isinstance(result.result, CodeArtifactMetadata)
+    assert "print('ok')" in result.result.code
+    assert llm.requests
+
+
+def test_fast_tool_code_generator_uses_metadata_without_mapping_error(tmp_path) -> None:
+    autopilot = IntelligentAutopilot(FakeLLM(), log_file=tmp_path / "autopilot.jsonl")
+    task = Task(id="task", description="Generate hello world", priority=TaskPriority.HIGH)
+
+    result = autopilot._execute_fast_tool(
+        task=task,
+        step_id="test_code_generator",
+        tool_name="code_generator",
+        input_metadata=ToolInputMetadata.from_mapping(
+            "code_generator",
+            {"task_description": "write hello world", "language": "python"},
+        ),
+    )
+
+    assert result.success is True
+    assert isinstance(result.output, CodeArtifactMetadata)
+    assert "print('ok')" in result.output.code

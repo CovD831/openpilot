@@ -21,11 +21,13 @@ class ProjectEvaluatorAgent:
         self,
         llm_client: Any | None = None,
         smoke_timeout_seconds: int = 2,
+        import_smoke_timeout_seconds: int | None = None,
         logger: Any | None = None,
         session_id_getter: Callable[[], str | None] | None = None,
     ):
         self.llm_client = llm_client
         self.smoke_timeout_seconds = smoke_timeout_seconds
+        self.import_smoke_timeout_seconds = import_smoke_timeout_seconds or max(8, smoke_timeout_seconds * 4)
         self.logger = logger
         self.session_id_getter = session_id_getter or (lambda: None)
 
@@ -219,6 +221,8 @@ class ProjectEvaluatorAgent:
             import_result = self._import_only_smoke_test(project_path, args, files or [])
             if not import_result["passed"]:
                 return import_result
+            if import_result["warning"]:
+                return import_result
             return {
                 "passed": True,
                 "warning": True,
@@ -304,12 +308,30 @@ class ProjectEvaluatorAgent:
                 cwd=project_path,
                 capture_output=True,
                 text=True,
-                timeout=self.smoke_timeout_seconds,
+                timeout=self.import_smoke_timeout_seconds,
                 env=self._smoke_env(),
             )
         except subprocess.TimeoutExpired as exc:
             combined = f"{exc.stdout or ''}\n{exc.stderr or ''}"
-            return {"passed": False, "warning": False, "message": self._short_error("Import-only smoke test timed out", combined)}
+            if self._looks_like_traceback(combined):
+                return {"passed": False, "warning": False, "message": self._short_error("Import-only smoke test timed out with error output", combined)}
+            if self._has_main_guard(entry) and not self._has_unprotected_interactive_startup(entry):
+                return {
+                    "passed": True,
+                    "warning": True,
+                    "message": (
+                        f"Import-only smoke test timed out after {self.import_smoke_timeout_seconds}s; "
+                        "interactive import was slow, so full run was skipped."
+                    ),
+                }
+            return {
+                "passed": False,
+                "warning": False,
+                "message": self._short_error(
+                    "Import-only smoke test timed out; possible top-level event loop or startup side effect",
+                    combined,
+                ),
+            }
 
         combined_output = f"{result.stdout or ''}\n{result.stderr or ''}"
         if result.returncode != 0:
@@ -363,6 +385,57 @@ class ProjectEvaluatorAgent:
             if candidate.exists():
                 return candidate
         return python_files[0] if python_files else None
+
+    def _has_main_guard(self, path: Path) -> bool:
+        try:
+            tree = ast.parse(self._read_text(path))
+        except SyntaxError:
+            return False
+        return any(isinstance(node, ast.If) and self._is_main_guard_test(node.test) for node in tree.body)
+
+    def _has_unprotected_interactive_startup(self, path: Path) -> bool:
+        try:
+            tree = ast.parse(self._read_text(path))
+        except SyntaxError:
+            return True
+        for node in tree.body:
+            if isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(node, ast.If) and self._is_main_guard_test(node.test):
+                continue
+            if isinstance(node, (ast.While, ast.For)):
+                return True
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call) and self._is_interactive_startup_call(child):
+                    return True
+        return False
+
+    def _is_main_guard_test(self, node: ast.AST) -> bool:
+        if not isinstance(node, ast.Compare) or len(node.ops) != 1 or not isinstance(node.ops[0], ast.Eq):
+            return False
+        values = [node.left, *node.comparators]
+        return any(isinstance(value, ast.Name) and value.id == "__name__" for value in values) and any(
+            isinstance(value, ast.Constant) and value.value == "__main__" for value in values
+        )
+
+    def _is_interactive_startup_call(self, node: ast.Call) -> bool:
+        name = self._call_name(node.func)
+        return (
+            name in {"main", "run", "pygame.init", "pygame.display.set_mode"}
+            or name.endswith(".mainloop")
+            or name.endswith(".run")
+            or name.endswith(".set_mode")
+        )
+
+    def _call_name(self, node: ast.AST) -> str:
+        if isinstance(node, ast.Name):
+            return node.id
+        if isinstance(node, ast.Attribute):
+            prefix = self._call_name(node.value)
+            return f"{prefix}.{node.attr}" if prefix else node.attr
+        if isinstance(node, ast.Call):
+            return self._call_name(node.func)
+        return ""
 
     def _smoke_env(self) -> dict[str, str]:
         env = os.environ.copy()

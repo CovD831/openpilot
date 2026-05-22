@@ -232,10 +232,13 @@ class IntelligentAutopilot:
         """Register tool wrappers that can reuse this autopilot's runtime context."""
         from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
 
-        def execute_code_generator(params: dict[str, Any]) -> dict[str, Any]:
-            return code_generator_executor(
-                ToolInputMetadata.from_mapping("code_generator", {**params, "_llm_client": self.llm_client})
-            )
+        def execute_code_generator(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+            if not isinstance(input_metadata, ToolInputMetadata):
+                raise TypeError("contextual code_generator requires ToolInputMetadata")
+            runtime_handles = dict(input_metadata.runtime_handles)
+            runtime_handles["_llm_client"] = self.llm_client
+            contextual_metadata = input_metadata.model_copy(update={"runtime_handles": runtime_handles})
+            return code_generator_executor(contextual_metadata)
 
         self.tool_registry.register(
             CODE_GENERATOR_DEFINITION,

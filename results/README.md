@@ -2,31 +2,43 @@
 
 ## Overview
 
-贪吃蛇游戏，使用Python编写，支持交互模式和自动演示模式。
+帮我在'/Users/yanning/Projects/openpilot/results'中做一个贪吃蛇
+
+Recent Improvements:
+- Rewrite main.py to use pygame exclusively, implementing the complete snake game with game-over screen, score display, and restart/quit functionality. Remove all tkinter imports and logic.
+- Implement high score persistence and display in main.py: add functions to load/save high score from/to a file (highscore.txt) in the project directory, load high score on game start, update and save when current score exceeds high score, and display both current and high score on the game over screen.
+- Modify main.py to increase game speed (FPS) by 1 every 5 points scored, and reset speed to base (10 FPS) when the game restarts.
 
 ## Requirements
 
-- Python Version: 3.x
+- Virtual Environment: .venv
+- Python Executable: /Users/yanning/Projects/openpilot/results/.venv/bin/python
+- Python Version: 3.11.15
+- Dependencies: pygame
 
 ## Setup
 
-No extra setup is required for the detected project files.
+```bash
+python -m venv .venv
+```
+
+```bash
+.venv/bin/pip install pygame
+```
+
+```bash
+.venv/bin/python --version
+```
 
 ## Run
 
 ```bash
-python snake.py
-```
-
-## Test
-
-```bash
-python snake.py --demo
+.venv/bin/python main.py
 ```
 
 ## Files
 
-- `snake.py`
+- `main.py`
 
 ## Troubleshooting
 

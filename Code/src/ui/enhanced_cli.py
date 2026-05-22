@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 from rich.console import Console
 
@@ -13,6 +13,9 @@ from core.instrumented_llm import InstrumentedLLMClient
 from core.openpilot_log import OpenPilotLogger
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker
+
+if TYPE_CHECKING:
+    from metadata import TaskRouteMetadata
 
 
 DEFAULT_IMPROVEMENT_ITERATIONS = 2
@@ -140,7 +143,7 @@ def _run_once_mode(
         _show_task_route(ui, classification)
 
         active_llm_client = llm_client or LLMClient(settings)
-        if classification.get("route") == "agent_generator":
+        if classification.route == "agent_generator":
             return 0 if _execute_agent_generator(goal, ui, active_llm_client, logger) else 2
 
         # Create autopilot with enhanced UI support
@@ -298,25 +301,25 @@ def _execute_goal_interactive(
     """Execute a goal in interactive mode."""
     classification = _classify_task_route(goal)
     _show_task_route(ui, classification)
-    if classification.get("route") == "agent_generator":
+    if classification.route == "agent_generator":
         return _execute_agent_generator(goal, ui, llm_client, logger)
     return _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options)
 
 
-def _classify_task_route(task: str) -> dict:
+def _classify_task_route(task: str) -> "TaskRouteMetadata":
     """Classify a user task before selecting the execution path."""
-    from metadata import ToolInputMetadata, tool_result_payload
+    from metadata import TaskRouteMetadata, ToolInputMetadata
     from tools.task_classifier import task_classifier_executor
 
-    return tool_result_payload(task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": task})))
+    result = task_classifier_executor(ToolInputMetadata.from_mapping("task_classifier", {"task": task}))
+    if not isinstance(result.result, TaskRouteMetadata):
+        raise TypeError(f"task_classifier returned {type(result.result).__name__}, expected TaskRouteMetadata")
+    return result.result
 
 
-def _show_task_route(ui: EnhancedUI, classification: dict) -> None:
+def _show_task_route(ui: EnhancedUI, classification: "TaskRouteMetadata") -> None:
     """Show the selected route without interrupting execution."""
-    route = classification.get("route", "autonomous_iteration")
-    confidence = float(classification.get("confidence") or 0)
-    reason = classification.get("reason", "")
-    ui.console.print(f"[dim]Task route: {route} ({confidence:.2f}) - {reason}[/dim]")
+    ui.console.print(f"[dim]Task route: {classification.route} ({classification.confidence:.2f}) - {classification.reason}[/dim]")
 
 
 def _show_help(ui: EnhancedUI):

@@ -365,6 +365,7 @@ class AutonomousIterationAgent:
                 )
                 break
 
+            self._notify(on_progress, "modification_evaluation_started", {"iteration": attempts_used, "result": iteration_result})
             current = self.evaluator.evaluate_project(
                 goal=goal,
                 project_path=project_path,
@@ -923,6 +924,8 @@ class AutonomousIterationAgent:
             or "Iteration failed before completing the required improvement."
         )
         failed_tool = iteration_result.failed_tool
+        if not failed_tool and stage == "Modification Evaluator":
+            failed_tool = "project_evaluator"
         if not failed_tool and "timeout" in reason.lower():
             failed_tool = "code_generator"
         iteration_result.failure_stage = iteration_result.failure_stage or stage
