@@ -23,6 +23,10 @@ class ProjectStateMetadata(MetadataBase):
     validation_context: dict[str, JsonValue] = Field(default_factory=dict)
     memory_context: dict[str, JsonValue] = Field(default_factory=dict)
     state_summary: str = ""
+    diagnostic_evidence: dict[str, JsonValue] = Field(default_factory=dict)
+    runtime_evidence: list[str] = Field(default_factory=list)
+    test_evidence: list[str] = Field(default_factory=list)
+    module_summaries: list[str] = Field(default_factory=list)
 
 
 class ProductIntentMetadata(MetadataBase):
@@ -35,6 +39,91 @@ class ProductIntentMetadata(MetadataBase):
     non_regression_constraints: list[str] = Field(default_factory=list)
     disallowed_substitutions: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+
+
+class ProjectObjectiveMetadata(MetadataBase):
+    kind: Literal[MetadataKind.PROJECT_OBJECTIVE] = MetadataKind.PROJECT_OBJECTIVE
+    goal: str = ""
+    project_type: str = "software_project"
+    target_users: list[str] = Field(default_factory=list)
+    delivery_surface: str = "project_native"
+    core_value: list[str] = Field(default_factory=list)
+    success_definition: list[str] = Field(default_factory=list)
+    constraints: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+
+
+class SuccessMetricMetadata(MetadataBase):
+    kind: Literal[MetadataKind.SUCCESS_METRIC] = MetadataKind.SUCCESS_METRIC
+    metric_id: str
+    name: str
+    dimension: str
+    metric_type: str = "qualitative"
+    target: str = ""
+    current_assessment: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+    required: bool = False
+    satisfied: bool | None = None
+
+
+class ProjectDimensionAssessmentMetadata(MetadataBase):
+    kind: Literal[MetadataKind.PROJECT_DIMENSION_ASSESSMENT] = MetadataKind.PROJECT_DIMENSION_ASSESSMENT
+    dimension: str
+    score: float = 0.5
+    summary: str = ""
+    gaps: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+
+
+class ReferenceInsightMetadata(MetadataBase):
+    kind: Literal[MetadataKind.REFERENCE_INSIGHT] = MetadataKind.REFERENCE_INSIGHT
+    query: str = ""
+    summary: str = ""
+    best_practices: list[str] = Field(default_factory=list)
+    gap_evidence: list[str] = Field(default_factory=list)
+    applicability: str = "unknown"
+    source_notes: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+
+
+class ImprovementCandidateMetadata(MetadataBase):
+    kind: Literal[MetadataKind.IMPROVEMENT_CANDIDATE] = MetadataKind.IMPROVEMENT_CANDIDATE
+    candidate_id: str
+    title: str
+    dimension: str
+    rationale: str = ""
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    target_metrics: list[str] = Field(default_factory=list)
+    dependencies: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    value_score: float = 0.5
+    impact_score: float = 0.5
+    difficulty_score: float = 0.5
+    risk_score: float = 0.5
+    evidence_score: float = 0.5
+    priority_score: float = 0.5
+    candidate_type: str = "enhancement"
+    selected: bool = False
+
+
+class ProjectDiagnosisMetadata(MetadataBase):
+    kind: Literal[MetadataKind.PROJECT_DIAGNOSIS] = MetadataKind.PROJECT_DIAGNOSIS
+    project_path: str = ""
+    iteration: int = 0
+    objective: ProjectObjectiveMetadata
+    success_metrics: list[SuccessMetricMetadata] = Field(default_factory=list)
+    dimension_assessments: list[ProjectDimensionAssessmentMetadata] = Field(default_factory=list)
+    improvement_candidates: list[ImprovementCandidateMetadata] = Field(default_factory=list)
+    ranked_candidate_ids: list[str] = Field(default_factory=list)
+    selected_candidate: ImprovementCandidateMetadata | None = None
+    reference_insights: list[ReferenceInsightMetadata] = Field(default_factory=list)
+    summary: str = ""
+    candidate_shortage_reason: str = ""
     confidence: float = 0.5
 
 
@@ -62,6 +151,9 @@ class ImprovementAnalysisMetadata(MetadataBase):
     blocking_risks: list[str] = Field(default_factory=list)
     designed_tasks: list[dict[str, JsonValue]] = Field(default_factory=list)
     product_judgment: dict[str, JsonValue] = Field(default_factory=dict)
+    diagnosis: ProjectDiagnosisMetadata | None = None
+    improvement_candidates: list[ImprovementCandidateMetadata] = Field(default_factory=list)
+    selected_candidate: ImprovementCandidateMetadata | None = None
 
 
 class EnvironmentSyncMetadata(MetadataBase):

@@ -1036,7 +1036,7 @@ def test_multi_file_reader_scans_directory_with_glob(tmp_path) -> None:
     assert "ignored" not in result.output_metadata.result["content"]
 
 
-def test_code_reviewer_rejects_non_pygame_when_pygame_is_product_fit() -> None:
+def test_code_reviewer_does_not_reject_specific_stack_judgment_without_product_intent() -> None:
     result = code_reviewer_executor(
         {
             "code": "print('hi')\n",
@@ -1049,27 +1049,27 @@ def test_code_reviewer_rejects_non_pygame_when_pygame_is_product_fit() -> None:
         }
     )
 
-    assert result["approved"] is False
-    assert any("standalone pygame GUI" in item for item in result["warnings"])
-    assert any("standalone pygame GUI" in item for item in result["suggestions"])
+    assert result["approved"] is True
+    assert not any("Product-fit rubric not satisfied" in item for item in result["warnings"])
 
 
-def test_code_reviewer_rejects_curses_when_pygame_is_product_fit() -> None:
+def test_code_reviewer_uses_diagnosis_alignment_context_generically() -> None:
     result = code_reviewer_executor(
         {
-            "code": "import curses\n\ndef main(stdscr):\n    pass\n",
+            "code": "print('ok')\n",
             "language": "python",
             "prompt_context": {
-                "product_judgment": {
-                    "preferred_stack": "pygame",
+                "selected_candidate": {
+                    "candidate_id": "gap_ux",
+                    "title": "Improve primary workflow feedback",
                 }
             },
         }
     )
 
-    assert result["approved"] is False
-    assert any("terminal/curses to pygame" in item for item in result["warnings"])
-    assert any("terminal/curses to pygame" in item for item in result["suggestions"])
+    assert result["approved"] is True
+    assert "diagnosis_alignment" in result["rejection_categories"]
+    assert any("Diagnosis alignment" in item for item in result["warnings"])
 
 
 def test_code_reviewer_allows_pygame_code_without_product_fit_warning() -> None:

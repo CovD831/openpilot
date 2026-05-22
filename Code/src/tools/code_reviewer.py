@@ -104,12 +104,14 @@ def code_reviewer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetad
         # Review code
         result = reviewer.review_code(generated_code)
 
-        product_warnings = _product_fit_warnings(code, prompt_context)
         product_intent_warnings = _product_intent_warnings(code, prompt_context)
+        diagnosis_warnings = _diagnosis_warnings(prompt_context)
         rejection_categories = []
-        if product_warnings or product_intent_warnings:
+        if product_intent_warnings:
             rejection_categories.append("product_intent_drift")
-        approved = bool(result.approved and not product_warnings)
+        if diagnosis_warnings:
+            rejection_categories.append("diagnosis_alignment")
+        approved = bool(result.approved)
         approved = bool(approved and not product_intent_warnings)
         return {
             "review": (
@@ -118,35 +120,16 @@ def code_reviewer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetad
                 else "Review found issues"
             ),
             "issues": [issue.dict() if hasattr(issue, 'dict') else str(issue) for issue in result.dangerous_operations],
-            "suggestions": result.recommendations + product_warnings + product_intent_warnings,
+            "suggestions": result.recommendations + product_intent_warnings + diagnosis_warnings,
             "approved": approved,
             "syntax_errors": result.syntax_errors,
-            "warnings": result.warnings + product_warnings + product_intent_warnings,
+            "warnings": result.warnings + product_intent_warnings + diagnosis_warnings,
             "rejection_categories": rejection_categories,
             "quality_score": result.quality_score,
             "complexity_score": result.complexity_score,
         }
     except Exception as e:
         raise Exception(f"Code review failed: {e}") from e
-
-
-def _product_fit_warnings(code: str, prompt_context: dict[str, Any]) -> list[str]:
-    product_judgment = prompt_context.get("product_judgment") or {}
-    if product_judgment.get("preferred_stack") != "pygame":
-        return []
-
-    lowered = code.lower()
-    if "pygame" in lowered:
-        return []
-
-    if "import curses" in lowered or "curses." in lowered or "stdscr" in lowered:
-        return [
-            "Product-fit rubric not satisfied: default Python snake game should migrate from terminal/curses to pygame unless terminal was requested."
-        ]
-
-    return [
-        "Product-fit rubric not satisfied: default Python snake game should use a standalone pygame GUI unless terminal was requested."
-    ]
 
 
 def _product_intent_warnings(code: str, prompt_context: dict[str, Any]) -> list[str]:
@@ -170,10 +153,6 @@ def _product_intent_warnings(code: str, prompt_context: dict[str, Any]) -> list[
     if runtime_mode == "terminal" and _looks_gui_only(lowered):
         warnings.append("Product intent drift: terminal intent was replaced by GUI-only interaction.")
 
-    if delivery_surface and delivery_surface not in {"project_native", "best_fit_for_goal"}:
-        if delivery_surface == "pygame" and "pygame" not in lowered:
-            warnings.append("Product intent drift: expected delivery surface 'pygame' is absent from the implementation.")
-
     return _dedupe(warnings)
 
 
@@ -182,9 +161,20 @@ def _code_matches_disallowed_substitution(lowered_code: str, disallowed: list[st
         return True
     if "gui_only_substitute" in disallowed and _looks_gui_only(lowered_code):
         return True
-    if any(item.startswith("substitute_away_from_pygame") for item in disallowed) and "pygame" not in lowered_code:
-        return True
     return False
+
+
+def _diagnosis_warnings(prompt_context: dict[str, Any]) -> list[str]:
+    selected = prompt_context.get("selected_candidate")
+    if not isinstance(selected, dict):
+        diagnosis = prompt_context.get("diagnosis")
+        if isinstance(diagnosis, dict):
+            selected = diagnosis.get("selected_candidate")
+    if not isinstance(selected, dict) or not selected:
+        return []
+    if selected.get("acceptance_criteria"):
+        return []
+    return ["Diagnosis alignment: selected improvement candidate lacks observable acceptance criteria."]
 
 
 def _looks_terminal_only(lowered_code: str) -> bool:

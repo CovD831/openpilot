@@ -698,6 +698,10 @@ class AutonomousTaskExecutor:
             "recommended_actions": (improvement_report.get("recommended_actions") or [])[:4],
             "blocking_risks": (improvement_report.get("blocking_risks") or [])[:3],
         }
+        if isinstance(improvement_report.get("diagnosis"), dict):
+            prompt_context["diagnosis"] = improvement_report["diagnosis"]
+        if isinstance(improvement_report.get("selected_candidate"), dict):
+            prompt_context["selected_candidate"] = improvement_report["selected_candidate"]
         return prompt_context
 
     def build_surgical_project_improvement_prompt(

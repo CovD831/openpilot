@@ -127,6 +127,7 @@ def test_autonomous_iteration_pipeline_stage_order_and_decomposition() -> None:
 
     events.append("Context Loader")
     context = pipeline.load_context("goal", ".", 0)
+    events.append("Project Diagnosis")
     events.append("Goal Maker")
     goals = pipeline.make_goals({}, {}, {}, 0)
     events.append("Task Designer")
@@ -134,7 +135,7 @@ def test_autonomous_iteration_pipeline_stage_order_and_decomposition() -> None:
     events.append("Task Decomposer")
     decomposition = pipeline.decompose_tasks([task], context)
 
-    assert events == pipeline.stage_names[:4]
+    assert events == pipeline.stage_names[:5]
     assert context["system_prompt"] == DEFAULT_AUTONOMOUS_ITERATION_SYSTEM_PROMPT
     assert captured_kwargs["system_prompt"] == DEFAULT_AUTONOMOUS_ITERATION_SYSTEM_PROMPT
     assert tasks == ["task"]

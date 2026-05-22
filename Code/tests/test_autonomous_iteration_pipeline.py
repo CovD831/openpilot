@@ -88,6 +88,9 @@ def test_autonomous_iteration_events_and_memory_context(tmp_path) -> None:
 
     def apply_improvement(iteration, evaluation, actions, improvement_report, is_repair):
         assert improvement_report["task_difficulty"]["level"] in {"low", "medium", "high"}
+        assert improvement_report["diagnosis"]["kind"] == "project_diagnosis"
+        assert improvement_report["selected_candidate"]["candidate_id"]
+        assert improvement_report["selected_goal"]["title"] == improvement_report["selected_candidate"]["title"]
         return IterationResult(
             iteration=iteration,
             validation_passed=False,
@@ -116,6 +119,7 @@ def test_autonomous_iteration_events_and_memory_context(tmp_path) -> None:
     assert result["project_state"].memory_context["prompt_text"].startswith("## System Prompt")
     assert result["project_state"].memory_context["related_memories"][0]["id"] == "memory-1"
     assert "context_loader" in events
+    assert events.index("project_diagnosis") < events.index("goal_maker")
     assert events.index("project_state") < events.index("context_loader")
     assert events.index("goal_maker_started") < events.index("goal_maker")
     assert events.index("context_loader") < events.index("goal_maker")

@@ -20,6 +20,9 @@ from rich.box import ROUNDED, HEAVY, DOUBLE
 from rich.style import Style
 
 
+_UNSET = object()
+
+
 class EnhancedUI:
     """Enhanced UI with Claude Code-style interface and real-time updates."""
 
@@ -35,6 +38,9 @@ class EnhancedUI:
         self.spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self._task_graph_spinner_index = 0
         self._task_graph_spinner_frame = self.spinner_frames[0]
+        self._append_task_graph_enabled = False
+        self._append_task_graph_seen: dict[str, tuple[str, str, str]] = {}
+        self._append_task_graph_goal: str | None = None
         self.task_graph_state: dict[str, Any] = {
             "goal": "",
             "stages": [],
@@ -244,11 +250,14 @@ class EnhancedUI:
         stage_statuses: dict[str, str] | None = None,
         current_stage: str | None = None,
         tasks: list[dict[str, Any]] | None = None,
-        current_task_id: str | None = None,
+        current_task_id: str | None | object = _UNSET,
     ) -> None:
         """Update the persistent task graph area."""
+        previous_goal = self.task_graph_state.get("goal") or ""
+        reset_append_graph = False
         if goal is not None:
             self.task_graph_state["goal"] = goal
+            reset_append_graph = goal != previous_goal
         if stages is not None:
             self.task_graph_state["stages"] = stages
         if stage_statuses is not None:
@@ -257,8 +266,13 @@ class EnhancedUI:
             self.task_graph_state["current_stage"] = current_stage
         if tasks is not None:
             self.task_graph_state["tasks"] = tasks
-        if current_task_id is not None:
+            reset_append_graph = reset_append_graph or not tasks
+        if current_task_id is not _UNSET:
             self.task_graph_state["current_task_id"] = current_task_id
+        if self._append_task_graph_enabled:
+            if reset_append_graph:
+                self._reset_append_task_graph()
+            self._emit_task_graph_updates()
         self._refresh_main_content()
 
     def set_current_task_state(
@@ -275,7 +289,8 @@ class EnhancedUI:
             self.current_task_state["details"] = details
         if status is not None:
             self.current_task_state["status"] = status
-        self._refresh_main_content()
+        if not self._append_task_graph_enabled:
+            self._refresh_main_content()
 
     def create_task_graph_state_panel(self) -> Panel:
         """Render the persistent task graph or phase graph."""
@@ -324,7 +339,7 @@ class EnhancedUI:
         )
 
     def create_progress_dashboard(self, extra_content: Any | None = None) -> Layout:
-        """Create the fixed two-region autopilot dashboard."""
+        """Create the task graph dashboard without a current-task region."""
         layout = Layout()
         tasks = self.task_graph_state.get("tasks") or []
         stages = self.task_graph_state.get("stages") or []
@@ -337,15 +352,11 @@ class EnhancedUI:
                 name="task_graph",
                 size=self._task_graph_panel_height(graph_rows),
             ),
-            Layout(
-                self.create_current_task_panel(extra_content=extra_content),
-                name="current_task",
-            ),
         )
         return layout
 
-    def create_full_task_graph_timeline_panel(self) -> Panel | None:
-        """Render the full task graph timeline without live-dashboard height limits."""
+    def create_full_task_graph_timeline_panel(self) -> Tree | None:
+        """Render the full task graph timeline without a surrounding panel."""
         tasks = self.task_graph_state.get("tasks") or []
         if not tasks:
             return None
@@ -360,12 +371,7 @@ class EnhancedUI:
                 index=index,
                 depth=0,
             )
-        return Panel(
-            tree,
-            title="[bold]Full Task Graph Timeline[/bold]",
-            border_style="cyan",
-            box=ROUNDED,
-        )
+        return tree
 
     def show_full_task_graph_timeline(self) -> None:
         """Print the full task graph timeline into terminal scrollback."""
@@ -445,6 +451,108 @@ class EnhancedUI:
             total += self._task_graph_visible_rows(node.get("children") or [])
         return total
 
+    def _reset_append_task_graph(self) -> None:
+        self._append_task_graph_seen = {}
+        self._append_task_graph_goal = None
+
+    def _emit_task_graph_updates(self) -> None:
+        tasks = self.task_graph_state.get("tasks") or []
+        if not tasks:
+            return
+
+        goal = self.task_graph_state.get("goal") or "OpenPilot task"
+        if self._append_task_graph_goal != goal:
+            self.console.print(Text(goal, style="bold"))
+            self._append_task_graph_goal = goal
+
+        current_task_id = self.task_graph_state.get("current_task_id")
+        for index, task in enumerate(tasks, 1):
+            self._emit_task_graph_node_update(task, current_task_id=current_task_id, index=index, depth=0)
+
+    def _emit_task_graph_node_update(
+        self,
+        node: dict[str, Any],
+        *,
+        current_task_id: str | None,
+        index: int,
+        depth: int,
+    ) -> None:
+        node_id = str(node.get("id") or f"{depth}:{index}:{node.get('description', '')}")
+        status = str(node.get("status") or "pending")
+        description = str(node.get("description") or "Untitled task")
+        label = self._task_graph_node_label(node, description, index=index, depth=depth)
+        signature = (status, label, str(node.get("effort") or ""))
+        previous = self._append_task_graph_seen.get(node_id)
+        children = node.get("children") or []
+        emit_node = self._should_emit_append_task_graph_node(node, previous)
+        if not emit_node and self._is_pending_append_context_node(node, previous):
+            emit_node = any(self._append_child_has_progress(child) for child in children)
+        if emit_node and previous != signature:
+            style, icon = self._status_style_icon(status, active=node.get("id") == current_task_id)
+            indent = "  " * depth
+            effort = node.get("effort")
+            suffix = f" ({effort})" if effort else ""
+            line = Text()
+            line.append(indent, style="dim")
+            line.append(f"{icon} ", style=style)
+            line.append(label, style=style)
+            if suffix:
+                line.append(suffix, style="dim")
+            self.console.print(line)
+            self._append_task_graph_seen[node_id] = signature
+        elif previous is not None and previous != signature:
+            self._append_task_graph_seen[node_id] = signature
+        for child_index, child in enumerate(children, 1):
+            self._emit_task_graph_node_update(
+                child,
+                current_task_id=current_task_id,
+                index=child_index,
+                depth=depth + 1,
+            )
+
+    def _should_emit_append_task_graph_node(
+        self,
+        node: dict[str, Any],
+        previous: tuple[str, str, str] | None,
+    ) -> bool:
+        status = str(node.get("status") or "pending").lower()
+        kind = str(node.get("kind") or "").lower()
+        failed = status in {"failed", "error"}
+        if failed:
+            return previous is None or previous[0].lower() not in {"failed", "error"}
+        if kind == "tool":
+            return status in {"completed", "success"} and previous is None
+        if kind in {"iteration", "agent", "stage"}:
+            if previous is None:
+                return status in {"running", "in_progress", "completed", "success"}
+            return (
+                status in {"completed", "success"}
+                and previous[0].lower() not in {"completed", "success"}
+            )
+        if kind in {"result", "note", "goal", "task", "context", "prompt_context", "rubric"}:
+            return previous is None and status != "pending"
+        return previous is None and status in {"running", "in_progress", "completed", "success"}
+
+    def _is_pending_append_context_node(
+        self,
+        node: dict[str, Any],
+        previous: tuple[str, str, str] | None,
+    ) -> bool:
+        if previous is not None:
+            return False
+        kind = str(node.get("kind") or "").lower()
+        status = str(node.get("status") or "pending").lower()
+        return kind in {"iteration", "agent", "stage"} and status == "pending"
+
+    def _append_child_has_progress(self, node: dict[str, Any]) -> bool:
+        status = str(node.get("status") or "pending").lower()
+        kind = str(node.get("kind") or "").lower()
+        if status in {"failed", "error", "completed", "success"}:
+            return True
+        if kind in {"result", "note", "goal", "task", "context", "prompt_context", "rubric"} and status != "pending":
+            return True
+        return any(self._append_child_has_progress(child) for child in node.get("children") or [])
+
     def _task_graph_live_row_limit(self) -> int:
         return max(8, self._task_graph_panel_height(999) - 4)
 
@@ -467,13 +575,15 @@ class EnhancedUI:
         # Keep only recent entries
         if len(self.activity_log) > 100:
             self.activity_log = self.activity_log[-100:]
-        self._refresh_main_content()
+        if not self._append_task_graph_enabled:
+            self._refresh_main_content()
 
     def set_active_operations(self, operations: list[Any]) -> None:
         """Update active operations displayed in the activity panel."""
         self.active_operations = operations
         self._advance_task_graph_spinner()
-        self._refresh_main_content()
+        if not self._append_task_graph_enabled:
+            self._refresh_main_content()
 
     def _advance_task_graph_spinner(self) -> None:
         """Keep Task Graph running markers animated even though they are not operations."""
@@ -487,40 +597,20 @@ class EnhancedUI:
 
     @contextmanager
     def live_session(self, title: str = "OpenPilot Session"):
-        """Context manager for live updating display."""
-        layout = Layout()
-        layout.split_column(
-            Layout(name="header", size=3),
-            Layout(name="main"),
-            Layout(name="footer", size=3),
-        )
-
-        # Header
-        header = Panel(
-            Align.center(Text(title, style="bold white")),
-            style="bold cyan",
-            box=HEAVY,
-        )
-        layout["header"].update(header)
-
-        # Footer
-        footer = Panel(
-            Align.center(Text("Press Ctrl+C to interrupt", style="dim")),
-            style="dim",
-            box=ROUNDED,
-        )
-        layout["footer"].update(footer)
-
-        self.current_layout = layout
-
-        with Live(layout, console=self.console, refresh_per_second=4, screen=False) as live:
-            self.live = live
-            try:
-                yield self
-            finally:
-                self.live = None
-                self.current_layout = None
-                self._main_content = None
+        """Context manager for append-only task graph progress."""
+        self.console.print(Text(title, style="bold white"))
+        self.console.print(Text("Press Ctrl+C to interrupt", style="dim"))
+        self.console.print()
+        self._append_task_graph_enabled = True
+        self._reset_append_task_graph()
+        try:
+            yield self
+        finally:
+            self._append_task_graph_enabled = False
+            self.live = None
+            self.current_layout = None
+            self._main_content = None
+            self._reset_append_task_graph()
 
     def update_main_content(self, content):
         """Update the main content area."""

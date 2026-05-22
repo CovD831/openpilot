@@ -189,7 +189,7 @@ class QuestionUI:
         )
         while True:
             raw = self._read_input(
-                f"[bold cyan]Choose[/bold cyan] (1-{len(spec.options)}, default {default_index + 1}): "
+                f"Choose (1-{len(spec.options)}, default {default_index + 1}): "
             )
             if not raw.strip():
                 return QuestionResult(spec.id, spec.options[default_index].value, raw, used_default=True)
@@ -205,7 +205,7 @@ class QuestionUI:
     def _ask_confirm(self, spec: QuestionSpec) -> QuestionResult:
         default_label = "Y/n" if spec.default else "y/N"
         while True:
-            raw = self._read_input(f"[bold cyan]Confirm[/bold cyan] ({default_label}): ")
+            raw = self._read_input(f"Confirm ({default_label}): ")
             normalized = raw.strip().lower()
             if not normalized:
                 return QuestionResult(spec.id, bool(spec.default), raw, used_default=True)
@@ -247,7 +247,7 @@ class QuestionUI:
 
     def _prompt_suffix(self, spec: QuestionSpec) -> str:
         default = f", default {self._format_default(spec.default)}" if spec.default is not None else ""
-        return f"[bold cyan]Answer[/bold cyan] ({spec.kind}{default}): "
+        return f"Answer ({spec.kind}{default}): "
 
     def _read_input(self, prompt: str) -> str:
         if self.input_func is not None:

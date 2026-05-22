@@ -111,6 +111,7 @@ class IterationDashboardAdapter:
             {"id": f"{iteration_id}_environment", "description": "Environment Setup", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_project_state", "description": "Read Project State", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_context_loader", "description": "Context Loader", "status": "pending", "kind": "agent"},
+            {"id": f"{iteration_id}_diagnosis", "description": "Project Diagnosis", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_goal_maker", "description": "Goal Maker", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_task_designer", "description": "Task Designer", "status": "pending", "kind": "agent"},
             {"id": f"{iteration_id}_decomposition", "description": "Task Decomposer", "status": "pending", "kind": "agent"},
@@ -195,6 +196,25 @@ class IterationDashboardAdapter:
             self.enhanced_ui.set_current_task_state(
                 title="Context Loader",
                 details="Loaded dialog, memory, project files, and environment context",
+                status="completed",
+            )
+            return
+
+        if event == "project_diagnosis":
+            self.ensure_dashboard_iteration()
+            self.set_dashboard_task_status(self.dashboard_stage_id("diagnosis"), "completed")
+            diagnosis = payload.get("diagnosis")
+            selected = payload.get("selected_candidate")
+            description = getattr(selected, "title", "") or getattr(diagnosis, "summary", "") or "Diagnosis completed"
+            self.append_dashboard_stage_child(
+                "diagnosis",
+                child_id=f"selected_{payload.get('completed_improvements', 0)}",
+                description=description,
+                kind="result",
+            )
+            self.enhanced_ui.set_current_task_state(
+                title="Project Diagnosis",
+                details=self.short_dashboard_text(description, 500),
                 status="completed",
             )
             return

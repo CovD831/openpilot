@@ -10,7 +10,13 @@ from metadata import (
     FailureMetadata,
     MetadataKind,
     ProductIntentMetadata,
+    ProjectDiagnosisMetadata,
+    ProjectDimensionAssessmentMetadata,
+    ProjectObjectiveMetadata,
+    ImprovementCandidateMetadata,
+    ReferenceInsightMetadata,
     ResultStatus,
+    SuccessMetricMetadata,
     TaskResultMetadata,
     TaskRouteMetadata,
     ToolInputMetadata,
@@ -179,3 +185,51 @@ def test_product_intent_and_validation_issue_metadata_serialize() -> None:
     assert payload["kind"] == MetadataKind.VALIDATION_ISSUE
     assert payload["product_intent"]["kind"] == MetadataKind.PRODUCT_INTENT
     assert payload["product_intent"]["disallowed_substitutions"] == ["terminal_ui"]
+
+
+def test_project_diagnosis_metadata_serializes_ranked_candidates() -> None:
+    objective = ProjectObjectiveMetadata(
+        goal="Build a CLI formatter",
+        project_type="cli_tool",
+        target_users=["terminal users"],
+        core_value=["Format input reliably."],
+    )
+    metric = SuccessMetricMetadata(
+        metric_id="runtime_ready",
+        name="Runnable delivery",
+        dimension="reliability",
+        target="CLI command runs.",
+        required=True,
+        satisfied=True,
+    )
+    assessment = ProjectDimensionAssessmentMetadata(
+        dimension="user_experience",
+        score=0.4,
+        gaps=["Help output is unclear."],
+    )
+    candidate = ImprovementCandidateMetadata(
+        candidate_id="gap_cli_help",
+        title="Clarify CLI usage feedback",
+        dimension="user_experience",
+        acceptance_criteria=["Help output documents required arguments."],
+        priority_score=0.8,
+        selected=True,
+    )
+    diagnosis = ProjectDiagnosisMetadata(
+        project_path="/tmp/tool",
+        objective=objective,
+        success_metrics=[metric],
+        dimension_assessments=[assessment],
+        improvement_candidates=[candidate],
+        ranked_candidate_ids=[candidate.candidate_id],
+        selected_candidate=candidate,
+        reference_insights=[ReferenceInsightMetadata(summary="CLI tools should expose useful help text.", confidence=0.6)],
+    )
+
+    payload = diagnosis.to_json_dict()
+
+    assert payload["kind"] == MetadataKind.PROJECT_DIAGNOSIS
+    assert payload["objective"]["kind"] == MetadataKind.PROJECT_OBJECTIVE
+    assert payload["success_metrics"][0]["kind"] == MetadataKind.SUCCESS_METRIC
+    assert payload["selected_candidate"]["candidate_id"] == "gap_cli_help"
+    assert payload["reference_insights"][0]["kind"] == MetadataKind.REFERENCE_INSIGHT

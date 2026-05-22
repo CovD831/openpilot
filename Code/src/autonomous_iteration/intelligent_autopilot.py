@@ -36,7 +36,10 @@ from core.openpilot_log import OpenPilotLogger
 from core.exceptions import ErrorCategory, classify_error
 from metadata import (
     FailureMetadata,
+    ProjectObjectiveMetadata,
+    ReferenceInsightMetadata,
     ResultStatus,
+    SuccessMetricMetadata,
     TaskResultMetadata,
     TextArtifactMetadata,
     ToolExecutionEnvelopeMetadata,
@@ -75,6 +78,12 @@ class IntelligentAutopilot:
         required_successful_iterations: int | None = None,
         max_iteration_attempts: int = 4,
         prompt_for_project_improvement_iterations: bool = False,
+        project_objective_override: ProjectObjectiveMetadata | None = None,
+        success_metric_overrides: list[SuccessMetricMetadata] | None = None,
+        preferred_improvement_dimensions: list[str] | None = None,
+        disallowed_improvement_directions: list[str] | None = None,
+        allow_reference_search: bool = True,
+        reference_provider: Callable[..., list[Any]] | None = None,
     ):
         """Initialize intelligent autopilot.
 
@@ -102,6 +111,7 @@ class IntelligentAutopilot:
         self.required_successful_improvements = required_successful_improvements
         self.max_iteration_attempts = max_iteration_attempts
         self.prompt_for_project_improvement_iterations = prompt_for_project_improvement_iterations
+        self.allow_reference_search = allow_reference_search
         self._project_improvement_iterations_prompted = False
         self._project_environments: dict[str, dict[str, Any]] = {}
 
@@ -187,6 +197,12 @@ class IntelligentAutopilot:
             memory_store=self.memory_store,
             memory_context_builder=self.memory_context_builder,
             logger=self.logger,
+            project_objective_override=project_objective_override,
+            success_metric_overrides=success_metric_overrides,
+            preferred_improvement_dimensions=preferred_improvement_dimensions,
+            disallowed_improvement_directions=disallowed_improvement_directions,
+            allow_reference_search=allow_reference_search,
+            reference_provider=reference_provider or self._gather_project_reference_insights,
         )
         self.orchestrator = AgentOrchestrator(max_concurrent_tasks=3)
         self.semantic_analyzer = SemanticAnalyzer(self.llm_client)
@@ -245,6 +261,56 @@ class IntelligentAutopilot:
             execute_code_generator,
             allow_override=True,
         )
+
+    def _gather_project_reference_insights(self, query: str, state: Any, objective: Any) -> list[ReferenceInsightMetadata]:
+        """Fetch a compact optional reference insight for a low-evidence diagnosis."""
+        if not self.allow_reference_search:
+            return []
+        try:
+            from tools.web_searcher import web_searcher_executor
+
+            result = web_searcher_executor(
+                ToolInputMetadata.from_mapping(
+                    "web_searcher",
+                    {
+                        "query": query,
+                        "max_results": 3,
+                        "max_pages": 0,
+                        "llm_cleanup": False,
+                        "timeout": 8,
+                    },
+                )
+            )
+        except Exception:
+            return []
+        artifact = result.result if isinstance(result, ToolResultMetadata) else None
+        if artifact is None:
+            return []
+        summary = str(getattr(artifact, "research_summary", "") or "")
+        results = getattr(artifact, "results", []) or []
+        source_notes = []
+        best_practices = []
+        for item in results[:3]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or item.get("name") or "").strip()
+            snippet = str(item.get("snippet") or item.get("summary") or "").strip()
+            if title:
+                source_notes.append(title[:180])
+            if snippet:
+                best_practices.append(snippet[:220])
+        if not summary and not best_practices:
+            return []
+        return [
+            ReferenceInsightMetadata(
+                query=query,
+                summary=summary or f"Reference search returned {len(results)} result(s) for {getattr(objective, 'project_type', 'project')}.",
+                best_practices=best_practices,
+                applicability="external_reference",
+                source_notes=source_notes,
+                confidence=0.45,
+            )
+        ]
 
     def _stop_tracking_if_owned(self) -> None:
         if self.tracker and self._owns_tracker:
@@ -1308,30 +1374,6 @@ class IntelligentAutopilot:
             "source": "fallback",
             "fallback_reason": tool_result.error_message or "project_improvement_tool did not return a usable report.",
         }
-        if not fallback.get("next_iteration_goal") and self._fallback_should_prefer_pygame(prompt_context):
-            fallback.update(
-                {
-                    "summary": (
-                        "Using fallback improvement analysis: default Python snake-game product fit favors "
-                        "a standalone pygame GUI."
-                    ),
-                    "improvement_opportunities": [
-                        "Migrate the playable snake experience to a standalone pygame window.",
-                        *fallback.get("improvement_opportunities", [])[:2],
-                    ],
-                    "recommended_actions": [
-                        "Rebuild main.py as a pygame snake game with visible snake, food, score, collision, game over, restart, and quit controls.",
-                        "Update README dependencies and run command for pygame.",
-                        *fallback.get("recommended_actions", [])[:2],
-                    ],
-                    "next_iteration_goal": "Migrate the snake game to a standalone pygame GUI",
-                    "must_implement_next": [
-                        "The game opens in a pygame window.",
-                        "Snake movement, food, scoring, collision, game-over, restart, and quit controls are playable.",
-                        "README includes pygame setup and run instructions.",
-                    ],
-                }
-            )
         return fallback
 
     def _build_prompt_context(
@@ -1381,9 +1423,6 @@ class IntelligentAutopilot:
             written_files=written_files,
             current_code=current_code,
         )
-
-    def _fallback_should_prefer_pygame(self, prompt_context: dict[str, Any]) -> bool:
-        return self.improvement_context.fallback_should_prefer_pygame(prompt_context)
 
     def _quality_rubric_for_product(self, product_judgment: dict[str, Any]) -> list[str]:
         return self.improvement_context.quality_rubric_for_product(product_judgment)

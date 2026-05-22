@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from metadata import ProductIntentMetadata, ValidationIssueMetadata, WarningCheckResultMetadata
+from metadata import ProductIntentMetadata, ProjectDiagnosisMetadata, ValidationIssueMetadata, WarningCheckResultMetadata
 
 
 class EvaluationResult(BaseModel):
@@ -57,6 +57,10 @@ class ProjectStateSnapshot(BaseModel):
     memory_context: dict = Field(default_factory=dict)
     validation_context: dict = Field(default_factory=dict)
     safe_target_files: list[str] = Field(default_factory=list)
+    diagnostic_evidence: dict = Field(default_factory=dict)
+    runtime_evidence: list[str] = Field(default_factory=list)
+    test_evidence: list[str] = Field(default_factory=list)
+    module_summaries: list[str] = Field(default_factory=list)
 
 
 class ImprovementGoal(BaseModel):
@@ -88,5 +92,6 @@ class AutonomousIterationResult(BaseModel):
     iteration_goals: list[ImprovementGoal] = Field(default_factory=list)
     designed_tasks: list[DesignedImprovementTask] = Field(default_factory=list)
     evaluations: list[EvaluationResult] = Field(default_factory=list)
+    diagnoses: list[ProjectDiagnosisMetadata] = Field(default_factory=list)
     iterations: list[IterationResult] = Field(default_factory=list)
     mind_notes: list[str] = Field(default_factory=list)

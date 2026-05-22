@@ -156,7 +156,8 @@ class ImprovementContextHelper:
     ) -> dict[str, Any]:
         goal_text = original_goal.lower()
         explicit_terminal = any(term in goal_text for term in ("terminal", "curses", "cli", "shell", "命令行", "终端", "控制台"))
-        is_game = any(term in goal_text for term in ("snake", "贪吃蛇", "game", "游戏"))
+        web_surface = any(term in goal_text for term in ("web", "website", "browser", "site", "网页"))
+        interactive = any(term in goal_text for term in ("game", "游戏", "interactive", "交互"))
         code_text = current_code.lower()
         if not code_text and project_path:
             for raw_path in written_files[:3]:
@@ -180,21 +181,22 @@ class ImprovementContextHelper:
 
         if explicit_terminal:
             preferred_runtime = "terminal"
-            preferred_stack = "curses"
-            recommendation = "User explicitly requested a terminal/CLI experience; improve the terminal implementation."
-        elif is_game:
-            preferred_runtime = "standalone_gui"
-            preferred_stack = "pygame"
-            recommendation = (
-                "For a simple Python game, default product fit favors a standalone GUI window. "
-                "Terminal/curses should be a fallback, not the preferred experience."
-            )
+            preferred_stack = "terminal_native"
+            recommendation = "User explicitly requested a terminal/CLI experience; preserve that delivery surface."
+        elif web_surface:
+            preferred_runtime = "browser"
+            preferred_stack = "project_native"
+            recommendation = "Preserve a browser-facing delivery surface while improving diagnosed project gaps."
+        elif interactive:
+            preferred_runtime = "interactive"
+            preferred_stack = "project_native"
+            recommendation = "Preserve the intended interactive experience while using diagnosis evidence to choose improvements."
         else:
             preferred_runtime = "best_fit_for_goal"
             preferred_stack = "project_native"
             recommendation = "Choose the runtime shape that best matches the user's project category."
         result = {
-            "project_type": "interactive_game" if is_game else "general_project",
+            "project_type": "interactive_software" if interactive else ("web_software" if web_surface else "general_project"),
             "explicit_terminal_requested": explicit_terminal,
             "current_runtime": current_runtime,
             "preferred_runtime": preferred_runtime,
@@ -206,8 +208,8 @@ class ImprovementContextHelper:
 
     def _core_capabilities_from_goal(self, goal_text: str) -> list[str]:
         capabilities = []
-        if any(term in goal_text for term in ("game", "游戏", "snake", "贪吃蛇")):
-            capabilities.extend(["interactive_play", "visual_feedback", "user_controls", "score_or_status"])
+        if any(term in goal_text for term in ("game", "游戏", "interactive", "交互")):
+            capabilities.extend(["interactive_feedback", "user_controls"])
         if any(term in goal_text for term in ("web", "website", "网页", "site")):
             capabilities.extend(["browser_view", "responsive_ui"])
         if any(term in goal_text for term in ("cli", "terminal", "命令行", "终端")):
@@ -240,32 +242,15 @@ class ImprovementContextHelper:
             disallowed.append(f"substitute_away_from_{preferred_stack}")
         return disallowed
 
-    def fallback_should_prefer_pygame(self, prompt_context: dict[str, Any]) -> bool:
-        product_judgment = prompt_context.get("product_judgment") or {}
-        result = (
-            not product_judgment.get("explicit_terminal_requested")
-            and product_judgment.get("project_type") == "interactive_game"
-            and product_judgment.get("preferred_stack") == "pygame"
-            and product_judgment.get("current_runtime") != "pygame_gui"
-        )
-        self._log("fallback_should_prefer_pygame", product_judgment, {"result": result})
-        return result
-
     def quality_rubric_for_product(self, product_judgment: dict[str, Any]) -> list[str]:
         rubric = [
-            "Product fit: the implementation form must match what users normally expect for this project type.",
-            "User experience: controls, feedback, scoring/status, and restart/quit flows should be visible and easy to use.",
-            "Functional completeness: the observable behavior must satisfy the original goal before adding polish.",
-            "Runtime clarity: README and run command must match dependencies and the actual entry point.",
+            "Product fit: the delivery surface must preserve the user goal and inferred project objective.",
+            "Functional completeness: the observable behavior must improve a diagnosed success metric before adding low-value polish.",
+            "User experience: the primary workflow should be understandable and provide useful feedback.",
+            "Reliability and runtime clarity: validation, dependencies, README, and run command must agree.",
+            "Technical scalability: choose maintainable changes that keep the next iteration feasible.",
+            "Innovation only counts when it is relevant to user value and supported by project evidence.",
         ]
-        if product_judgment.get("preferred_stack") == "pygame":
-            rubric.insert(
-                1,
-                "For a default Python snake game, prefer a standalone pygame GUI over terminal/curses unless terminal was explicitly requested.",
-            )
-            rubric.append(
-                "Do not count terminal-only polish such as resize handling or pause as a better product-fit improvement than migrating a curses game to pygame."
-            )
         self._log("quality_rubric_for_product", product_judgment, {"rubric_items": len(rubric)})
         return rubric
 

@@ -245,15 +245,6 @@ class ProjectEvaluatorAgent:
                         )
                     )
 
-        goal_lower = goal.lower()
-        is_game = any(keyword in goal_lower for keyword in ("snake", "贪吃蛇", "game", "小游戏"))
-        if is_game:
-            missing_game_features = self._missing_game_features(code_text)
-            if missing_game_features:
-                warnings.extend(missing_game_features)
-                opportunities.extend(missing_game_features[:3])
-                actions.append("Improve the game loop, controls, scoring, food, collision, and game-over experience.")
-
         if warnings:
             opportunities.extend(warnings[:3])
 
@@ -672,17 +663,6 @@ class ProjectEvaluatorAgent:
             return result.result.to_json_dict() if result.result else {}
         except Exception:
             return {}
-
-    def _missing_game_features(self, code: str) -> list[str]:
-        code_lower = code.lower()
-        checks = [
-            ("No visible game loop was detected.", ("while ", "after(", "mainloop", "tick(")),
-            ("No controls or keyboard handling were detected.", ("key", "keyboard", "pygame.key", "onkeypress", "curses")),
-            ("No score display or score tracking was detected.", ("score",)),
-            ("No food/apple target behavior was detected.", ("food", "apple")),
-            ("No collision or game-over handling was detected.", ("collision", "game_over", "game over", "self hit")),
-        ]
-        return [message for message, needles in checks if not any(needle in code_lower for needle in needles)]
 
     def _extract_run_command(self, readme_text: str) -> str:
         lines = readme_text.splitlines()

@@ -16,6 +16,7 @@ class AutonomousIterationPipeline:
 
     stage_names = [
         "Context Loader",
+        "Project Diagnosis",
         "Goal Maker",
         "Task Designer",
         "Task Decomposer",

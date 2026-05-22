@@ -6,7 +6,7 @@ from autonomous_iteration.improvement_context import ImprovementContextHelper
 from core.openpilot_log import OpenPilotLogger
 
 
-def test_improvement_context_target_file_and_product_fit(tmp_path) -> None:
+def test_improvement_context_target_file_and_generic_product_fit(tmp_path) -> None:
     app = tmp_path / "app.py"
     app.write_text("import curses\n", encoding="utf-8")
     helper = ImprovementContextHelper(
@@ -29,14 +29,12 @@ def test_improvement_context_target_file_and_product_fit(tmp_path) -> None:
     )
 
     assert target == app
-    assert judgment["project_type"] == "interactive_game"
-    assert judgment["preferred_stack"] == "pygame"
+    assert judgment["project_type"] == "interactive_software"
+    assert judgment["preferred_stack"] == "project_native"
     assert judgment["current_runtime"] == "terminal_curses"
-    assert helper.fallback_should_prefer_pygame({"product_judgment": judgment}) is True
-    assert any("pygame" in item for item in rubric)
-    assert context["product_intent"]["runtime_mode"] == "standalone_gui"
-    assert context["product_intent"]["delivery_surface"] == "pygame"
-    assert "terminal_ui" in context["product_intent"]["disallowed_substitutions"]
+    assert any("diagnosed success metric" in item for item in rubric)
+    assert context["product_intent"]["runtime_mode"] == "interactive"
+    assert context["product_intent"]["delivery_surface"] == "project_native"
     assert context["project_context"]["environment"]["run_command"] == "python app.py"
     assert helper.prompt_context_layer_summary(context)["has_product_intent"] is True
     assert helper.prompt_context_layer_summary(context)["code_context_chars"] == len("print('small')")

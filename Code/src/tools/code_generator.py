@@ -105,7 +105,7 @@ def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMeta
             language=language,
             context=context,
             prompt_context=prompt_context if isinstance(prompt_context, dict) else {},
-            max_lines=260 if (prompt_context.get("product_judgment") or {}).get("preferred_stack") == "pygame" else 100,
+            max_lines=260 if prompt_context else 100,
         )
 
         # Generate code
@@ -267,7 +267,6 @@ class CodeGenerator:
         constraints = self._constraint_lines(request)
         context_json = json.dumps(prompt_context, ensure_ascii=False, indent=2, default=str)
         product_intent = prompt_context.get("product_intent") if isinstance(prompt_context.get("product_intent"), dict) else {}
-        product_judgment = prompt_context.get("product_judgment") or {}
         quality_rubric = prompt_context.get("quality_rubric") or []
         if isinstance(quality_rubric, str):
             quality_rubric = [quality_rubric]
@@ -275,7 +274,6 @@ class CodeGenerator:
         if not rubric_text:
             rubric_text = "- Satisfy the original user goal with visible, user-facing behavior."
 
-        runtime_guidance = ""
         intent_constraints = product_intent.get("non_regression_constraints") or []
         disallowed_substitutions = product_intent.get("disallowed_substitutions") or []
         intent_guidance = ""
@@ -289,13 +287,6 @@ class CodeGenerator:
                 intent_guidance += "\nNon-regression constraints:\n" + "\n".join(f"- {item}" for item in intent_constraints[:6])
             if disallowed_substitutions:
                 intent_guidance += "\nDisallowed substitutions:\n" + "\n".join(f"- {item}" for item in disallowed_substitutions[:6])
-        if product_judgment.get("preferred_stack") == "pygame":
-            runtime_guidance = (
-                "\nProduct-fit guidance: for this game request, prefer a standalone pygame window "
-                "unless the user explicitly requested terminal/curses. Include a normal pygame main loop, "
-                "visual score display, restart/quit controls, and dependency-aware run behavior."
-            )
-
         return f"""You are OpenPilot's Code Generator Tool.
 The parent Agent has already decided the project intent, product judgment, rubric, and iteration goal.
 Preserve that upper-layer context exactly; use it as the source of truth, then apply your tool-specific code generation duties.
@@ -309,14 +300,13 @@ TOOL TASK:
 PRODUCT QUALITY RUBRIC:
 {rubric_text}
 {intent_guidance}
-{runtime_guidance}
 
 TOOL OUTPUT REQUIREMENTS:
 1. Generate complete, executable {request.language.value} code for the target file.
 2. Return the full replacement source code, not a patch.
 3. Keep existing useful behavior unless the Prompt Context explicitly asks to replace it for product fit.
 4. Include necessary imports, entry point, and concise comments for non-obvious logic.
-5. If using pygame, make the windowed game directly playable and keep README/run-command compatibility in mind.
+5. Improve the selected diagnosis candidate with observable acceptance-criteria evidence.
 6. Return only code in a fenced code block; do not include explanations outside the code block.
 {constraints}
 """

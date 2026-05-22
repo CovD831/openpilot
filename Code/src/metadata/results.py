@@ -18,7 +18,13 @@ from metadata.artifacts import (
 )
 from metadata.base import JsonValue, MetadataBase, MetadataKind
 from metadata.bugfix import BugFixAttemptMetadata, BugFixResultMetadata
-from metadata.project import EnvironmentSyncMetadata, ImprovementAnalysisMetadata, ProjectStateMetadata
+from metadata.project import (
+    EnvironmentSyncMetadata,
+    ImprovementAnalysisMetadata,
+    ImprovementCandidateMetadata,
+    ProjectDiagnosisMetadata,
+    ProjectStateMetadata,
+)
 from metadata.warnings import WarningCheckResultMetadata, WarningItemMetadata
 
 
@@ -293,6 +299,10 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             validation_context=payload.get("validation_context") if isinstance(payload.get("validation_context"), dict) else {},
             memory_context={"records": payload.get("memory_records") or []},
             state_summary=str(payload.get("readme_summary") or ""),
+            diagnostic_evidence=payload.get("diagnostic_evidence") if isinstance(payload.get("diagnostic_evidence"), dict) else {},
+            runtime_evidence=[str(item) for item in payload.get("runtime_evidence") or []],
+            test_evidence=[str(item) for item in payload.get("test_evidence") or []],
+            module_summaries=[str(item) for item in payload.get("module_summaries") or []],
             annotations=attr_without(
                 "project_path",
                 "goal",
@@ -303,9 +313,23 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
                 "validation_context",
                 "memory_records",
                 "readme_summary",
+                "diagnostic_evidence",
+                "runtime_evidence",
+                "test_evidence",
+                "module_summaries",
             ),
         )
     if tool_name == "project_improvement_tool":
+        diagnosis = payload.get("diagnosis")
+        if isinstance(diagnosis, dict):
+            diagnosis = ProjectDiagnosisMetadata.model_validate(diagnosis)
+        candidates = [
+            item if isinstance(item, ImprovementCandidateMetadata) else ImprovementCandidateMetadata.model_validate(item)
+            for item in payload.get("improvement_candidates") or []
+        ]
+        selected_candidate = payload.get("selected_candidate")
+        if isinstance(selected_candidate, dict):
+            selected_candidate = ImprovementCandidateMetadata.model_validate(selected_candidate)
         return ImprovementAnalysisMetadata(
             project_path=str(payload.get("project_path") or ""),
             goal=str(payload.get("goal") or ""),
@@ -318,6 +342,9 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             blocking_risks=[str(item) for item in payload.get("blocking_risks") or []],
             designed_tasks=list(payload.get("designed_tasks") or []),
             product_judgment=payload.get("product_judgment") if isinstance(payload.get("product_judgment"), dict) else {},
+            diagnosis=diagnosis if isinstance(diagnosis, ProjectDiagnosisMetadata) else None,
+            improvement_candidates=candidates,
+            selected_candidate=selected_candidate if isinstance(selected_candidate, ImprovementCandidateMetadata) else None,
             annotations=attr_without(
                 "project_path",
                 "goal",
@@ -330,6 +357,9 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
                 "blocking_risks",
                 "designed_tasks",
                 "product_judgment",
+                "diagnosis",
+                "improvement_candidates",
+                "selected_candidate",
             ),
         )
     if tool_name in {

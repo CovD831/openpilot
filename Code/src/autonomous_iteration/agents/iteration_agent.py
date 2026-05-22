@@ -19,6 +19,7 @@ from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
 from autonomous_iteration.agents.task_decomposer import TaskDecomposerAgent
 from autonomous_iteration.agents.task_designer import TaskDesignerAgent
 from autonomous_iteration.pipeline import AutonomousIterationPipeline
+from autonomous_iteration.project_diagnosis import ProjectDiagnoser, ReferenceProvider
 from core.llm import LLMMessage, LLMRequest
 from autonomous_iteration.models import (
     AutonomousIterationResult,
@@ -30,7 +31,7 @@ from autonomous_iteration.models import (
 )
 from memory.memory_models import MemoryRecord, MemoryType
 from autonomous_iteration.tool.project_improvement_tool import project_state_reader_executor
-from metadata import ToolInputMetadata
+from metadata import ProjectObjectiveMetadata, SuccessMetricMetadata, ToolInputMetadata
 
 
 ApplyImprovement = Callable[[int, EvaluationResult, list[str], dict[str, Any], bool], IterationResult]
@@ -52,6 +53,12 @@ class AutonomousIterationAgent:
         memory_store: Any | None = None,
         memory_context_builder: Any | None = None,
         logger: Any | None = None,
+        project_objective_override: ProjectObjectiveMetadata | None = None,
+        success_metric_overrides: list[SuccessMetricMetadata] | None = None,
+        preferred_improvement_dimensions: list[str] | None = None,
+        disallowed_improvement_directions: list[str] | None = None,
+        allow_reference_search: bool = True,
+        reference_provider: ReferenceProvider | None = None,
     ):
         self.evaluator = evaluator
         if required_successful_iterations is not None:
@@ -62,6 +69,14 @@ class AutonomousIterationAgent:
         self.memory_store = memory_store
         self.memory_context_builder = memory_context_builder
         self.logger = logger
+        self.project_diagnoser = ProjectDiagnoser(
+            objective_override=project_objective_override,
+            metric_overrides=success_metric_overrides,
+            preferred_dimensions=preferred_improvement_dimensions,
+            disallowed_directions=disallowed_improvement_directions,
+            allow_reference_search=allow_reference_search,
+            reference_provider=reference_provider,
+        )
         self.pipeline = AutonomousIterationPipeline(
             context_loader=ContextLoaderAgent(memory_context_builder),
             goal_maker=GoalMakerAgent(self._make_goals),
@@ -144,6 +159,7 @@ class AutonomousIterationAgent:
         project_states: list[ProjectStateSnapshot] = []
         iteration_goals: list[ImprovementGoal] = []
         designed_tasks: list[DesignedImprovementTask] = []
+        diagnoses = []
         mind_notes: list[str] = []
         completed_improvements = 0
         attempts_used = 0
@@ -197,6 +213,14 @@ class AutonomousIterationAgent:
                     completed_improvements,
                     current,
                 )
+                diagnosis = self.project_diagnoser.diagnose(
+                    project_state=project_state,
+                    evaluation=current,
+                    iteration=completed_improvements,
+                    analysis_seed=improvement_report,
+                )
+                diagnoses.append(diagnosis)
+                improvement_report = self._merge_diagnosis_report(improvement_report, diagnosis)
                 self._notify(
                     on_progress,
                     "improvement_report",
@@ -206,6 +230,25 @@ class AutonomousIterationAgent:
                         "report": improvement_report,
                     },
                 )
+                self._notify(
+                    on_progress,
+                    "project_diagnosis",
+                    {
+                        "completed_improvements": completed_improvements,
+                        "diagnosis": diagnosis,
+                        "selected_candidate": diagnosis.selected_candidate,
+                    },
+                )
+                if diagnosis.selected_candidate is None:
+                    failure_context = {
+                        "failure_stage": "Project Diagnosis",
+                        "failed_iteration": attempts_used + 1,
+                        "failed_tool": "project_diagnoser",
+                        "failure_reason": diagnosis.candidate_shortage_reason or "Diagnosis found no high-value improvement candidate.",
+                        "retry_attempted": False,
+                        "retry_history": [],
+                    }
+                    break
 
                 self._notify(on_progress, "goal_maker_started", {"iteration": completed_improvements})
                 goals = self._run_goal_maker(
@@ -258,6 +301,23 @@ class AutonomousIterationAgent:
                 }
                 is_repair = False
             else:
+                repair_diagnosis = self.project_diagnoser.diagnose(
+                    project_state=project_state,
+                    evaluation=current,
+                    iteration=completed_improvements,
+                    analysis_seed={},
+                )
+                diagnoses.append(repair_diagnosis)
+                self._notify(
+                    on_progress,
+                    "project_diagnosis",
+                    {
+                        "completed_improvements": completed_improvements,
+                        "diagnosis": repair_diagnosis,
+                        "selected_candidate": repair_diagnosis.selected_candidate,
+                        "repair": True,
+                    },
+                )
                 self._notify(on_progress, "goal_maker_started", {"iteration": completed_improvements, "repair": True})
                 selected_goal = self._repair_goal(current)
                 goals = [selected_goal]
@@ -300,6 +360,13 @@ class AutonomousIterationAgent:
                     "task_difficulty": decomposition["difficulty"],
                     "next_iteration_goal": selected_goal.title,
                     "must_implement_next": selected_goal.acceptance_criteria,
+                    "diagnosis": repair_diagnosis.to_json_dict(),
+                    "improvement_candidates": [candidate.to_json_dict() for candidate in repair_diagnosis.improvement_candidates],
+                    "selected_candidate": (
+                        repair_diagnosis.selected_candidate.to_json_dict()
+                        if repair_diagnosis.selected_candidate is not None
+                        else {}
+                    ),
                 }
                 is_repair = True
 
@@ -427,6 +494,7 @@ class AutonomousIterationAgent:
                 iteration_result.completed_successful_iteration,
                 actions,
                 iteration_result.error or current.summary,
+                improvement_report,
                 failure_context if not iteration_result.completed_successful_iteration else None,
             )
             mind_notes.append(note)
@@ -446,6 +514,7 @@ class AutonomousIterationAgent:
             iteration_goals=iteration_goals,
             designed_tasks=designed_tasks,
             evaluations=evaluations,
+            diagnoses=diagnoses,
             iterations=iterations,
             mind_notes=mind_notes,
         )
@@ -467,6 +536,7 @@ class AutonomousIterationAgent:
             "project_states": project_states,
             "iteration_goals": iteration_goals,
             "designed_tasks": designed_tasks,
+            "diagnoses": diagnoses,
             "mind_notes": mind_notes,
             "autonomous_iteration": agent_result,
             "failure_stage": failure_context.get("failure_stage"),
@@ -605,6 +675,10 @@ class AutonomousIterationAgent:
         improvement_report: dict[str, Any],
         completed_iteration: int,
     ) -> list[ImprovementGoal]:
+        selected_candidate = improvement_report.get("selected_candidate") if isinstance(improvement_report, dict) else None
+        candidate_goal = self._goal_from_candidate(selected_candidate, improvement_report, evaluation)
+        if candidate_goal is not None:
+            return [candidate_goal]
         prompt = (
             "You are OpenPilot's Goal Maker Agent. Create 1-3 concrete, evaluable project "
             "improvement goals. Avoid vague goals like 'make it better'. Return ONLY JSON.\n"
@@ -626,6 +700,27 @@ class AutonomousIterationAgent:
             if goal is not None:
                 goals.append(goal)
         return goals or [self._fallback_goal(improvement_report, evaluation)]
+
+    def _goal_from_candidate(
+        self,
+        candidate: Any,
+        report: dict[str, Any],
+        evaluation: EvaluationResult,
+    ) -> ImprovementGoal | None:
+        if not isinstance(candidate, dict):
+            return None
+        title = str(candidate.get("title") or "").strip()
+        if not title:
+            return None
+        criteria = self._coerce_string_list(candidate.get("acceptance_criteria"))
+        return ImprovementGoal(
+            id=str(candidate.get("candidate_id") or f"goal_{uuid.uuid4().hex[:8]}"),
+            title=title,
+            category=str(candidate.get("dimension") or "feature"),
+            rationale=str(candidate.get("rationale") or report.get("summary") or evaluation.summary),
+            acceptance_criteria=criteria or [f"Observable evidence improves the selected diagnosis gap: {title}"],
+            priority="high" if float(candidate.get("priority_score") or 0.0) >= 0.7 else "medium",
+        )
 
     def _design_tasks(
         self,
@@ -824,7 +919,7 @@ class AutonomousIterationAgent:
             notes.append("Hard validation did not pass after modification.")
         if not iteration_result.changed_files:
             notes.append("No changed files were reported by the task executor.")
-        product_note = self._product_fit_failure_note(improvement_report or {}, iteration_result, tasks)
+        product_note = self._diagnosis_failure_note(improvement_report or {}, iteration_result, tasks)
         if product_note:
             notes.append(product_note)
         if tasks:
@@ -837,35 +932,20 @@ class AutonomousIterationAgent:
             iteration_result.failure_stage = "Modification Evaluator"
         return bool(evaluation.validation_passed and not is_repair and iteration_result.changed_files and not product_note)
 
-    def _product_fit_failure_note(
+    def _diagnosis_failure_note(
         self,
         improvement_report: dict[str, Any],
         iteration_result: IterationResult,
         tasks: list[DesignedImprovementTask],
     ) -> str | None:
-        prompt_context = improvement_report.get("prompt_context") if isinstance(improvement_report, dict) else {}
-        product_judgment = (prompt_context or {}).get("product_judgment") or improvement_report.get("product_judgment") or {}
-        if product_judgment.get("preferred_stack") != "pygame":
+        selected = improvement_report.get("selected_candidate") if isinstance(improvement_report, dict) else None
+        if not isinstance(selected, dict):
             return None
-        task_text = " ".join([task.description for task in tasks] + [item for task in tasks for item in task.acceptance_criteria]).lower()
-        terminal_polish_terms = ("terminal", "curses", "resize", "stdscr", "pause", "timeout", "终端", "窗口大小", "暂停")
-        if not any(term in task_text for term in terminal_polish_terms):
+        criteria = self._coerce_string_list(selected.get("acceptance_criteria"))
+        if not criteria or not tasks:
             return None
-        code_text = ""
-        for raw_path in iteration_result.changed_files[:3]:
-            path = Path(raw_path).expanduser()
-            if path.exists() and path.is_file():
-                try:
-                    code_text += "\n" + path.read_text(encoding="utf-8")[:5000].lower()
-                except OSError:
-                    pass
-        if "pygame" in code_text:
-            return None
-        if "import curses" in code_text or "curses." in code_text or "stdscr" in code_text or not code_text:
-            return (
-                "Product-fit rubric not satisfied: for a default Python snake game, terminal/curses polish "
-                "does not count as a better improvement than migrating to a standalone pygame GUI."
-            )
+        if not iteration_result.changed_files:
+            return "Selected diagnosis candidate did not produce changed files."
         return None
 
     def _record_mind_note(
@@ -875,6 +955,7 @@ class AutonomousIterationAgent:
         success: bool,
         actions: list[str],
         detail: str | None,
+        improvement_report: dict[str, Any] | None = None,
         failure_context: dict[str, Any] | None = None,
     ) -> str:
         state = "succeeded" if success else "failed"
@@ -888,6 +969,15 @@ class AutonomousIterationAgent:
             )
         if self.memory_store and hasattr(self.memory_store, "save"):
             try:
+                diagnosis = (improvement_report or {}).get("diagnosis") if isinstance(improvement_report, dict) else {}
+                selected_candidate = (improvement_report or {}).get("selected_candidate") if isinstance(improvement_report, dict) else {}
+                unmet_metrics = []
+                if isinstance(diagnosis, dict):
+                    unmet_metrics = [
+                        str(metric.get("metric_id") or metric.get("name") or "")
+                        for metric in diagnosis.get("success_metrics") or []
+                        if isinstance(metric, dict) and metric.get("satisfied") is False
+                    ]
                 self.memory_store.save(
                     MemoryRecord(
                         id="",
@@ -899,6 +989,17 @@ class AutonomousIterationAgent:
                             "goal": goal,
                             "iteration": iteration,
                             "success": success,
+                            "selected_candidate": (
+                                selected_candidate.get("title")
+                                if isinstance(selected_candidate, dict)
+                                else ""
+                            ),
+                            "selected_dimension": (
+                                selected_candidate.get("dimension")
+                                if isinstance(selected_candidate, dict)
+                                else ""
+                            ),
+                            "unmet_metrics": [item for item in unmet_metrics if item][:5],
                             **(failure_context or {}),
                         },
                     )
@@ -906,6 +1007,27 @@ class AutonomousIterationAgent:
             except Exception:
                 pass
         return note
+
+    def _merge_diagnosis_report(self, report: dict[str, Any], diagnosis: Any) -> dict[str, Any]:
+        selected = diagnosis.selected_candidate
+        recommended = list(report.get("recommended_actions") or [])
+        opportunities = list(report.get("improvement_opportunities") or [])
+        must_implement = list(report.get("must_implement_next") or [])
+        if selected is not None:
+            recommended = [selected.title, *recommended]
+            opportunities = [selected.rationale or selected.title, *opportunities]
+            must_implement = [*selected.acceptance_criteria, *must_implement]
+        return {
+            **report,
+            "summary": diagnosis.summary or report.get("summary") or "",
+            "improvement_opportunities": self._dedupe_text(opportunities),
+            "recommended_actions": self._dedupe_text(recommended),
+            "next_iteration_goal": selected.title if selected is not None else report.get("next_iteration_goal"),
+            "must_implement_next": self._dedupe_text(must_implement),
+            "diagnosis": diagnosis.to_json_dict(),
+            "improvement_candidates": [candidate.to_json_dict() for candidate in diagnosis.improvement_candidates],
+            "selected_candidate": selected.to_json_dict() if selected is not None else {},
+        }
 
     def _analyze_improvements(
         self,
@@ -923,6 +1045,9 @@ class AutonomousIterationAgent:
             }
         report = analyzer(completed_iterations, evaluation)
         return report if isinstance(report, dict) else {}
+
+    def _dedupe_text(self, items: list[Any]) -> list[str]:
+        return self._coerce_string_list(items) if len(items) <= 1 else list(dict.fromkeys(self._coerce_string_list(items)))
 
     def _select_repair_actions(self, evaluation: EvaluationResult) -> list[str]:
         primary_issue = self._primary_validation_issue(evaluation)

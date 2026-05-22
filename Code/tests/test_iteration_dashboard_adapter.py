@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from autonomous_iteration.models import IterationResult
 from ui.iteration_dashboard import IterationDashboardAdapter
+from rich.console import Console
+from ui.enhanced_ui import EnhancedUI
 
 
 class FakeUI:
@@ -25,6 +27,15 @@ class FakeAutopilot:
         self.enhanced_ui = FakeUI()
         self.tracker = None
         self.required_successful_improvements = 2
+        self._dashboard_iteration_counter = 0
+        self._dashboard_current_iteration_id = None
+
+
+class RealUIAutopilot:
+    def __init__(self, ui: EnhancedUI) -> None:
+        self.enhanced_ui = ui
+        self.tracker = None
+        self.required_successful_improvements = 3
         self._dashboard_iteration_counter = 0
         self._dashboard_current_iteration_id = None
 
@@ -64,10 +75,11 @@ def test_iteration_dashboard_stage_helpers_update_nested_graph() -> None:
     execution_node = next(child for child in tasks[0]["children"] if child["id"] == "iteration_1_execution")
 
     assert iteration_id == "iteration_1"
-    assert stage_order[:7] == [
+    assert stage_order[:8] == [
         "Environment Setup",
         "Read Project State",
         "Context Loader",
+        "Project Diagnosis",
         "Goal Maker",
         "Task Designer",
         "Task Decomposer",
@@ -313,3 +325,68 @@ def test_three_successful_iterations_render_as_sibling_nodes() -> None:
     assert [task["description"] for task in tasks] == ["Iteration 1", "Iteration 2", "Iteration 3"]
     assert [task["status"] for task in tasks] == ["completed", "completed", "completed"]
     assert autopilot._dashboard_current_iteration_id is None
+
+
+def test_three_successful_iterations_append_progress_lines() -> None:
+    console = Console(record=True, width=120)
+    ui = EnhancedUI(console)
+    autopilot = RealUIAutopilot(ui)
+    adapter = IterationDashboardAdapter(autopilot)
+
+    with ui.live_session("Executing iterations"):
+        adapter.reset_iteration_dashboard("Improve project")
+        for iteration in (1, 2, 3):
+            adapter.handle_iteration_progress("iteration_started", {"iteration": iteration, "actions": [f"Improve {iteration}"]})
+            adapter.handle_iteration_progress("mind_system", {"iteration": iteration, "note": f"Iteration {iteration} succeeded"})
+            adapter.handle_iteration_progress(
+                "iteration_completed",
+                {"iteration": iteration, "result": _successful_iteration_result(iteration)},
+            )
+
+    output = console.export_text(clear=False)
+    assert "Task Graph" not in output
+    assert "Current Task Details" not in output
+    assert "1. Iteration 1" in output
+    assert "2. Iteration 2" in output
+    assert "3. Iteration 3" in output
+    assert "✓ 1. Iteration 1" in output
+    assert "✓ 2. Iteration 2" in output
+    assert "✓ 3. Iteration 3" in output
+
+
+def test_stage_tool_progress_appends_stage_terminal_lines() -> None:
+    console = Console(record=True, width=120)
+    ui = EnhancedUI(console)
+    autopilot = RealUIAutopilot(ui)
+    adapter = IterationDashboardAdapter(autopilot)
+
+    with ui.live_session("Executing stages"):
+        adapter.reset_iteration_dashboard("Improve project")
+        adapter.ensure_dashboard_iteration(1)
+
+        environment_id = adapter.dashboard_stage_id("environment")
+        adapter.set_dashboard_task_status(environment_id, "running")
+        adapter.set_dashboard_tool_status(
+            parent_task_id=environment_id,
+            tool_id="iteration_1_environment_tool",
+            tool_name="project_environment_tool",
+            status="completed",
+        )
+        adapter.set_dashboard_task_status(environment_id, "completed")
+
+        project_state_id = adapter.dashboard_stage_id("project_state")
+        adapter.set_dashboard_tool_status(
+            parent_task_id=project_state_id,
+            tool_id="iteration_1_project_state_tool",
+            tool_name="project_state_reader",
+            status="completed",
+        )
+        adapter.handle_iteration_progress("project_state", {"iteration": 1, "state": FakeState()})
+
+    output = console.export_text(clear=False)
+    assert output.count("Environment Setup") == 2
+    assert "✓ Environment Setup" in output
+    assert output.count("Read Project State") == 2
+    assert "✓ Read Project State" in output
+    assert output.index("Environment Setup") < output.index("project_environment_tool")
+    assert output.index("Read Project State") < output.index("project_state_reader")
