@@ -164,6 +164,8 @@ Important:
 - Autopilot will run hard validation and autonomous-iteration improvement analysis after project delivery
 - Provide actual values for all parameters, do not use null or placeholders
 - If you need to pass output from one tool to another, generate the content directly in the first tool
+- For command_executor, input_metadata.mode must be one of: dry_run, interactive, automatic
+- For project commands, use mode "automatic" and do not use source/activate/cd/export; OpenPilot injects the target cwd and virtual environment from metadata
 """
 
     def _parse_tool_calls(self, llm_response: Any) -> list[dict[str, Any]]:
@@ -200,6 +202,9 @@ Important:
                 last_output,
                 last_code_output,
             )
+            apply_project_context = getattr(self.runtime, "_apply_project_command_context", None)
+            if callable(apply_project_context):
+                input_metadata = apply_project_context(tool_name, input_metadata)
             input_payload = input_metadata.to_params()
 
             self._show_tool_running(task, tool_name, input_payload, reason_text, index, len(tool_calls))

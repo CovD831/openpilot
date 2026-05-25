@@ -165,6 +165,10 @@ class EnvironmentSyncMetadata(MetadataBase):
     pip_executable: str = ""
     python_version: str = ""
     run_command: str = ""
+    command_cwd: str = ""
+    command_env: dict[str, str] = Field(default_factory=dict)
+    python_command: str = ""
+    pip_command: str = ""
     dependency_source: str = ""
     setup_commands: list[str] = Field(default_factory=list)
     detected_packages: list[str] = Field(default_factory=list)

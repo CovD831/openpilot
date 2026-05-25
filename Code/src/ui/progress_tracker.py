@@ -40,6 +40,7 @@ class Operation:
     spinner_index: int = 0
     prompt_preview: str = ""
     response_preview: str = ""
+    stream_text: str = ""
     tokens_or_chars: int = 0
     token_usage_text: str = ""
 
@@ -146,11 +147,13 @@ class ProgressTracker:
             yield op_id
             self.update_operation_phase(op_id, "Completed")
             self._end_operation(op_id, success=True)
+            self.ui.set_active_operations(self.get_active_operations())
             self.ui.log_activity("llm", f"✓ {model} responded")
         except Exception as e:
             self.update_operation_phase(op_id, "Failed")
             self.append_operation_line(op_id, f"Error: {str(e)}")
             self._end_operation(op_id, success=False, error=str(e))
+            self.ui.set_active_operations(self.get_active_operations())
             self.ui.log_activity("error", f"✗ {model} failed: {str(e)}")
             raise
 
@@ -254,6 +257,32 @@ class ProgressTracker:
                 op.response_preview = preview
             if count is not None:
                 op.tokens_or_chars = count
+
+    def update_operation_stream_delta(
+        self,
+        op_id: str,
+        text_delta: str,
+        *,
+        visible_text_preview: str = "",
+        chars_received: int | None = None,
+    ) -> None:
+        """Update transient visible LLM stream text for an active operation."""
+        active_ops: list[Operation] = []
+        with self.lock:
+            op = self.operations.get(op_id)
+            if not op:
+                return
+            if visible_text_preview:
+                op.stream_text = visible_text_preview
+            elif text_delta:
+                max_chars = getattr(self.ui, "max_llm_stream_chars", 1200)
+                op.stream_text = (op.stream_text + text_delta)[-max_chars:]
+            if op.stream_text:
+                op.response_preview = " ".join(op.stream_text.split())[-160:]
+            if chars_received is not None:
+                op.tokens_or_chars = chars_received
+            active_ops = [item for item in self.operations.values() if item.end_time is None]
+        self.ui.set_active_operations(active_ops)
 
     def update_operation_token_usage(self, op_id: str, token_usage_text: str) -> None:
         """Update public token usage text for an active operation."""

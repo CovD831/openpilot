@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+from types import SimpleNamespace
+
 from rich.console import Console
 
 from ui.enhanced_ui import EnhancedUI
@@ -16,6 +19,12 @@ def _contains_hidden_summary(node: dict) -> bool:
     if node.get("kind") == "summary" or "details hidden" in description:
         return True
     return any(_contains_hidden_summary(child) for child in node.get("children") or [])
+
+
+def _render_tail(ui: EnhancedUI) -> str:
+    console = Console(record=True, width=100)
+    console.print(ui.create_task_graph_live_tail())
+    return console.export_text(clear=False)
 
 
 def test_task_graph_live_view_grows_with_full_history() -> None:
@@ -112,10 +121,10 @@ def test_append_only_task_graph_has_no_panel_title_or_box() -> None:
     assert "Current Task Details" not in output
     assert "╭" not in output
     assert "Build app" in output
-    assert "Iteration 1" in output
+    assert "Iteration 1" not in output
 
 
-def test_append_only_task_graph_prints_only_changed_nodes() -> None:
+def test_append_only_task_graph_keeps_running_nodes_out_of_history() -> None:
     console = Console(record=True, width=100)
     ui = EnhancedUI(console)
     task = {
@@ -143,11 +152,11 @@ def test_append_only_task_graph_prints_only_changed_nodes() -> None:
         ui.set_task_graph_state(goal="Build app", tasks=[changed_task], current_task_id="iteration_1_execution")
 
     output = console.export_text(clear=False)
-    assert output.count("1. Iteration 1") == 1
-    assert output.count("Task Executor") == 1
+    assert "1. Iteration 1" not in output
+    assert "Task Executor" not in output
 
 
-def test_append_only_task_graph_prints_hierarchy_terminal_transitions() -> None:
+def test_append_only_task_graph_prints_hierarchy_terminal_history() -> None:
     console = Console(record=True, width=100)
     ui = EnhancedUI(console)
     task = {
@@ -180,8 +189,8 @@ def test_append_only_task_graph_prints_hierarchy_terminal_transitions() -> None:
         )
 
     output = console.export_text(clear=False)
-    assert output.count("1. Iteration 1") == 2
-    assert output.count("Environment Setup") == 2
+    assert output.count("1. Iteration 1") == 1
+    assert output.count("Environment Setup") == 1
     assert "✓ 1. Iteration 1" in output
     assert "✓ Environment Setup" in output
 
@@ -226,8 +235,261 @@ def test_append_only_task_graph_prints_terminal_state_after_active_pending_paren
         )
 
     output = console.export_text(clear=False)
-    assert output.count("Read Project State") == 2
+    assert output.count("Read Project State") == 1
     assert "✓ Read Project State" in output
+
+
+def test_task_graph_live_tail_renders_running_path_with_spinner() -> None:
+    ui = EnhancedUI(Console(record=True, width=100))
+    ui._task_graph_spinner_frame = "⠹"
+    ui.set_task_graph_state(
+        goal="Build app",
+        tasks=[
+            {
+                "id": "iteration_1",
+                "description": "Iteration 1",
+                "status": "running",
+                "kind": "iteration",
+                "children": [
+                    {
+                        "id": "iteration_1_project_state",
+                        "description": "Read Project State",
+                        "status": "pending",
+                        "kind": "agent",
+                    }
+                ],
+            }
+        ],
+        current_task_id="iteration_1_project_state",
+    )
+
+    output = _render_tail(ui)
+
+    assert "⠹ 1. Iteration 1" in output
+    assert "⠹ Read Project State" in output
+
+
+def test_task_graph_live_tail_clears_when_path_reaches_terminal_state() -> None:
+    ui = EnhancedUI(Console(record=True, width=100))
+    task = {
+        "id": "iteration_1",
+        "description": "Iteration 1",
+        "status": "running",
+        "kind": "iteration",
+        "children": [
+            {
+                "id": "iteration_1_environment",
+                "description": "Environment Setup",
+                "status": "running",
+                "kind": "agent",
+            }
+        ],
+    }
+    ui.set_task_graph_state(goal="Build app", tasks=[task], current_task_id="iteration_1_environment")
+    assert "Environment Setup" in _render_tail(ui)
+
+    ui.set_task_graph_state(
+        tasks=[
+            {
+                **task,
+                "status": "completed",
+                "children": [{**task["children"][0], "status": "completed"}],
+            }
+        ],
+        current_task_id=None,
+    )
+
+    assert _render_tail(ui).strip() == ""
+
+
+def test_task_graph_live_tail_uses_progress_tracker_spinner_frame() -> None:
+    class ActiveOperation:
+        spinner_frame = "⠧"
+
+    ui = EnhancedUI(Console(record=True, width=100))
+    ui.set_task_graph_state(
+        goal="Build app",
+        tasks=[
+            {
+                "id": "iteration_1",
+                "description": "Iteration 1",
+                "status": "running",
+                "kind": "iteration",
+            }
+        ],
+        current_task_id="iteration_1",
+    )
+
+    ui.set_active_operations([ActiveOperation()])
+
+    assert "⠧ 1. Iteration 1" in _render_tail(ui)
+
+
+def test_task_graph_live_tail_renders_transient_llm_stream() -> None:
+    ui = EnhancedUI(Console(record=True, width=100))
+    ui.set_task_graph_state(
+        goal="Build app",
+        tasks=[
+            {
+                "id": "iteration_1",
+                "description": "Iteration 1",
+                "status": "running",
+                "kind": "iteration",
+            }
+        ],
+        current_task_id="iteration_1",
+    )
+    ui.set_active_operations(
+        [
+            SimpleNamespace(
+                type=SimpleNamespace(value="llm"),
+                name="LLM: fake-model",
+                start_time=datetime.now(),
+                spinner_frame="⠧",
+                phase="Streaming response",
+                stream_text="Public visible model output",
+                response_preview="",
+                tokens_or_chars=27,
+            )
+        ]
+    )
+
+    output = _render_tail(ui)
+
+    assert "⠧ 1. Iteration 1" in output
+    assert "LLM: fake-model" in output
+    assert "Phase: Streaming response" in output
+    assert "Public visible model output" in output
+
+
+def test_task_graph_live_tail_clears_llm_stream_after_operation_finishes() -> None:
+    ui = EnhancedUI(Console(record=True, width=100))
+    ui.set_task_graph_state(
+        goal="Build app",
+        tasks=[
+            {
+                "id": "iteration_1",
+                "description": "Iteration 1",
+                "status": "running",
+                "kind": "iteration",
+            }
+        ],
+        current_task_id="iteration_1",
+    )
+    ui.set_active_operations(
+        [
+            SimpleNamespace(
+                type=SimpleNamespace(value="llm"),
+                name="LLM: fake-model",
+                start_time=datetime.now(),
+                spinner_frame="⠧",
+                phase="Streaming response",
+                stream_text="Temporary stream text",
+                response_preview="",
+                tokens_or_chars=21,
+            )
+        ]
+    )
+    assert "Temporary stream text" in _render_tail(ui)
+
+    ui.set_active_operations([])
+
+    output = _render_tail(ui)
+    assert "Temporary stream text" not in output
+    assert "1. Iteration 1" in output
+
+
+def test_llm_stream_text_does_not_enter_append_only_history() -> None:
+    console = Console(record=True, width=100)
+    ui = EnhancedUI(console)
+
+    with ui.live_session("Executing: sample"):
+        ui.set_task_graph_state(
+            goal="Build app",
+            tasks=[
+                {
+                    "id": "iteration_1",
+                    "description": "Iteration 1",
+                    "status": "running",
+                    "kind": "iteration",
+                }
+            ],
+            current_task_id="iteration_1",
+        )
+        ui.set_active_operations(
+            [
+                SimpleNamespace(
+                    type=SimpleNamespace(value="llm"),
+                    name="LLM: fake-model",
+                    start_time=datetime.now(),
+                    spinner_frame="⠧",
+                    phase="Streaming response",
+                    stream_text="Do not keep this stream",
+                    response_preview="",
+                    tokens_or_chars=23,
+                )
+            ]
+        )
+        ui.set_active_operations([])
+
+    output = console.export_text(clear=False)
+    assert "Do not keep this stream" not in output
+
+
+def test_transient_operation_session_preserves_task_graph_state_and_history() -> None:
+    console = Console(record=True, width=100)
+    ui = EnhancedUI(console)
+    tasks = [
+        {
+            "id": "iteration_1",
+            "description": "Iteration 1",
+            "status": "completed",
+            "kind": "iteration",
+        }
+    ]
+    ui.set_task_graph_state(goal="Build app", tasks=tasks, current_task_id=None)
+    ui._append_task_graph_seen = {"iteration_1": ("completed", "1. Iteration 1", "")}
+
+    with ui.transient_operation_session():
+        ui.set_active_operations(
+            [
+                SimpleNamespace(
+                    type=SimpleNamespace(value="llm"),
+                    name="LLM: fake-model",
+                    start_time=datetime.now(),
+                    spinner_frame="⠧",
+                    phase="Streaming response",
+                    stream_text="Temporary stream",
+                    response_preview="",
+                    tokens_or_chars=16,
+                )
+            ]
+        )
+
+    assert ui.task_graph_state["tasks"] == tasks
+    assert ui._append_task_graph_seen == {"iteration_1": ("completed", "1. Iteration 1", "")}
+    assert ui.active_operations == []
+
+
+def test_transient_operation_session_only_clears_llm_operations() -> None:
+    ui = EnhancedUI(Console(record=True, width=100))
+    tool_operation = SimpleNamespace(
+        type=SimpleNamespace(value="tool"),
+        name="Tool: file_writer",
+        start_time=datetime.now(),
+        spinner_frame="⠧",
+    )
+    llm_operation = SimpleNamespace(
+        type=SimpleNamespace(value="llm"),
+        name="LLM: fake-model",
+        start_time=datetime.now(),
+        spinner_frame="⠧",
+    )
+
+    with ui.transient_operation_session():
+        ui.set_active_operations([tool_operation, llm_operation])
+
+    assert ui.active_operations == [tool_operation]
 
 
 def test_append_only_task_graph_reset_reprints_goal_and_new_tree() -> None:
@@ -262,7 +524,7 @@ def test_append_only_task_graph_reset_reprints_goal_and_new_tree() -> None:
     output = console.export_text(clear=False)
     assert "First goal" in output
     assert "Second goal" in output
-    assert output.count("1. Iteration 1") == 2
+    assert "1. Iteration 1" not in output
 
 
 def test_append_only_task_graph_skips_generic_phase_graph() -> None:
@@ -339,6 +601,5 @@ def test_append_only_task_graph_prints_terminal_tool_once_with_parent_context() 
         ui.set_task_graph_state(goal="Build app", tasks=[failed_task], current_task_id="iteration_1_environment_tool")
 
     output = console.export_text(clear=False)
-    assert output.count("Environment Setup") == 1
+    assert "Environment Setup" not in output
     assert output.count("project_environment_tool") == 2
-    assert output.index("Environment Setup") < output.index("project_environment_tool")

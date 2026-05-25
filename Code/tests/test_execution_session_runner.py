@@ -75,11 +75,13 @@ class FakeTracker:
 
 class FakeEnhancedUI:
     def __init__(self) -> None:
+        self.task_graph_state = {"tasks": [], "current_task_id": None}
         self.graph_updates: list[dict] = []
         self.current_updates: list[dict] = []
         self.activities: list[tuple[str, str]] = []
 
     def set_task_graph_state(self, **kwargs):
+        self.task_graph_state.update(kwargs)
         self.graph_updates.append(kwargs)
 
     def set_current_task_state(self, **kwargs):
@@ -234,3 +236,43 @@ def test_session_runner_surfaces_autonomous_iteration_failure(tmp_path) -> None:
     assert result["failure_stage"] == "Task Executor"
     assert result["failed_tool"] == "code_generator"
     assert result["retry_history"] == [{"attempt": "full"}]
+
+
+def test_session_runner_appends_iteration_skip_note_when_no_written_files(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path)
+    runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
+    runner = AutopilotSessionRunner(runtime)
+
+    result = runner.run("Build app", {}, mode="enhanced_ui")
+
+    assert result["success"] is True
+    tasks = runtime.enhanced_ui.task_graph_state["tasks"]
+    assert any(task["id"] == "project_improvement_skipped" for task in tasks)
+    assert any("no written files detected" in task.get("description", "") for task in tasks)
+    assert any("Project improvement skipped" in message for _level, message in runtime.enhanced_ui.activities)
+
+
+def test_session_runner_calls_iteration_when_written_files_detected(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path)
+    runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
+    runtime.written_files = [str(tmp_path / "app.py")]
+    runtime.project_path = tmp_path
+    runtime.improvement_result = {
+        "success": True,
+        "validation": {"ok": True},
+        "completed_improvements": 1,
+        "required_improvements": 1,
+        "completed_iterations": 1,
+        "required_iterations": 1,
+    }
+    runner = AutopilotSessionRunner(runtime)
+
+    result = runner.run("Build app", {}, mode="enhanced_ui")
+
+    assert result["success"] is True
+    assert result["completed_improvements"] == 1
+    assert not any(
+        update.get("tasks", [{}])[-1].get("id") == "project_improvement_skipped"
+        for update in runtime.enhanced_ui.graph_updates
+        if update.get("tasks")
+    )

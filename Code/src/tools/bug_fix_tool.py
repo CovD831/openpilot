@@ -22,6 +22,7 @@ from metadata import (
 from tools.command_tool import command_executor
 from tools.file_reader import file_reader_executor
 from tools.file_writer import file_writer_executor
+from tools.terminal_smoke import looks_like_terminal_python_files, run_terminal_command
 
 
 BUG_FIX_TOOL_DEFINITION = ToolDefinition(
@@ -84,6 +85,7 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
         raise ValueError("Invalid input: file_paths is required and must contain at least one target file")
 
     cwd = str(params.get("cwd") or "").strip()
+    env = {str(key): str(value) for key, value in params.get("env", {}).items()} if isinstance(params.get("env"), dict) else None
     timeout = int(params.get("timeout") or 30)
     max_iterations = _positive_int(params.get("max_iterations"), default=5)
     continuation_iterations = _positive_int(params.get("continuation_iterations"), default=3)
@@ -98,9 +100,10 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
     ask_user_to_continue = params.get("_ask_user_to_continue")
 
     allowed_files = _resolve_allowed_files(input_metadata.file_paths, cwd)
+    use_terminal_smoke = _should_use_terminal_smoke(allowed_files)
     attempts: list[BugFixAttemptMetadata] = []
 
-    initial_command = _run_command(command, cwd, timeout)
+    initial_command = _run_command(command, cwd, timeout, env, terminal_smoke=use_terminal_smoke)
     attempts.append(_attempt(iteration=0, command_result=initial_command, modified_files=[], rationale="initial validation"))
     initial_warning_check = _check_command_warnings(
         command_result=initial_command,
@@ -142,6 +145,7 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                 attempts=attempts,
                 iteration=iteration,
                 fix_instruction=fix_instruction,
+                terminal_smoke=use_terminal_smoke,
             )
             try:
                 changes, rationale = _validate_fix_payload(fix_payload, allowed_files)
@@ -180,7 +184,7 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                 )
 
             modified_files = _write_changes(changes)
-            last_command_result = _run_command(command, cwd, timeout)
+            last_command_result = _run_command(command, cwd, timeout, env, terminal_smoke=use_terminal_smoke)
             latest_warning_check = _check_command_warnings(
                 command_result=last_command_result,
                 command=command,
@@ -281,7 +285,32 @@ def _resolve_allowed_files(file_paths: list[str], cwd: str) -> dict[str, Path]:
     return allowed
 
 
-def _run_command(command: str, cwd: str, timeout: int) -> CommandArtifactMetadata:
+def _should_use_terminal_smoke(allowed_files: dict[str, Path]) -> bool:
+    return looks_like_terminal_python_files(sorted({str(path) for path in allowed_files.values()}))
+
+
+def _run_command(
+    command: str,
+    cwd: str,
+    timeout: int,
+    env: dict[str, str] | None = None,
+    *,
+    terminal_smoke: bool = False,
+) -> CommandArtifactMetadata:
+    if terminal_smoke:
+        smoke = run_terminal_command(
+            command,
+            cwd=cwd or None,
+            env=env,
+            timeout=max(float(timeout), 2.0),
+            shell=True,
+        )
+        artifact = smoke.to_command_artifact()
+        if smoke.skipped:
+            artifact.success = False
+            artifact.exit_code = -1
+            artifact.stderr = smoke.skip_reason or "Terminal smoke verification skipped."
+        return artifact
     result = command_executor(
         ToolInputMetadata.from_mapping(
             "command_executor",
@@ -290,6 +319,7 @@ def _run_command(command: str, cwd: str, timeout: int) -> CommandArtifactMetadat
                 "mode": "automatic",
                 "timeout": timeout,
                 "cwd": cwd or None,
+                "env": env,
             },
         )
     )
@@ -368,6 +398,7 @@ def _request_fix(
     attempts: list[BugFixAttemptMetadata],
     iteration: int,
     fix_instruction: str,
+    terminal_smoke: bool,
 ) -> dict[str, Any]:
     request = LLMRequest(
         messages=[
@@ -387,6 +418,12 @@ def _request_fix(
                     {
                         "iteration": iteration,
                         "success_standard": "The command must exit with code 0. Do not judge stdout semantics.",
+                        "terminal_success_standard": (
+                            "For terminal-interactive programs, validation runs in a PTY. The program must start "
+                            "without traceback or curses drawing errors; do not use a non-TTY sys.exit(0) bypass as a fix."
+                            if terminal_smoke
+                            else ""
+                        ),
                         "warning_success_standard": (
                             "If runtime warning repair is required, the command must also run without warnings "
                             "classified as requiring repair."

@@ -6,8 +6,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from metadata import BugFixResultMetadata, ResultStatus, ToolInputMetadata
+from tools import bug_fix_tool as bug_fix_tool_module
 from tools.bug_fix_tool import bug_fix_tool_executor
 from tools.builtin_tools import register_builtin_tools
+from tools.terminal_smoke import TerminalSmokeResult
 from tools.tool_executor import ToolExecutor
 from tools.tool_registry import ToolRegistry
 from tools.tool_selection import ToolSelection
@@ -146,6 +148,116 @@ def test_bug_fix_tool_warning_mode_requests_decision_when_warning_remains(tmp_pa
     assert result.status == ResultStatus.FAIL
     assert result.failure.error_type == "MaxBugFixIterationsReached"
     assert "Runtime warning still requires repair" in result.failure.error_message
+    assert result.result.requires_user_decision is True
+
+
+def test_bug_fix_tool_uses_terminal_smoke_for_curses_runtime(tmp_path, monkeypatch) -> None:
+    app = tmp_path / "app.py"
+    app.write_text(
+        "import curses\n"
+        "import sys\n"
+        "if not sys.stdout.isatty():\n"
+        "    sys.exit(0)\n"
+        "def main(stdscr):\n"
+        "    stdscr.addstr(25, 0, 'too low')\n"
+        "if __name__ == '__main__':\n"
+        "    curses.wrapper(main)\n",
+        encoding="utf-8",
+    )
+    llm = FakeBugFixLLM(
+        [
+            {
+                "rationale": "Add terminal bounds handling.",
+                "files": [
+                    {
+                        "file_path": "app.py",
+                        "content": (
+                            "import curses\n"
+                            "def main(stdscr):\n"
+                            "    max_y, max_x = stdscr.getmaxyx()\n"
+                            "    if max_y > 0 and max_x > 0:\n"
+                            "        stdscr.addstr(0, 0, 'ok'[:max_x])\n"
+                            "if __name__ == '__main__':\n"
+                            "    curses.wrapper(main)\n"
+                        ),
+                    }
+                ],
+            }
+        ]
+    )
+    calls = []
+
+    def fake_terminal_smoke(command, **kwargs):
+        calls.append(command)
+        source = app.read_text(encoding="utf-8")
+        if "too low" in source or "sys.stdout.isatty" in source:
+            return TerminalSmokeResult(
+                command=str(command),
+                success=False,
+                stdout="",
+                stderr="Traceback (most recent call last):\n_curses.error: addwstr() returned ERR",
+                exit_code=1,
+                duration=0.1,
+            )
+        return TerminalSmokeResult(
+            command=str(command),
+            success=True,
+            stdout="ok",
+            stderr="",
+            exit_code=0,
+            duration=0.1,
+        )
+
+    monkeypatch.setattr(bug_fix_tool_module, "run_terminal_command", fake_terminal_smoke)
+
+    result = bug_fix_tool_executor(_input(_python_file_command(app), tmp_path, ["app.py"], _llm_client=llm))
+
+    assert len(calls) == 2
+    assert result.status == ResultStatus.SUCCESS
+    assert result.result.fixed is True
+    assert result.result.final_command_result.attributes["terminal_smoke"] is True
+
+
+def test_bug_fix_tool_rejects_non_tty_bypass_for_curses_runtime(tmp_path, monkeypatch) -> None:
+    app = tmp_path / "app.py"
+    bypass_source = (
+        "import curses\n"
+        "import sys\n"
+        "if not sys.stdout.isatty():\n"
+        "    sys.exit(0)\n"
+        "def main(stdscr):\n"
+        "    stdscr.addstr(25, 0, 'too low')\n"
+        "if __name__ == '__main__':\n"
+        "    curses.wrapper(main)\n"
+    )
+    app.write_text(bypass_source, encoding="utf-8")
+    llm = FakeBugFixLLM(
+        [
+            {
+                "rationale": "Keep the non-TTY bypass.",
+                "files": [{"file_path": "app.py", "content": bypass_source}],
+            }
+        ]
+    )
+
+    def fake_terminal_smoke(command, **kwargs):
+        return TerminalSmokeResult(
+            command=str(command),
+            success=False,
+            stdout="",
+            stderr="Traceback (most recent call last):\n_curses.error: addwstr() returned ERR",
+            exit_code=1,
+            duration=0.1,
+        )
+
+    monkeypatch.setattr(bug_fix_tool_module, "run_terminal_command", fake_terminal_smoke)
+
+    result = bug_fix_tool_executor(
+        _input(_python_file_command(app), tmp_path, ["app.py"], max_iterations=1, _llm_client=llm)
+    )
+
+    assert result.status == ResultStatus.FAIL
+    assert result.failure.error_type == "MaxBugFixIterationsReached"
     assert result.result.requires_user_decision is True
 
 

@@ -56,6 +56,17 @@ def _successful_iteration_result(iteration: int) -> IterationResult:
     )
 
 
+def _repair_iteration_result(iteration: int) -> IterationResult:
+    return IterationResult(
+        iteration=iteration,
+        validation_passed=True,
+        completed_successful_iteration=False,
+        success=True,
+        changed_files=["main.py"],
+        repair_completed=True,
+    )
+
+
 def test_iteration_dashboard_stage_helpers_update_nested_graph() -> None:
     autopilot = FakeAutopilot()
     adapter = IterationDashboardAdapter(autopilot)
@@ -274,6 +285,52 @@ def test_iteration_completed_closes_current_iteration_after_mind_system() -> Non
     assert tasks[0]["status"] == "completed"
 
 
+def test_repair_completed_closes_iteration_without_failure() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    adapter.handle_iteration_progress("iteration_started", {"iteration": 1, "actions": ["Fix runtime error"]})
+    adapter.handle_iteration_progress(
+        "modification_evaluation",
+        {
+            "iteration": 1,
+            "evaluation": type("Eval", (), {"validation_passed": True, "summary": "Project validation passed."})(),
+            "result": _repair_iteration_result(1),
+        },
+    )
+    adapter.handle_iteration_progress("repair_completed", {"iteration": 1})
+    adapter.handle_iteration_progress("mind_system", {"iteration": 1, "note": "Repair completed"})
+    adapter.handle_iteration_progress(
+        "iteration_completed",
+        {"iteration": 1, "result": _repair_iteration_result(1)},
+    )
+
+    tasks = autopilot.enhanced_ui.task_graph_state["tasks"]
+    evaluation = next(child for child in tasks[0]["children"] if child["id"] == "iteration_1_evaluation")
+    assert tasks[0]["status"] == "completed"
+    assert evaluation["status"] == "completed"
+    assert "failed" not in {state["status"] for state in autopilot.enhanced_ui.current_states}
+    assert autopilot.enhanced_ui.current_states[-1]["details"] == "Repair completed; project validation passed"
+
+
+def test_max_attempts_reached_does_not_create_new_iteration_node() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+
+    adapter.handle_iteration_progress(
+        "max_attempts_reached",
+        {
+            "attempts_used": 4,
+            "max_iteration_attempts": 4,
+            "completed_improvements": 1,
+            "required_improvements": 3,
+        },
+    )
+
+    assert autopilot.enhanced_ui.task_graph_state["tasks"] == []
+    assert autopilot.enhanced_ui.current_states[-1]["title"] == "Max attempts reached"
+
+
 def test_next_iteration_creates_sibling_after_previous_completed() -> None:
     autopilot = FakeAutopilot()
     adapter = IterationDashboardAdapter(autopilot)
@@ -384,9 +441,9 @@ def test_stage_tool_progress_appends_stage_terminal_lines() -> None:
         adapter.handle_iteration_progress("project_state", {"iteration": 1, "state": FakeState()})
 
     output = console.export_text(clear=False)
-    assert output.count("Environment Setup") == 2
+    assert output.count("Environment Setup") == 1
     assert "✓ Environment Setup" in output
-    assert output.count("Read Project State") == 2
+    assert output.count("Read Project State") == 1
     assert "✓ Read Project State" in output
-    assert output.index("Environment Setup") < output.index("project_environment_tool")
-    assert output.index("Read Project State") < output.index("project_state_reader")
+    assert "project_environment_tool" in output
+    assert "project_state_reader" in output

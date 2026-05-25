@@ -4,8 +4,10 @@ import subprocess
 from types import SimpleNamespace
 
 from autonomous_iteration.agents.iteration_agent import AutonomousIterationAgent
+from autonomous_iteration.agents import project_evaluator as project_evaluator_module
 from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
 from autonomous_iteration.models import IterationResult
+from tools.terminal_smoke import TerminalSmokeResult
 
 
 def _write_project(tmp_path, code: str) -> tuple[str, str]:
@@ -184,6 +186,223 @@ if __name__ == "__main__":
     assert result.validation_passed is True
     assert result.warning_check_result is None
     assert result.validation_errors == []
+
+
+def test_curses_terminal_smoke_failure_is_blocking(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+import curses
+import sys
+
+if not sys.stdout.isatty():
+    sys.exit(0)
+
+def main(stdscr):
+    stdscr.addstr(25, 0, "too low")
+
+if __name__ == "__main__":
+    curses.wrapper(main)
+""",
+    )
+    calls = []
+
+    def fake_terminal_smoke(command, **kwargs):
+        calls.append(command)
+        return TerminalSmokeResult(
+            command="python main.py",
+            success=False,
+            stdout="",
+            stderr="Traceback (most recent call last):\n_curses.error: addwstr() returned ERR",
+            exit_code=1,
+            duration=0.1,
+        )
+
+    monkeypatch.setattr(project_evaluator_module, "run_terminal_command", fake_terminal_smoke)
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build terminal game",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert calls
+    assert result.validation_passed is False
+    assert any("_curses.error" in error for error in result.validation_errors)
+    assert result.validation_issues[0].category == "runtime_error"
+    assert "terminal size" in result.validation_issues[0].recommended_action
+
+
+def test_safe_curses_terminal_smoke_passes(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+import curses
+
+def main(stdscr):
+    max_y, max_x = stdscr.getmaxyx()
+    if max_y < 2 or max_x < 10:
+        stdscr.addstr(0, 0, "small"[:max_x])
+        return
+    stdscr.addstr(0, 0, "ok")
+
+if __name__ == "__main__":
+    curses.wrapper(main)
+""",
+    )
+
+    def fake_terminal_smoke(command, **kwargs):
+        return TerminalSmokeResult(
+            command="python main.py",
+            success=True,
+            stdout="ok",
+            stderr="",
+            exit_code=0,
+            duration=0.1,
+        )
+
+    monkeypatch.setattr(project_evaluator_module, "run_terminal_command", fake_terminal_smoke)
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build terminal game",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert result.validation_passed is True
+    assert result.validation_errors == []
+
+
+def test_relative_project_path_does_not_double_relative_import_entry(tmp_path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    app, readme = _write_project(
+        project,
+        """
+import curses
+
+def main(stdscr):
+    max_y, max_x = stdscr.getmaxyx()
+    if max_y and max_x:
+        stdscr.addstr(0, 0, "ok"[:max_x])
+
+if __name__ == "__main__":
+    curses.wrapper(main)
+""",
+    )
+
+    def fake_terminal_smoke(command, **kwargs):
+        return TerminalSmokeResult(
+            command="python main.py",
+            success=True,
+            stdout="ok",
+            stderr="",
+            exit_code=0,
+            duration=0.1,
+        )
+
+    monkeypatch.setattr(project_evaluator_module, "run_terminal_command", fake_terminal_smoke)
+    monkeypatch.chdir(tmp_path)
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build terminal game",
+        project_path="project",
+        written_files=["project/main.py"],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert result.validation_passed is True
+    assert not any("Import-only smoke test exited" in error for error in result.validation_errors)
+
+
+def test_terminal_smoke_skipped_keeps_static_risk_warning(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+import curses
+
+def main(stdscr):
+    stdscr.addstr(25, 0, "too low")
+
+if __name__ == "__main__":
+    curses.wrapper(main)
+""",
+    )
+
+    def fake_terminal_smoke(command, **kwargs):
+        return TerminalSmokeResult(
+            command="python main.py",
+            success=True,
+            stdout="",
+            stderr="",
+            exit_code=0,
+            duration=0.0,
+            skipped=True,
+            skip_reason="PTY terminal smoke is not available on this platform.",
+        )
+
+    monkeypatch.setattr(project_evaluator_module, "run_terminal_command", fake_terminal_smoke)
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build terminal game",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert result.validation_passed is True
+    assert any("Static curses risk" in warning for warning in result.warnings)
+
+
+def test_readme_runtime_contract_mismatch_is_validation_issue(tmp_path, monkeypatch) -> None:
+    app = tmp_path / "main.py"
+    readme = tmp_path / "README.md"
+    app.write_text(
+        """
+import curses
+
+def main(stdscr):
+    pass
+
+if __name__ == "__main__":
+    curses.wrapper(main)
+""",
+        encoding="utf-8",
+    )
+    readme.write_text(
+        "## Overview\n\nA game implemented using pygame.\n\n## Run\n\n```bash\npython main.py\n```\n",
+        encoding="utf-8",
+    )
+
+    def fake_terminal_smoke(command, **kwargs):
+        return TerminalSmokeResult(
+            command="python main.py",
+            success=True,
+            stdout="",
+            stderr="",
+            exit_code=0,
+            duration=0.1,
+        )
+
+    monkeypatch.setattr(project_evaluator_module, "run_terminal_command", fake_terminal_smoke)
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build game",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert result.validation_passed is False
+    assert any("Runtime contract mismatch" in error for error in result.validation_errors)
+    assert any(issue.category == "product_intent_drift" for issue in result.validation_issues)
 
 
 def test_modification_evaluator_failure_defaults_to_project_evaluator_tool() -> None:

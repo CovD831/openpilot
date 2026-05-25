@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 import pytest
 
 from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.improvement_context import ImprovementContextHelper
+from autonomous_iteration.task_models import TaskExecutionResult, TaskStatus
 from autonomous_iteration.task_executor import AutonomousTaskExecutor
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from metadata import (
     FailureMetadata,
+    FileArtifactMetadata,
     ResultStatus,
+    TaskResultMetadata,
+    TextArtifactMetadata,
     ToolExecutionEnvelopeMetadata,
     ToolInputMetadata,
     ToolResultMetadata,
@@ -116,6 +121,93 @@ def _tool_envelope(tool_name: str, data: dict, input_metadata: ToolInputMetadata
         failure=failure,
         timeout_override=data.get("timeout_override"),
     )
+
+
+def test_runtime_applies_project_command_context_to_command_metadata(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    runtime = object.__new__(IntelligentAutopilot)
+    runtime._project_environments = {
+        str(project.resolve()): {
+            "project_path": str(project),
+            "command_cwd": str(project),
+            "command_env": {"VIRTUAL_ENV": str(project / ".venv"), "PATH": f"{project / '.venv' / 'bin'}:/usr/bin"},
+            "python_command": str(project / ".venv" / "bin" / "python"),
+            "pip_command": str(project / ".venv" / "bin" / "pip"),
+        }
+    }
+
+    metadata = ToolInputMetadata.from_mapping(
+        "command_executor",
+        {
+            "command": "python main.py",
+            "cwd": str(project),
+            "env": {"PYGAME_HIDE_SUPPORT_PROMPT": "1", "PATH": "/usr/bin"},
+        },
+    )
+
+    updated = runtime._apply_project_command_context("command_executor", metadata)
+
+    assert updated.cwd == str(project)
+    assert updated.command == shlex.join([str(project / ".venv" / "bin" / "python"), "main.py"])
+    assert updated.env["VIRTUAL_ENV"] == str(project / ".venv")
+    assert updated.env["PATH"].startswith(str(project / ".venv" / "bin"))
+    assert updated.env["PYGAME_HIDE_SUPPORT_PROMPT"] == "1"
+
+
+def test_collect_written_files_reads_typed_tool_result_metadata(tmp_path) -> None:
+    runtime = object.__new__(IntelligentAutopilot)
+    output = FileArtifactMetadata(file_path=str(tmp_path / "app.py"))
+    result = TaskExecutionResult(
+        task_id="task",
+        status=TaskStatus.COMPLETED,
+        result_metadata=TaskResultMetadata(
+            task_id="task",
+            status=ResultStatus.SUCCESS,
+            result=TextArtifactMetadata(
+                content="completed",
+                attributes={
+                    "tool_calls": [
+                        {
+                            "tool": "file_writer",
+                            "success": True,
+                            "result": output,
+                            "input_metadata": {"file_path": str(tmp_path / "fallback.py")},
+                        }
+                    ]
+                },
+            ),
+        ),
+    )
+
+    assert runtime._collect_written_files([result]) == [str(tmp_path / "app.py")]
+
+
+def test_collect_written_files_falls_back_to_input_metadata_file_path(tmp_path) -> None:
+    runtime = object.__new__(IntelligentAutopilot)
+    result = TaskExecutionResult(
+        task_id="task",
+        status=TaskStatus.COMPLETED,
+        result_metadata=TaskResultMetadata(
+            task_id="task",
+            status=ResultStatus.SUCCESS,
+            result=TextArtifactMetadata(
+                content="completed",
+                attributes={
+                    "tool_calls": [
+                        {
+                            "tool": "file_writer",
+                            "success": True,
+                            "result": {},
+                            "input_metadata": {"file_path": str(tmp_path / "fallback.py")},
+                        }
+                    ]
+                },
+            ),
+        ),
+    )
+
+    assert runtime._collect_written_files([result]) == [str(tmp_path / "fallback.py")]
 
 
 class FakeLLM:

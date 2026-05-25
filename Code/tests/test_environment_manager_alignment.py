@@ -72,3 +72,8 @@ def test_project_environment_tool_uses_injected_manager_without_real_venv(tmp_pa
     assert fake_manager.created == [".venv"]
     assert fake_manager.installed_packages == [(".venv", "pygame")]
     assert not (project / ".venv").exists()
+    assert result.result.command_cwd == str(project)
+    assert result.result.python_command.endswith(".venv/bin/python")
+    assert result.result.pip_command.endswith(".venv/bin/pip")
+    assert result.result.command_env["VIRTUAL_ENV"].endswith(".venv")
+    assert str(project / ".venv" / "bin") in result.result.command_env["PATH"]

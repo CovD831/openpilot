@@ -275,6 +275,9 @@ class CommandTool:
         start_time = time.time()
 
         try:
+            process_env = os.environ.copy()
+            if env:
+                process_env.update(env)
             result = subprocess.run(
                 command,
                 shell=True,
@@ -282,7 +285,7 @@ class CommandTool:
                 text=True,
                 timeout=timeout,
                 cwd=cwd,
-                env=env or os.environ.copy()
+                env=process_env,
             )
 
             duration = time.time() - start_time
@@ -361,11 +364,12 @@ def command_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
     if not command:
         raise ValueError("Invalid input: command is required")
 
-    mode_value = str(params.get("mode") or ExecutionMode.DRY_RUN.value)
+    mode_value = _normalize_execution_mode(str(params.get("mode") or ExecutionMode.DRY_RUN.value))
     try:
         mode = ExecutionMode(mode_value)
     except ValueError as exc:
-        raise ValueError(f"Invalid input: unsupported command execution mode: {mode_value}") from exc
+        allowed = ", ".join(item.value for item in ExecutionMode)
+        raise ValueError(f"Invalid input: unsupported command execution mode: {mode_value}. Allowed modes: {allowed}") from exc
 
     timeout = params.get("timeout", 30)
     cwd = params.get("cwd")
@@ -385,3 +389,13 @@ def command_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
         if isinstance(risk_level, RiskLevel):
             risk_assessment["risk_level"] = risk_level.value
     return payload
+
+
+def _normalize_execution_mode(mode_value: str) -> str:
+    normalized = str(mode_value or "").strip().lower()
+    aliases = {
+        "execute": ExecutionMode.AUTOMATIC.value,
+        "exec": ExecutionMode.AUTOMATIC.value,
+        "run": ExecutionMode.AUTOMATIC.value,
+    }
+    return aliases.get(normalized, normalized)

@@ -9,6 +9,7 @@ Execution -> Modification Evaluation -> Mind System.
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -64,7 +65,10 @@ class AutonomousIterationAgent:
         if required_successful_iterations is not None:
             required_successful_improvements = required_successful_iterations
         self.required_successful_improvements = required_successful_improvements
-        self.max_iteration_attempts = max_iteration_attempts
+        self.max_iteration_attempts = max(
+            max_iteration_attempts,
+            self.minimum_attempt_budget(required_successful_improvements),
+        )
         self.llm_client = llm_client or getattr(evaluator, "llm_client", None)
         self.memory_store = memory_store
         self.memory_context_builder = memory_context_builder
@@ -161,6 +165,8 @@ class AutonomousIterationAgent:
         designed_tasks: list[DesignedImprovementTask] = []
         diagnoses = []
         mind_notes: list[str] = []
+        completed_goal_titles: list[str] = []
+        repair_attempts = 0
         completed_improvements = 0
         attempts_used = 0
         improvement_report: dict[str, Any] | None = None
@@ -179,6 +185,23 @@ class AutonomousIterationAgent:
         self._notify(on_progress, "validation", {"attempt": attempts_used, "evaluation": current, "baseline": True})
 
         while completed_improvements < self.required_successful_improvements:
+            if attempts_used >= self.max_iteration_attempts:
+                failure_context = self._budget_exhausted_context(attempts_used, completed_improvements)
+                self._notify(
+                    on_progress,
+                    "max_attempts_reached",
+                    {
+                        "attempts_used": attempts_used,
+                        "max_iteration_attempts": self.max_iteration_attempts,
+                        "completed_improvements": completed_improvements,
+                        "required_improvements": self.required_successful_improvements,
+                        "repair_attempts": repair_attempts,
+                        "evaluation": current,
+                        **failure_context,
+                    },
+                )
+                break
+
             project_state = self._read_project_state(
                 reader=read_project_state,
                 goal=goal,
@@ -370,20 +393,6 @@ class AutonomousIterationAgent:
                 }
                 is_repair = True
 
-            if attempts_used >= self.max_iteration_attempts:
-                self._notify(
-                    on_progress,
-                    "max_attempts_reached",
-                    {
-                        "attempts_used": attempts_used,
-                        "max_iteration_attempts": self.max_iteration_attempts,
-                        "completed_improvements": completed_improvements,
-                        "required_improvements": self.required_successful_improvements,
-                        "evaluation": current,
-                    },
-                )
-                break
-
             attempts_used += 1
             self._notify(
                 on_progress,
@@ -450,6 +459,9 @@ class AutonomousIterationAgent:
                 is_repair,
                 improvement_report,
             )
+            if is_repair and iteration_result.success and current.validation_passed:
+                iteration_result.repair_completed = True
+                repair_attempts += 1
             evaluations.append(current)
             self._notify(
                 on_progress,
@@ -464,6 +476,9 @@ class AutonomousIterationAgent:
 
             if iteration_result.completed_successful_iteration:
                 completed_improvements += 1
+                selected_goal_title = self._selected_goal_title(improvement_report)
+                if selected_goal_title and selected_goal_title not in completed_goal_titles:
+                    completed_goal_titles.append(selected_goal_title)
                 iterations.append(iteration_result)
                 failure_context = {}
                 self._notify(
@@ -472,6 +487,21 @@ class AutonomousIterationAgent:
                     {
                         "completed_improvements": completed_improvements,
                         "required_improvements": self.required_successful_improvements,
+                        "evaluation": current,
+                        "result": iteration_result,
+                    },
+                )
+            elif iteration_result.repair_completed:
+                iterations.append(iteration_result)
+                failure_context = {}
+                self._notify(
+                    on_progress,
+                    "repair_completed",
+                    {
+                        "iteration": attempts_used,
+                        "completed_improvements": completed_improvements,
+                        "required_improvements": self.required_successful_improvements,
+                        "repair_attempts": repair_attempts,
                         "evaluation": current,
                         "result": iteration_result,
                     },
@@ -491,11 +521,11 @@ class AutonomousIterationAgent:
             note = self._record_mind_note(
                 goal,
                 attempts_used,
-                iteration_result.completed_successful_iteration,
+                iteration_result.completed_successful_iteration or iteration_result.repair_completed,
                 actions,
-                iteration_result.error or current.summary,
+                "Repair completed; project validation passed." if iteration_result.repair_completed else iteration_result.error or current.summary,
                 improvement_report,
-                failure_context if not iteration_result.completed_successful_iteration else None,
+                failure_context if not (iteration_result.completed_successful_iteration or iteration_result.repair_completed) else None,
             )
             mind_notes.append(note)
             self._notify(on_progress, "mind_system", {"note": note, "iteration": attempts_used})
@@ -508,7 +538,7 @@ class AutonomousIterationAgent:
 
         success = completed_improvements >= self.required_successful_improvements and current.validation_passed
         partial_success = bool(current.validation_passed or (evaluations and evaluations[0].validation_passed))
-        remaining_goals = self._remaining_goal_titles(iteration_goals, completed_improvements)
+        remaining_goals = self._remaining_goal_titles(iteration_goals, completed_goal_titles)
         agent_result = AutonomousIterationResult(
             project_state=project_states[-1] if project_states else None,
             iteration_goals=iteration_goals,
@@ -527,6 +557,7 @@ class AutonomousIterationAgent:
             "required_iterations": self.required_successful_improvements,
             "attempts_used": attempts_used,
             "max_iteration_attempts": self.max_iteration_attempts,
+            "repair_attempts": repair_attempts,
             "validation": current,
             "evaluation": current,
             "evaluations": evaluations,
@@ -552,6 +583,13 @@ class AutonomousIterationAgent:
     def run(self, **kwargs) -> dict[str, Any]:
         """Backward-compatible entry point."""
         return self.run_project_pipeline(**kwargs)
+
+    @staticmethod
+    def minimum_attempt_budget(required_successful_improvements: int) -> int:
+        if required_successful_improvements <= 0:
+            return 0
+        repair_retry_buffer = max(2, math.ceil(required_successful_improvements * 0.5))
+        return required_successful_improvements + repair_retry_buffer
 
     def _load_context(
         self,
@@ -914,22 +952,25 @@ class AutonomousIterationAgent:
         is_repair: bool,
         improvement_report: dict[str, Any] | None = None,
     ) -> bool:
-        notes = []
+        failure_notes = []
+        informational_notes = []
         if not evaluation.validation_passed:
-            notes.append("Hard validation did not pass after modification.")
-        if not iteration_result.changed_files:
-            notes.append("No changed files were reported by the task executor.")
+            failure_notes.append("Hard validation did not pass after modification.")
+        if not iteration_result.changed_files and not (is_repair and evaluation.validation_passed):
+            failure_notes.append("No changed files were reported by the task executor.")
         product_note = self._diagnosis_failure_note(improvement_report or {}, iteration_result, tasks)
         if product_note:
-            notes.append(product_note)
+            failure_notes.append(product_note)
         if tasks:
             criteria = [item for task in tasks for item in task.acceptance_criteria]
             if criteria:
-                notes.append("Acceptance criteria reviewed: " + "; ".join(criteria[:4]))
-        iteration_result.evaluation_notes = notes
-        if notes and not iteration_result.failure_reason:
-            iteration_result.failure_reason = "; ".join(notes)
+                informational_notes.append("Acceptance criteria reviewed: " + "; ".join(criteria[:4]))
+        iteration_result.evaluation_notes = [*failure_notes, *informational_notes]
+        if failure_notes and not iteration_result.failure_reason:
+            iteration_result.failure_reason = "; ".join(failure_notes)
             iteration_result.failure_stage = "Modification Evaluator"
+        if is_repair:
+            return False
         return bool(evaluation.validation_passed and not is_repair and iteration_result.changed_files and not product_note)
 
     def _diagnosis_failure_note(
@@ -1113,9 +1154,35 @@ class AutonomousIterationAgent:
             "required_improvements": self.required_successful_improvements,
         }
 
-    def _remaining_goal_titles(self, goals: list[ImprovementGoal], completed_improvements: int) -> list[str]:
+    def _budget_exhausted_context(self, attempts_used: int, completed_improvements: int) -> dict[str, Any]:
+        reason = (
+            "Attempt budget exhausted before starting next iteration. "
+            f"Used {attempts_used}/{self.max_iteration_attempts} attempts while completing "
+            f"{completed_improvements}/{self.required_successful_improvements} successful improvements."
+        )
+        return {
+            "failure_stage": "Iteration Budget",
+            "failed_iteration": attempts_used + 1,
+            "failed_tool": "iteration_controller",
+            "failure_reason": reason,
+            "retry_attempted": False,
+            "retry_history": [],
+        }
+
+    def _selected_goal_title(self, improvement_report: dict[str, Any] | None) -> str:
+        selected_goal = (improvement_report or {}).get("selected_goal") or {}
+        if isinstance(selected_goal, dict):
+            return str(selected_goal.get("title") or "").strip()
+        return str(getattr(selected_goal, "title", "") or "").strip()
+
+    def _remaining_goal_titles(self, goals: list[ImprovementGoal], completed_goal_titles: list[str]) -> list[str]:
+        completed = set(completed_goal_titles)
         titles = []
-        for goal in goals[completed_improvements:]:
+        for goal in goals:
+            if goal.id.startswith("repair_goal_"):
+                continue
+            if goal.title in completed:
+                continue
             if goal.title not in titles:
                 titles.append(goal.title)
         return titles

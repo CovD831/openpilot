@@ -42,6 +42,7 @@ class IterationResult(BaseModel):
     retry_attempted: bool = False
     retry_history: list[dict] = Field(default_factory=list)
     remaining_goals: list[str] = Field(default_factory=list)
+    repair_completed: bool = False
 
 
 class ProjectStateSnapshot(BaseModel):

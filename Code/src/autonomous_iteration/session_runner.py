@@ -356,8 +356,20 @@ class AutopilotSessionRunner:
         readme_result = runtime._finalize_project_readme(goal, results) if all_tasks_completed else None
         written_files = runtime._collect_written_files(results)
         project_path = runtime._infer_project_path_from_files(goal, written_files) if written_files else None
-        improvement_result = (
-            runtime._run_iterative_improvement(
+        can_iterate = bool(all_tasks_completed and project_path and written_files)
+        self._log(
+            "project_iteration_decision",
+            input_summary={
+                "all_tasks_completed": all_tasks_completed,
+                "written_files": written_files,
+                "project_path": str(project_path) if project_path else None,
+                "enable_iterative_improvement": getattr(runtime, "enable_iterative_improvement", None),
+                "required_successful_improvements": getattr(runtime, "required_successful_improvements", None),
+            },
+            output_summary={"will_attempt_iteration": can_iterate},
+        )
+        if can_iterate:
+            improvement_result = runtime._run_iterative_improvement(
                 goal=goal,
                 project_path=project_path,
                 written_files=written_files,
@@ -367,10 +379,47 @@ class AutopilotSessionRunner:
                     else None
                 ),
             )
-            if all_tasks_completed and project_path and written_files
-            else None
-        )
+            if improvement_result is None:
+                self._append_iteration_skip_note("Project improvement skipped: disabled or 0 iterations selected")
+        else:
+            improvement_result = None
+            self._append_iteration_skip_note(self._iteration_skip_reason(all_tasks_completed, written_files, project_path))
         return readme_result, written_files, project_path, improvement_result
+
+    def _iteration_skip_reason(
+        self,
+        all_tasks_completed: bool,
+        written_files: list[str],
+        project_path: Any,
+    ) -> str:
+        if not all_tasks_completed:
+            return "Project improvement skipped: task execution did not complete successfully"
+        if not written_files:
+            return "Project improvement skipped: no written files detected"
+        if not project_path:
+            return "Project improvement skipped: project path could not be inferred"
+        return "Project improvement skipped"
+
+    def _append_iteration_skip_note(self, reason: str) -> None:
+        runtime = self.runtime
+        enhanced_ui = getattr(runtime, "enhanced_ui", None)
+        if not enhanced_ui or not hasattr(enhanced_ui, "task_graph_state"):
+            return
+        tasks = list(enhanced_ui.task_graph_state.get("tasks") or [])
+        note_id = "project_improvement_skipped"
+        if any(task.get("id") == note_id for task in tasks if isinstance(task, dict)):
+            return
+        tasks.append(
+            {
+                "id": note_id,
+                "description": reason,
+                "status": "completed",
+                "kind": "note",
+            }
+        )
+        enhanced_ui.set_task_graph_state(tasks=tasks, current_task_id=None)
+        if hasattr(enhanced_ui, "log_activity"):
+            enhanced_ui.log_activity("info", reason)
 
     def _update_stats(self, decomposition: Any, improvement_result: dict[str, Any] | None) -> tuple[bool, str | None]:
         runtime = self.runtime

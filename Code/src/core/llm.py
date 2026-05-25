@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 
 from openai import APITimeoutError, OpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field
@@ -52,6 +52,17 @@ class LLMResponse(BaseModel):
     provider_details: dict[str, Any] = Field(default_factory=dict)
 
 
+class LLMStreamEvent(BaseModel):
+    """Public, UI-safe streaming progress from an LLM request."""
+
+    event_type: Literal["start", "delta", "done", "cache_hit", "retry"] = "delta"
+    text_delta: str = ""
+    visible_text_preview: str = ""
+    chars_received: int = 0
+    finish_reason: str | None = None
+    provider_details: dict[str, Any] = Field(default_factory=dict)
+
+
 class LLMClient:
     """OpenAI-compatible chat completion client with caching."""
 
@@ -69,7 +80,13 @@ class LLMClient:
         temp = request.temperature if request.temperature is not None else self.settings.temperature
         return f"{self.settings.model}:{request.response_format}:{temp}:{request.max_tokens}:{messages_str}"
 
-    def complete(self, request: LLMRequest, max_retries: int = 3, use_cache: bool = True) -> LLMResponse:
+    def complete(
+        self,
+        request: LLMRequest,
+        max_retries: int = 3,
+        use_cache: bool = True,
+        stream_callback: Callable[[LLMStreamEvent], None] | None = None,
+    ) -> LLMResponse:
         """Execute a chat completion and normalize the response.
 
         Args:
@@ -90,6 +107,15 @@ class LLMClient:
             cache_key = self._make_cache_key(request)
             status, cached = self._cache.get(cache_key)
             if status in ('hit', 'stale'):
+                self._emit_stream_event(
+                    stream_callback,
+                    LLMStreamEvent(
+                        event_type="cache_hit",
+                        visible_text_preview="Using cached response",
+                        chars_received=len(getattr(cached, "content", "") or ""),
+                        finish_reason=getattr(cached, "finish_reason", None),
+                    ),
+                )
                 return cached
 
         self.settings.require_ready()
@@ -114,7 +140,22 @@ class LLMClient:
             if request.response_format == "json_object":
                 payload["response_format"] = {"type": "json_object"}
 
-            response = self._create_completion_with_transport_retry(client, payload)
+            self._emit_stream_event(
+                stream_callback,
+                LLMStreamEvent(
+                    event_type="start",
+                    visible_text_preview="Waiting for model response",
+                    provider_details={"attempt": attempt + 1},
+                ),
+            )
+            if stream_callback is not None:
+                response = self._create_streaming_completion_with_transport_retry(
+                    client,
+                    payload,
+                    stream_callback,
+                )
+            else:
+                response = self._create_completion_with_transport_retry(client, payload)
 
             choice = response.choices[0]
             content, content_diagnostics = self._extract_message_content(choice.message)
@@ -128,7 +169,7 @@ class LLMClient:
 
                 if parsed_json is not None:
                     # Success! Return the response
-                    usage = response.usage.model_dump() if response.usage else {}
+                    usage = self._usage_metadata(response)
                     result = LLMResponse(
                         content=content,
                         parsed_json=parsed_json,
@@ -157,6 +198,15 @@ class LLMClient:
                         f"Failed to parse JSON (attempt {attempt + 1}/{max_retries})"
                     )
                     if attempt < max_retries - 1:
+                        self._emit_stream_event(
+                            stream_callback,
+                            LLMStreamEvent(
+                                event_type="retry",
+                                visible_text_preview="Response was not valid JSON; requesting repair",
+                                chars_received=len(content),
+                                provider_details={"attempt": attempt + 1},
+                            ),
+                        )
                         # Add a stronger instruction for the next attempt
                         repair_messages.append(
                             LLMMessage(
@@ -176,7 +226,7 @@ class LLMClient:
                         raise last_error
             else:
                 # Not JSON mode, return as-is
-                usage = response.usage.model_dump() if response.usage else {}
+                usage = self._usage_metadata(response)
                 result = LLMResponse(
                     content=content,
                     parsed_json=parsed_json,
@@ -204,6 +254,130 @@ class LLMClient:
         raise InvalidLLMResponseError(
             f"LLM returned invalid JSON after {max_retries} attempts."
         )
+
+    def _emit_stream_event(
+        self,
+        stream_callback: Callable[[LLMStreamEvent], None] | None,
+        event: LLMStreamEvent,
+    ) -> None:
+        if stream_callback is not None:
+            stream_callback(event)
+
+    def _create_streaming_completion_with_transport_retry(
+        self,
+        client: OpenAI,
+        payload: dict[str, Any],
+        stream_callback: Callable[[LLMStreamEvent], None],
+    ) -> Any:
+        streaming_payload = dict(payload)
+        streaming_payload["stream"] = True
+        stream = self._create_completion_with_transport_retry(client, streaming_payload)
+        return self._collect_streaming_completion(stream, stream_callback)
+
+    def _collect_streaming_completion(
+        self,
+        stream: Any,
+        stream_callback: Callable[[LLMStreamEvent], None],
+    ) -> Any:
+        from types import SimpleNamespace
+
+        content_parts: list[str] = []
+        finish_reason: str | None = None
+        model = self.settings.model
+        response_id = None
+        created = None
+        usage: Any = None
+        hidden_reasoning_fields: dict[str, int] = {}
+
+        for chunk in stream:
+            model = str(getattr(chunk, "model", None) or model)
+            response_id = getattr(chunk, "id", response_id)
+            created = getattr(chunk, "created", created)
+            usage = getattr(chunk, "usage", usage)
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            choice = choices[0]
+            finish_reason = getattr(choice, "finish_reason", None) or finish_reason
+            delta = getattr(choice, "delta", None)
+            hidden_reasoning_fields = self._merge_hidden_reasoning_fields(
+                hidden_reasoning_fields,
+                self._hidden_reasoning_field_lengths(delta),
+            )
+            text_delta = self._stream_delta_content(delta)
+            if text_delta:
+                content_parts.append(text_delta)
+                content = "".join(content_parts)
+                stream_callback(
+                    LLMStreamEvent(
+                        event_type="delta",
+                        text_delta=text_delta,
+                        visible_text_preview=content[-1200:],
+                        chars_received=len(content),
+                        provider_details={"hidden_reasoning_fields": dict(hidden_reasoning_fields)}
+                        if hidden_reasoning_fields
+                        else {},
+                    )
+                )
+
+        content = "".join(content_parts)
+        message = SimpleNamespace(content=content)
+        choice = SimpleNamespace(message=message, finish_reason=finish_reason)
+        response = SimpleNamespace(
+            choices=[choice],
+            usage=usage,
+            model=model,
+            id=response_id,
+            created=created,
+            provider_details={"hidden_reasoning_fields": hidden_reasoning_fields},
+        )
+        stream_callback(
+            LLMStreamEvent(
+                event_type="done",
+                visible_text_preview=content[-1200:],
+                chars_received=len(content),
+                finish_reason=finish_reason,
+                provider_details={"hidden_reasoning_fields": hidden_reasoning_fields}
+                if hidden_reasoning_fields
+                else {},
+            )
+        )
+        return response
+
+    def _stream_delta_content(self, delta: Any) -> str:
+        if delta is None:
+            return ""
+        if isinstance(delta, dict):
+            value = delta.get("content")
+        else:
+            value = getattr(delta, "content", None)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "\n".join(part for item in value if (part := self._content_part_text(item)))
+        return ""
+
+    def _hidden_reasoning_field_lengths(self, delta: Any) -> dict[str, int]:
+        fields = ("reasoning_content", "thinking", "reasoning")
+        lengths: dict[str, int] = {}
+        for field_name in fields:
+            if isinstance(delta, dict):
+                value = delta.get(field_name)
+            else:
+                value = getattr(delta, field_name, None)
+            if value is None:
+                continue
+            if isinstance(value, str):
+                lengths[field_name] = len(value)
+            else:
+                lengths[field_name] = len(str(value))
+        return lengths
+
+    def _merge_hidden_reasoning_fields(self, current: dict[str, int], update: dict[str, int]) -> dict[str, int]:
+        merged = dict(current)
+        for key, value in update.items():
+            merged[key] = merged.get(key, 0) + value
+        return merged
 
     def _create_completion_with_transport_retry(self, client: OpenAI, payload: dict[str, Any]) -> Any:
         attempts = max(0, int(getattr(self.settings, "transport_retries", 0))) + 1
@@ -345,7 +519,7 @@ class LLMClient:
         json_repair_attempt: int,
     ) -> dict[str, Any]:
         finish_reason = getattr(choice, "finish_reason", None)
-        return {
+        metadata = {
             "id": getattr(response, "id", None),
             "created": getattr(response, "created", None),
             "transport_retry_history": getattr(self, "_last_transport_retry_history", []),
@@ -353,6 +527,22 @@ class LLMClient:
             "content_diagnostics": content_diagnostics,
             "empty_length_response": finish_reason == "length" and not content.strip(),
         }
+        provider_details = getattr(response, "provider_details", None)
+        if isinstance(provider_details, dict):
+            metadata.update(provider_details)
+        return metadata
+
+    def _usage_metadata(self, response: Any) -> dict[str, Any]:
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return {}
+        if isinstance(usage, dict):
+            return usage
+        if hasattr(usage, "model_dump"):
+            return usage.model_dump()
+        if hasattr(usage, "__dict__"):
+            return dict(vars(usage))
+        return {}
 
     def _should_cache_response(self, response: LLMResponse) -> bool:
         if response.finish_reason == "length" and not response.content.strip():

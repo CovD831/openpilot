@@ -65,8 +65,8 @@ class AutonomousTaskExecutor:
             )
 
         improvement_report = improvement_report or {}
-        if is_repair and self._should_use_warning_bug_fix(evaluation):
-            return self._execute_warning_bug_fix(
+        if is_repair and self._should_use_bug_fix(evaluation):
+            return self._execute_bug_fix(
                 task=task,
                 iteration=iteration,
                 target_file=target_file,
@@ -451,11 +451,18 @@ class AutonomousTaskExecutor:
             "review_result": review_result,
         }, history
 
-    def _should_use_warning_bug_fix(self, evaluation: EvaluationResult) -> bool:
+    def _should_use_bug_fix(self, evaluation: EvaluationResult) -> bool:
         warning_check = getattr(evaluation, "warning_check_result", None)
-        return bool(warning_check and warning_check.requires_fix)
+        if warning_check and warning_check.requires_fix:
+            return True
+        issues = list(getattr(evaluation, "validation_issues", []) or [])
+        return any(
+            getattr(issue, "severity", "blocking") == "blocking"
+            and getattr(issue, "category", "") in {"runtime_error", "runtime_warning"}
+            for issue in issues
+        )
 
-    def _execute_warning_bug_fix(
+    def _execute_bug_fix(
         self,
         *,
         task: Task,
@@ -466,10 +473,15 @@ class AutonomousTaskExecutor:
         actions: list[str],
     ) -> IterationResult:
         warning_check = evaluation.warning_check_result
+        primary_issue = self._primary_bug_fix_issue(evaluation)
         fix_instruction = (
-            "Fix only the runtime warning that harms user-visible behavior. "
-            "Do not change gameplay semantics, controls, scoring, or unrelated product behavior."
+            "Fix only the runtime/program execution failure reported by validation. "
+            "Do not change product behavior, controls, scoring, UX goals, or unrelated semantics."
         )
+        if primary_issue is not None:
+            fix_instruction += f"\nValidation issue: {primary_issue.message}"
+            if primary_issue.recommended_action:
+                fix_instruction += f"\nRecommended action: {primary_issue.recommended_action}"
         if warning_check:
             fix_instruction += f"\nWarning reason: {warning_check.reason}"
             fix_instruction += f"\nRecommended fix: {warning_check.recommended_fix}"
@@ -484,7 +496,7 @@ class AutonomousTaskExecutor:
                     "cwd": str(target_file.parent),
                     "file_paths": [str(target_file)],
                     "timeout": 30,
-                    "warning_check_required": True,
+                    "warning_check_required": bool(warning_check and warning_check.requires_fix),
                     "warning_check_result": warning_check.to_json_dict() if warning_check else None,
                     "fix_instruction": fix_instruction,
                     "_llm_client": getattr(self.runtime, "llm_client", None),
@@ -503,8 +515,17 @@ class AutonomousTaskExecutor:
                 failure_stage=None,
                 failed_tool=None,
             )
-        reason = result.error_message or "bug_fix_tool failed to repair the runtime warning."
+        reason = result.error_message or "bug_fix_tool failed to repair the runtime execution issue."
         return self._failure(iteration, actions, reason, "bug_fix_tool")
+
+    def _primary_bug_fix_issue(self, evaluation: EvaluationResult):
+        issues = [
+            issue
+            for issue in (getattr(evaluation, "validation_issues", []) or [])
+            if getattr(issue, "category", "") in {"runtime_error", "runtime_warning"}
+        ]
+        blocking = [issue for issue in issues if getattr(issue, "severity", "blocking") == "blocking"]
+        return (blocking or issues or [None])[0]
 
     def run_code_generation_retry_pipeline(
         self,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from contextlib import contextmanager
 from datetime import datetime
+from textwrap import wrap
 from typing import Any, Callable, Optional
 
 from rich.console import Console, Group
@@ -35,6 +36,8 @@ class EnhancedUI:
         self.active_operations: list[Any] = []
         self.max_log_lines = 10
         self.max_active_trace_lines = 8
+        self.max_llm_stream_lines = 8
+        self.max_llm_stream_chars = 1200
         self.spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self._task_graph_spinner_index = 0
         self._task_graph_spinner_frame = self.spinner_frames[0]
@@ -273,6 +276,7 @@ class EnhancedUI:
             if reset_append_graph:
                 self._reset_append_task_graph()
             self._emit_task_graph_updates()
+            self._refresh_task_graph_tail()
         self._refresh_main_content()
 
     def set_current_task_state(
@@ -465,15 +469,13 @@ class EnhancedUI:
             self.console.print(Text(goal, style="bold"))
             self._append_task_graph_goal = goal
 
-        current_task_id = self.task_graph_state.get("current_task_id")
         for index, task in enumerate(tasks, 1):
-            self._emit_task_graph_node_update(task, current_task_id=current_task_id, index=index, depth=0)
+            self._emit_task_graph_node_update(task, index=index, depth=0)
 
     def _emit_task_graph_node_update(
         self,
         node: dict[str, Any],
         *,
-        current_task_id: str | None,
         index: int,
         depth: int,
     ) -> None:
@@ -485,10 +487,8 @@ class EnhancedUI:
         previous = self._append_task_graph_seen.get(node_id)
         children = node.get("children") or []
         emit_node = self._should_emit_append_task_graph_node(node, previous)
-        if not emit_node and self._is_pending_append_context_node(node, previous):
-            emit_node = any(self._append_child_has_progress(child) for child in children)
         if emit_node and previous != signature:
-            style, icon = self._status_style_icon(status, active=node.get("id") == current_task_id)
+            style, icon = self._status_style_icon(status)
             indent = "  " * depth
             effort = node.get("effort")
             suffix = f" ({effort})" if effort else ""
@@ -505,7 +505,6 @@ class EnhancedUI:
         for child_index, child in enumerate(children, 1):
             self._emit_task_graph_node_update(
                 child,
-                current_task_id=current_task_id,
                 index=child_index,
                 depth=depth + 1,
             )
@@ -516,42 +515,129 @@ class EnhancedUI:
         previous: tuple[str, str, str] | None,
     ) -> bool:
         status = str(node.get("status") or "pending").lower()
-        kind = str(node.get("kind") or "").lower()
-        failed = status in {"failed", "error"}
-        if failed:
-            return previous is None or previous[0].lower() not in {"failed", "error"}
-        if kind == "tool":
-            return status in {"completed", "success"} and previous is None
-        if kind in {"iteration", "agent", "stage"}:
-            if previous is None:
-                return status in {"running", "in_progress", "completed", "success"}
-            return (
-                status in {"completed", "success"}
-                and previous[0].lower() not in {"completed", "success"}
-            )
-        if kind in {"result", "note", "goal", "task", "context", "prompt_context", "rubric"}:
-            return previous is None and status != "pending"
-        return previous is None and status in {"running", "in_progress", "completed", "success"}
-
-    def _is_pending_append_context_node(
-        self,
-        node: dict[str, Any],
-        previous: tuple[str, str, str] | None,
-    ) -> bool:
-        if previous is not None:
+        if status not in {"completed", "success", "failed", "error"}:
             return False
-        kind = str(node.get("kind") or "").lower()
-        status = str(node.get("status") or "pending").lower()
-        return kind in {"iteration", "agent", "stage"} and status == "pending"
+        return previous is None or previous[0].lower() != status
 
-    def _append_child_has_progress(self, node: dict[str, Any]) -> bool:
-        status = str(node.get("status") or "pending").lower()
-        kind = str(node.get("kind") or "").lower()
-        if status in {"failed", "error", "completed", "success"}:
-            return True
-        if kind in {"result", "note", "goal", "task", "context", "prompt_context", "rubric"} and status != "pending":
-            return True
-        return any(self._append_child_has_progress(child) for child in node.get("children") or [])
+    def create_task_graph_live_tail(self) -> Group | Text:
+        """Render the current Task Graph path plus transient LLM stream text."""
+        path = self._task_graph_running_path()
+        rows: list[Text] = []
+
+        if path:
+            current_task_id = self.task_graph_state.get("current_task_id")
+            for depth, (node, index) in enumerate(path):
+                status = str(node.get("status") or "pending")
+                active = node.get("id") == current_task_id or depth == len(path) - 1
+                style, icon = self._status_style_icon(status, active=active)
+                label = self._task_graph_node_label(
+                    node,
+                    str(node.get("description") or "Untitled task"),
+                    index=index,
+                    depth=depth,
+                )
+                line = Text()
+                line.append("  " * depth, style="dim")
+                line.append(f"{icon} ", style=style)
+                line.append(label, style=style)
+                rows.append(line)
+
+        llm_rows = self._llm_stream_live_rows()
+        if llm_rows:
+            if rows:
+                rows.append(Text(""))
+            rows.extend(llm_rows)
+
+        if not rows:
+            return Text("")
+        return Group(*rows)
+
+    def _llm_stream_live_rows(self) -> list[Text]:
+        active_llm_ops = [
+            op for op in self.active_operations
+            if str(getattr(getattr(op, "type", ""), "value", getattr(op, "type", ""))) == "llm"
+        ]
+        if not active_llm_ops:
+            return []
+        op = active_llm_ops[-1]
+        rows: list[Text] = []
+        elapsed = (datetime.now() - op.start_time).total_seconds()
+        header = Text()
+        header.append(f"{op.spinner_frame or self._task_graph_spinner_frame} ", style="magenta")
+        header.append(f"{op.name} ", style="magenta")
+        header.append(f"running {elapsed:.1f}s", style="dim")
+        rows.append(header)
+        phase = getattr(op, "phase", "")
+        if phase:
+            rows.append(Text(f"  Phase: {phase}", style="dim"))
+        stream_text = str(getattr(op, "stream_text", "") or getattr(op, "response_preview", "") or "")
+        if stream_text:
+            rows.append(Text("  Visible response:", style="dim"))
+            for line in self._stream_preview_lines(stream_text):
+                rows.append(Text(f"    {line}", style="white"))
+        if getattr(op, "tokens_or_chars", 0):
+            rows.append(Text(f"  Response: {op.tokens_or_chars} chars", style="dim"))
+        return rows
+
+    def _stream_preview_lines(self, text: str) -> list[str]:
+        text = text[-self.max_llm_stream_chars:]
+        preview_lines: list[str] = []
+        for raw_line in text.splitlines() or [text]:
+            wrapped = wrap(raw_line, width=96, replace_whitespace=False, drop_whitespace=False) or [""]
+            preview_lines.extend(wrapped)
+        return preview_lines[-self.max_llm_stream_lines:]
+
+    def _task_graph_running_path(self) -> list[tuple[dict[str, Any], int]]:
+        tasks = self.task_graph_state.get("tasks") or []
+        current_task_id = self.task_graph_state.get("current_task_id")
+        if current_task_id:
+            path = self._task_graph_path_to_node(tasks, current_task_id)
+            if path and self._task_graph_path_is_active(path):
+                return path
+        return self._task_graph_deepest_running_path(tasks)
+
+    def _task_graph_path_to_node(
+        self,
+        nodes: list[dict[str, Any]],
+        node_id: str,
+        prefix: list[tuple[dict[str, Any], int]] | None = None,
+    ) -> list[tuple[dict[str, Any], int]]:
+        prefix = prefix or []
+        for index, node in enumerate(nodes, 1):
+            path = [*prefix, (node, index)]
+            if node.get("id") == node_id:
+                return path
+            child_path = self._task_graph_path_to_node(node.get("children") or [], node_id, path)
+            if child_path:
+                return child_path
+        return []
+
+    def _task_graph_deepest_running_path(
+        self,
+        nodes: list[dict[str, Any]],
+        prefix: list[tuple[dict[str, Any], int]] | None = None,
+    ) -> list[tuple[dict[str, Any], int]]:
+        prefix = prefix or []
+        for index, node in enumerate(nodes, 1):
+            path = [*prefix, (node, index)]
+            child_path = self._task_graph_deepest_running_path(node.get("children") or [], path)
+            if child_path:
+                return child_path
+            if self._task_graph_node_is_running(node):
+                return path
+        return []
+
+    def _task_graph_path_is_active(self, path: list[tuple[dict[str, Any], int]]) -> bool:
+        tail = path[-1][0]
+        status = str(tail.get("status") or "pending").lower()
+        return status not in {"completed", "success", "failed", "error"}
+
+    def _task_graph_node_is_running(self, node: dict[str, Any]) -> bool:
+        return str(node.get("status") or "").lower() in {"running", "in_progress"}
+
+    def _refresh_task_graph_tail(self) -> None:
+        if self.live is not None:
+            self.live.update(self.create_task_graph_live_tail(), refresh=True)
 
     def _task_graph_live_row_limit(self) -> int:
         return max(8, self._task_graph_panel_height(999) - 4)
@@ -582,7 +668,9 @@ class EnhancedUI:
         """Update active operations displayed in the activity panel."""
         self.active_operations = operations
         self._advance_task_graph_spinner()
-        if not self._append_task_graph_enabled:
+        if self._append_task_graph_enabled:
+            self._refresh_task_graph_tail()
+        else:
             self._refresh_main_content()
 
     def _advance_task_graph_spinner(self) -> None:
@@ -597,20 +685,57 @@ class EnhancedUI:
 
     @contextmanager
     def live_session(self, title: str = "OpenPilot Session"):
-        """Context manager for append-only task graph progress."""
+        """Context manager for terminal Task Graph history plus a live running tail."""
         self.console.print(Text(title, style="bold white"))
         self.console.print(Text("Press Ctrl+C to interrupt", style="dim"))
         self.console.print()
         self._append_task_graph_enabled = True
         self._reset_append_task_graph()
-        try:
+        with Live(
+            self.create_task_graph_live_tail(),
+            console=self.console,
+            refresh_per_second=4,
+            screen=False,
+            transient=True,
+        ) as live:
+            self.live = live
+            try:
+                yield self
+            finally:
+                self._append_task_graph_enabled = False
+                self.live = None
+                self.current_layout = None
+                self._main_content = None
+                self._reset_append_task_graph()
+
+    @contextmanager
+    def transient_operation_session(self):
+        """Show transient active operations when no task live session is running."""
+        if self.live is not None:
             yield self
-        finally:
-            self._append_task_graph_enabled = False
-            self.live = None
-            self.current_layout = None
-            self._main_content = None
-            self._reset_append_task_graph()
+            return
+        previous_append_enabled = self._append_task_graph_enabled
+        self._append_task_graph_enabled = True
+        with Live(
+            self.create_task_graph_live_tail(),
+            console=self.console,
+            refresh_per_second=4,
+            screen=False,
+            transient=True,
+        ) as live:
+            self.live = live
+            try:
+                yield self
+            finally:
+                self.live = None
+                self._append_task_graph_enabled = previous_append_enabled
+                self.set_active_operations(self._non_llm_active_operations())
+
+    def _non_llm_active_operations(self) -> list[Any]:
+        return [
+            op for op in self.active_operations
+            if str(getattr(getattr(op, "type", ""), "value", getattr(op, "type", ""))) != "llm"
+        ]
 
     def update_main_content(self, content):
         """Update the main content area."""

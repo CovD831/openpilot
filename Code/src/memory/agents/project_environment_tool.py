@@ -5,6 +5,7 @@ from __future__ import annotations
 import platform
 import sys
 import ast
+import os
 from pathlib import Path
 from typing import Any
 
@@ -123,6 +124,7 @@ def project_environment_tool_executor(input_metadata: ToolInputMetadata) -> Tool
     pip_executable = _venv_pip_path(env_path)
     run_command = _venv_run_command(project_path, entry_files + written_files, params.get("run_command"))
     setup_commands = _venv_setup_commands(env_name, detected_packages, dependency_source)
+    command_env = _venv_command_env(env_path)
     payload = {
         "project_path": str(project_path),
         "venv_path": str(env_path),
@@ -135,6 +137,10 @@ def project_environment_tool_executor(input_metadata: ToolInputMetadata) -> Tool
         "dependency_source": dependency_source,
         "setup_commands": setup_commands,
         "run_command": run_command,
+        "command_cwd": str(project_path),
+        "command_env": command_env,
+        "python_command": str(python_executable),
+        "pip_command": str(pip_executable),
         "operations": operations,
     }
     _save_environment_memory(memory_store, project_path, payload)
@@ -268,6 +274,16 @@ def _venv_run_command(project_path: Path, files: list[str], explicit_run_command
     except ValueError:
         relative = entry.name
     return f"{python_bin} {relative}"
+
+
+def _venv_command_env(env_path: Path) -> dict[str, str]:
+    bin_dir = env_path / ("Scripts" if platform.system() == "Windows" else "bin")
+    current_path = os.environ.get("PATH", "")
+    path_value = str(bin_dir) + (os.pathsep + current_path if current_path else "")
+    return {
+        "VIRTUAL_ENV": str(env_path),
+        "PATH": path_value,
+    }
 
 
 def _select_entry_file(project_path: Path, files: list[str]) -> Path | None:

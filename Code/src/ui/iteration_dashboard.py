@@ -357,7 +357,8 @@ class IterationDashboardAdapter:
             result = payload.get("result")
             validation_passed = bool(getattr(evaluation, "validation_passed", False))
             completed_successfully = bool(getattr(result, "completed_successful_iteration", False))
-            status = "completed" if validation_passed and completed_successfully else "failed"
+            repair_completed = bool(getattr(result, "repair_completed", False))
+            status = "completed" if validation_passed and (completed_successfully or repair_completed) else "failed"
             self.set_dashboard_task_status(self.dashboard_stage_id("evaluation"), status)
             summary = getattr(evaluation, "summary", "") or ("Validation passed" if validation_passed else "Validation did not pass")
             self.append_dashboard_stage_child(
@@ -424,7 +425,8 @@ class IterationDashboardAdapter:
             result = payload.get("result")
             success = bool(getattr(result, "success", False))
             completed_successfully = bool(getattr(result, "completed_successful_iteration", False))
-            status = "completed" if success and completed_successfully else "failed"
+            repair_completed = bool(getattr(result, "repair_completed", False))
+            status = "completed" if success and (completed_successfully or repair_completed) else "failed"
             self.set_dashboard_running_descendants_status(iteration_id, status)
             if status == "completed":
                 for stage_key in ("execution", "evaluation", "mind_system"):
@@ -438,7 +440,9 @@ class IterationDashboardAdapter:
             self.enhanced_ui.set_current_task_state(
                 title=f"Iteration {iteration} {'completed' if status == 'completed' else 'stopped'}",
                 details=(
-                    "Iteration completed successfully"
+                    "Repair completed; project validation passed"
+                    if repair_completed
+                    else "Iteration completed successfully"
                     if status == "completed"
                     else "Iteration finished without satisfying the required improvement"
                 ),
@@ -631,6 +635,16 @@ class IterationDashboardAdapter:
             )
             status = "completed"
             title = "Improvement applied"
+        elif event == "repair_completed":
+            self.set_dashboard_task_status(self.dashboard_stage_id("evaluation"), "completed")
+            self.append_dashboard_stage_child(
+                "evaluation",
+                child_id=f"repair_completed_{payload.get('iteration', 0)}",
+                description="Repair completed; project validation passed.",
+                kind="result",
+            )
+            status = "completed"
+            title = "Repair completed"
         elif event == "mind_system":
             self.set_dashboard_task_status(self.dashboard_stage_id("mind_system"), "completed")
             self.append_dashboard_stage_child(

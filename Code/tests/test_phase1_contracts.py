@@ -19,8 +19,11 @@ from agent_generator.models import DataArtifact, DataArtifactKind, Slot
 from agent_generator.pipeline_combiner import combine_pipelines
 from agent_generator.runner import _complete_empty_slots
 from agent_generator.slot_generator import generate_slots
+from core.instrumented_llm import InstrumentedLLMClient
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.openpilot_log import OpenPilotLogger
+from ui.enhanced_ui import EnhancedUI
+from ui.progress_tracker import ProgressTracker
 from metadata import (
     CollectedDataMetadata,
     ResultStatus,
@@ -185,6 +188,19 @@ def _fake_chat_response(content, *, finish_reason: str = "stop"):
         model="fake-model",
         id="fake-id",
         created=123,
+    )
+
+
+def _fake_stream_chunk(content: str = "", *, finish_reason: str | None = None, reasoning_content: str | None = None):
+    delta = SimpleNamespace(content=content)
+    if reasoning_content is not None:
+        delta.reasoning_content = reasoning_content
+    return SimpleNamespace(
+        choices=[SimpleNamespace(delta=delta, finish_reason=finish_reason)],
+        usage=None,
+        model="fake-model",
+        id="fake-stream-id",
+        created=456,
     )
 
 
@@ -510,6 +526,123 @@ def test_llm_extracts_text_from_content_parts(monkeypatch) -> None:
     diagnostics = response.provider_details["content_diagnostics"]
     assert diagnostics["content_type"] == "list"
     assert diagnostics["content_part_count"] == 2
+
+
+def test_llm_streaming_chunks_assemble_response_and_emit_events(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    events = []
+    payloads = []
+
+    def fake_create(_openai_client, payload):
+        payloads.append(payload)
+        return [
+            _fake_stream_chunk("Hello "),
+            _fake_stream_chunk("world", finish_reason="stop"),
+        ]
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(messages=[LLMMessage(role="user", content="stream")]),
+        stream_callback=events.append,
+    )
+
+    assert payloads[0]["stream"] is True
+    assert response.content == "Hello world"
+    assert response.finish_reason == "stop"
+    assert [event.text_delta for event in events if event.event_type == "delta"] == ["Hello ", "world"]
+    assert events[-1].event_type == "done"
+    assert events[-1].chars_received == len("Hello world")
+
+
+def test_llm_streaming_json_response_still_parses(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    events = []
+
+    def fake_create(_openai_client, _payload):
+        return [
+            _fake_stream_chunk('{"ok": '),
+            _fake_stream_chunk("true}", finish_reason="stop"),
+        ]
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="json")],
+            response_format="json_object",
+        ),
+        stream_callback=events.append,
+    )
+
+    assert response.parsed_json == {"ok": True}
+    assert response.content == '{"ok": true}'
+    assert any(event.event_type == "delta" for event in events)
+
+
+def test_llm_streaming_filters_reasoning_fields_from_visible_delta(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    events = []
+
+    def fake_create(_openai_client, _payload):
+        return [
+            _fake_stream_chunk("Visible", reasoning_content="private chain of thought"),
+            _fake_stream_chunk("", finish_reason="stop", reasoning_content="more hidden"),
+        ]
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(messages=[LLMMessage(role="user", content="stream")]),
+        stream_callback=events.append,
+    )
+
+    visible_deltas = "".join(event.text_delta for event in events if event.event_type == "delta")
+    assert visible_deltas == "Visible"
+    assert "private chain of thought" not in visible_deltas
+    assert response.provider_details["hidden_reasoning_fields"]["reasoning_content"] == len("private chain of thought") + len("more hidden")
+
+
+def test_llm_streaming_cache_hit_does_not_call_provider(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    calls = []
+
+    def fake_create(_openai_client, payload):
+        calls.append(payload)
+        return _fake_chat_response("cached content")
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+    request = LLMRequest(messages=[LLMMessage(role="user", content="cache me")])
+
+    first = client.complete(request)
+    events = []
+    second = client.complete(request, stream_callback=events.append)
+
+    assert first.content == second.content == "cached content"
+    assert len(calls) == 1
+    assert [event.event_type for event in events] == ["cache_hit"]
+
+
+def test_instrumented_llm_streaming_updates_tracker_and_clears_active_operation(monkeypatch) -> None:
+    ui = EnhancedUI(Console(record=True, width=100))
+    tracker = ProgressTracker(ui)
+    client = InstrumentedLLMClient(FakeLLMSettings(), tracker)
+
+    def fake_create(_openai_client, _payload):
+        return [
+            _fake_stream_chunk("Streaming "),
+            _fake_stream_chunk("preview", finish_reason="stop"),
+        ]
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(LLMRequest(messages=[LLMMessage(role="user", content="prompt")]))
+
+    assert response.content == "Streaming preview"
+    assert tracker.get_active_operations() == []
+    completed = tracker.get_completed_operations()
+    assert completed[0].stream_text == "Streaming preview"
+    assert completed[0].tokens_or_chars == len("Streaming preview")
 
 
 def test_llm_summarizer_uses_injected_client_without_real_llm() -> None:
@@ -1193,6 +1326,29 @@ def test_command_executor_automatic_runs_low_risk_command() -> None:
     assert result.output_metadata.result["stdout"].strip() == "ok"
     assert result.output_metadata.result["stderr"] == ""
     assert result.output_metadata.result["exit_code"] == 0
+
+
+def test_command_executor_normalizes_execute_mode_to_automatic() -> None:
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="execute-command",
+                tool_name="command_executor",
+                reason="capability_match",
+                input_metadata={
+                    "command": f"{sys.executable} -c \"print('ok')\"",
+                    "mode": "execute",
+                    "timeout": 10,
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert result.output_metadata.result["stdout"].strip() == "ok"
 
 
 def test_web_searcher_requires_query() -> None:
@@ -2294,6 +2450,8 @@ def test_embedder_uses_configured_embedding_model_by_default(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENPILOT_LLM_BASE_URL", "https://llm.example/v1")
     monkeypatch.setenv("OPENPILOT_LLM_API_KEY", "llm-key")
+    monkeypatch.delenv("OPENPILOT_EMBEDDING_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENPILOT_EMBEDDING_API_KEY", raising=False)
     monkeypatch.setenv("OPENPILOT_EMBEDDING_MODEL", "configured-embedding")
     monkeypatch.setattr("core.embedding.EmbeddingService", FakeEmbeddingService)
 

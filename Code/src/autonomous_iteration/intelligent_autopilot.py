@@ -109,7 +109,10 @@ class IntelligentAutopilot:
         if required_successful_iterations is not None:
             required_successful_improvements = required_successful_iterations
         self.required_successful_improvements = required_successful_improvements
-        self.max_iteration_attempts = max_iteration_attempts
+        self.max_iteration_attempts = max(
+            max_iteration_attempts,
+            AutonomousIterationAgent.minimum_attempt_budget(required_successful_improvements),
+        )
         self.prompt_for_project_improvement_iterations = prompt_for_project_improvement_iterations
         self.allow_reference_search = allow_reference_search
         self._project_improvement_iterations_prompted = False
@@ -675,7 +678,7 @@ class IntelligentAutopilot:
     ) -> ToolExecutionEnvelopeMetadata:
         if timeout_override is None:
             timeout_override = self._llm_tool_timeout_override(tool_name)
-        typed_input = input_metadata
+        typed_input = self._apply_project_command_context(tool_name, input_metadata)
         display_payload = typed_input.to_params()
 
         if self.enhanced_ui:
@@ -775,6 +778,80 @@ class IntelligentAutopilot:
             turn_id=1,
         )
         return result
+
+    def _apply_project_command_context(self, tool_name: str, input_metadata: ToolInputMetadata) -> ToolInputMetadata:
+        """Inject the project-local cwd and venv environment into command-like tools."""
+        if tool_name not in {"command_executor", "bug_fix_tool", "warning_check_tool"}:
+            return input_metadata
+        environment = self._environment_for_tool_input(input_metadata)
+        if not environment:
+            return input_metadata
+        updates: dict[str, Any] = {}
+        command_cwd = str(environment.get("command_cwd") or environment.get("project_path") or "").strip()
+        if command_cwd and input_metadata.cwd != command_cwd:
+            updates["cwd"] = command_cwd
+        command_env = environment.get("command_env") if isinstance(environment.get("command_env"), dict) else {}
+        if command_env:
+            merged_env = {str(key): str(value) for key, value in (input_metadata.env or {}).items()}
+            merged_env.update({str(key): str(value) for key, value in command_env.items()})
+            updates["env"] = merged_env
+        if input_metadata.command:
+            rewritten_command = self._rewrite_project_command(input_metadata.command, environment)
+            if rewritten_command != input_metadata.command:
+                updates["command"] = rewritten_command
+        if not updates:
+            return input_metadata
+        return input_metadata.model_copy(update=updates)
+
+    def _environment_for_tool_input(self, input_metadata: ToolInputMetadata) -> dict[str, Any]:
+        candidates = []
+        for raw in (
+            input_metadata.project_path,
+            input_metadata.cwd,
+            input_metadata.file_path,
+            *(input_metadata.file_paths or []),
+            *(input_metadata.written_files or []),
+        ):
+            if raw:
+                candidates.append(Path(str(raw)).expanduser())
+        environments = getattr(self, "_project_environments", {}) or {}
+        for candidate in candidates:
+            match = self._environment_for_path(candidate, environments)
+            if match:
+                return match
+        if len(environments) == 1:
+            return next(iter(environments.values()))
+        return {}
+
+    def _environment_for_path(self, path: Path, environments: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        for project_path, environment in environments.items():
+            try:
+                project = Path(project_path).expanduser().resolve()
+            except OSError:
+                project = Path(project_path).expanduser()
+            if resolved == project or project in resolved.parents:
+                return environment
+        return {}
+
+    def _rewrite_project_command(self, command: str, environment: dict[str, Any]) -> str:
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            return command
+        if not parts:
+            return command
+        executable = Path(parts[0]).name.lower()
+        if executable in {"python", "python3"} and environment.get("python_command"):
+            parts[0] = str(environment["python_command"])
+        elif executable in {"pip", "pip3"} and environment.get("pip_command"):
+            parts[0] = str(environment["pip_command"])
+        else:
+            return command
+        return shlex.join(parts)
 
     def _result_status_from_execution(self, status_text: str, success: bool) -> ResultStatus:
         if success:
@@ -1755,22 +1832,46 @@ class IntelligentAutopilot:
             task_payload = result.result_metadata.result if result.result_metadata else None
             tool_calls = getattr(task_payload, "attributes", {}).get("tool_calls", []) if task_payload else []
             for tool_call in tool_calls:
-                if tool_call.get("tool_name") != "file_writer" or not tool_call.get("success"):
+                if not isinstance(tool_call, dict):
                     continue
-                output_metadata = tool_call.get("output_metadata") or {}
-                output = (
-                    next((value for key, value in output_metadata.items() if key == "result"), None)
-                    if isinstance(output_metadata, dict)
-                    else None
-                )
-                path = output.get("file_path") if isinstance(output, dict) else None
+                tool_name = tool_call.get("tool_name") or tool_call.get("tool")
+                if tool_name != "file_writer" or not tool_call.get("success"):
+                    continue
+                output = self._tool_call_result_payload(tool_call)
+                path = self._file_path_from_payload(output)
                 if not path:
                     input_metadata = tool_call.get("input_metadata") or {}
-                    path = input_metadata.get("file_path") if isinstance(input_metadata, dict) else None
+                    path = self._file_path_from_payload(input_metadata)
                 if path and path not in seen:
                     files.append(path)
                     seen.add(path)
         return files
+
+    def _tool_call_result_payload(self, tool_call: dict[str, Any]) -> Any:
+        direct_result = tool_call.get("result")
+        if direct_result is not None:
+            return direct_result
+        output_metadata = tool_call.get("output_metadata") or {}
+        if hasattr(output_metadata, "result"):
+            return output_metadata.result
+        if isinstance(output_metadata, dict):
+            return output_metadata.get("result")
+        return None
+
+    def _file_path_from_payload(self, payload: Any) -> str | None:
+        if payload is None:
+            return None
+        file_path = getattr(payload, "file_path", None)
+        if file_path:
+            return str(file_path)
+        if isinstance(payload, dict):
+            direct = payload.get("file_path")
+            if direct:
+                return str(direct)
+            result = payload.get("result")
+            if isinstance(result, dict) and result.get("file_path"):
+                return str(result["file_path"])
+        return None
 
     def _infer_project_path_from_files(self, goal: str, written_files: list[str]) -> Path | None:
         goal_path = self._extract_goal_path(goal)

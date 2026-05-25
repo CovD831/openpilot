@@ -14,6 +14,10 @@ from typing import Any, Callable
 from autonomous_iteration.improvement_context import ImprovementContextHelper
 from autonomous_iteration.models import EvaluationResult
 from metadata import ProductIntentMetadata, ValidationIssueMetadata, WarningCheckResultMetadata
+from tools.terminal_smoke import (
+    looks_like_terminal_python_source,
+    run_terminal_command,
+)
 
 
 class ProjectEvaluatorAgent:
@@ -142,6 +146,7 @@ class ProjectEvaluatorAgent:
             written_files=written_files,
             current_code=code_text,
         )
+        target_files = [str(path) for path in existing_files]
 
         for path in existing_files:
             if path.suffix != ".py":
@@ -186,6 +191,20 @@ class ProjectEvaluatorAgent:
                 )
             )
 
+        for mismatch in self._runtime_contract_mismatches(readme_text, code_text):
+            errors.append(mismatch)
+            action = "Align the implementation runtime with the documented project contract, or update the docs if the runtime intentionally changed."
+            actions.append(action)
+            validation_issues.append(
+                self._issue(
+                    category="product_intent_drift",
+                    message=mismatch,
+                    recommended_action=action,
+                    product_intent=product_intent,
+                    target_files=target_files,
+                )
+            )
+
         if not static_review and code_text.strip():
             static_review = self._review_python_code(code_text)
 
@@ -226,9 +245,9 @@ class ProjectEvaluatorAgent:
                         self._issue(
                             category="runtime_error",
                             message=smoke["message"],
-                            recommended_action=actions[-1],
+                            recommended_action=smoke.get("recommended_action") or actions[-1],
                             product_intent=product_intent,
-                            target_files=[str(path) for path in existing_files],
+                            target_files=target_files,
                         )
                     )
             elif smoke["warning"]:
@@ -331,6 +350,24 @@ class ProjectEvaluatorAgent:
             return {"passed": False, "warning": False, "message": "Run command is empty."}
 
         args = self._normalize_python_args(project_path, args)
+        terminal_risks = self._terminal_static_risks(files or [])
+
+        if self._looks_terminal_interactive_python_project(files or [], args):
+            import_result = self._import_only_smoke_test(project_path, args, files or [])
+            if not import_result["passed"]:
+                return import_result
+            terminal_result = self._terminal_smoke_test(project_path, args, terminal_risks)
+            if not terminal_result["passed"]:
+                return terminal_result
+            if terminal_result["warning"]:
+                return terminal_result
+            if terminal_risks:
+                return {
+                    "passed": True,
+                    "warning": True,
+                    "message": "Terminal smoke passed, but static curses review found risk: " + "; ".join(terminal_risks[:2]),
+                }
+            return terminal_result
 
         if self._looks_interactive_python_project(files or [], args):
             import_result = self._import_only_smoke_test(project_path, args, files or [])
@@ -351,7 +388,7 @@ class ProjectEvaluatorAgent:
                 capture_output=True,
                 text=True,
                 timeout=self.smoke_timeout_seconds,
-                env=self._smoke_env(),
+                env=self._smoke_env(project_path),
             )
         except FileNotFoundError as exc:
             return {"passed": False, "warning": False, "message": f"Run command failed: {exc}"}
@@ -403,6 +440,60 @@ class ProjectEvaluatorAgent:
             return {"passed": True, "warning": True, "message": message, "warning_check_result": warning_check}
         return {"passed": True, "warning": False, "message": "Smoke test passed."}
 
+    def _terminal_smoke_test(self, project_path: Path, args: list[str], static_risks: list[str]) -> dict[str, Any]:
+        result = run_terminal_command(
+            args,
+            cwd=project_path,
+            env=self._smoke_env(project_path),
+            timeout=max(float(self.smoke_timeout_seconds), 2.0),
+            shell=False,
+        )
+        warning_check = self._assess_runtime_warnings(
+            command=result.command,
+            cwd=project_path,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+        if warning_check and warning_check.requires_fix:
+            return self._warning_fix_failure(warning_check)
+        if result.skipped:
+            message = result.skip_reason or "Terminal smoke skipped because PTY support is unavailable."
+            if static_risks:
+                message += " Static curses risk: " + "; ".join(static_risks[:2])
+            return {"passed": True, "warning": True, "message": message, "warning_check_result": warning_check}
+        if not result.success:
+            message = self._short_error("Terminal smoke test failed", result.stderr or result.stdout)
+            if static_risks:
+                message += " Static curses risk: " + "; ".join(static_risks[:2])
+            return {
+                "passed": False,
+                "warning": False,
+                "message": message,
+                "recommended_action": "Fix the terminal runtime failure by checking terminal size and preventing curses addstr/addch drawing outside the screen.",
+                "warning_check_result": warning_check,
+            }
+        if result.timed_out:
+            return {
+                "passed": True,
+                "warning": True,
+                "message": "Terminal smoke ran in a PTY without traceback before timeout; treating long-running interactive loop as runnable.",
+                "warning_check_result": warning_check,
+            }
+        if warning_check and (warning_check.warnings or warning_check.ignored_warnings):
+            return {
+                "passed": True,
+                "warning": True,
+                "message": warning_check.reason or "Terminal smoke emitted runtime warnings.",
+                "warning_check_result": warning_check,
+            }
+        return {"passed": True, "warning": False, "message": "Terminal smoke test passed.", "warning_check_result": warning_check}
+
+    def _looks_terminal_interactive_python_project(self, files: list[Path], args: list[str]) -> bool:
+        if not args or not self._is_python_executable(args[0]):
+            return False
+        source = "\n".join(self._read_text(path) for path in files if path.suffix == ".py")
+        return looks_like_terminal_python_source(source)
+
     def _looks_interactive_python_project(self, files: list[Path], args: list[str]) -> bool:
         if not args or not self._is_python_executable(args[0]):
             return False
@@ -422,10 +513,58 @@ class ProjectEvaluatorAgent:
                 imports.add(node.module.split(".", 1)[0])
         return bool(imports.intersection(interactive_imports))
 
+    def _terminal_static_risks(self, files: list[Path]) -> list[str]:
+        risks: list[str] = []
+        for path in files:
+            if path.suffix != ".py":
+                continue
+            source = self._read_text(path)
+            lowered = source.lower()
+            if not looks_like_terminal_python_source(source):
+                continue
+            has_draw_calls = bool(re.search(r"\.(addstr|addch|addnstr)\s*\(", source))
+            has_bounds_guard = any(marker in lowered for marker in ("getmaxyx", "terminal too small", "curses.error"))
+            if has_draw_calls and not has_bounds_guard:
+                risks.append(
+                    f"{path.name} uses curses draw calls without visible terminal-size bounds checks or curses error handling."
+                )
+            if "sys.stdout.isatty" in lowered and "sys.exit(0)" in lowered:
+                risks.append(
+                    f"{path.name} exits successfully in non-TTY mode, so non-interactive smoke tests cannot prove terminal runtime correctness."
+                )
+        return self._dedupe(risks)
+
+    def _runtime_contract_mismatches(self, readme_text: str, code_text: str) -> list[str]:
+        readme_lower = readme_text.lower()
+        code_lower = code_text.lower()
+        runtimes = {
+            "pygame": ("import pygame", "from pygame"),
+            "curses": ("import curses", "from curses"),
+            "tkinter": ("import tkinter", "from tkinter"),
+            "turtle": ("import turtle", "from turtle"),
+        }
+        documented = {name for name in runtimes if name in readme_lower}
+        implemented = {
+            name
+            for name, markers in runtimes.items()
+            if any(marker in code_lower for marker in markers)
+        }
+        if not documented or not implemented:
+            return []
+        mismatches = []
+        for runtime in sorted(documented - implemented):
+            if implemented:
+                mismatches.append(
+                    "Runtime contract mismatch: README references "
+                    f"{runtime}, but generated code uses {', '.join(sorted(implemented))} instead."
+                )
+        return mismatches
+
     def _import_only_smoke_test(self, project_path: Path, args: list[str], files: list[Path]) -> dict[str, Any]:
         entry = self._entry_module_from_args(project_path, args, files)
         if entry is None:
             return {"passed": True, "warning": True, "message": "Smoke test skipped full run: interactive project entry could not be imported safely."}
+        entry = entry.resolve()
 
         command = [
             args[0],
@@ -445,7 +584,7 @@ class ProjectEvaluatorAgent:
                 capture_output=True,
                 text=True,
                 timeout=self.import_smoke_timeout_seconds,
-                env=self._smoke_env(),
+                env=self._smoke_env(project_path),
             )
         except subprocess.TimeoutExpired as exc:
             combined = f"{exc.stdout or ''}\n{exc.stderr or ''}"
@@ -635,10 +774,16 @@ class ProjectEvaluatorAgent:
             return self._call_name(node.func)
         return ""
 
-    def _smoke_env(self) -> dict[str, str]:
+    def _smoke_env(self, project_path: Path | None = None) -> dict[str, str]:
         env = os.environ.copy()
         env.setdefault("TERM", "xterm-256color")
         env.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+        if project_path is not None:
+            venv_path = project_path / ".venv"
+            bin_dir = venv_path / ("Scripts" if os.name == "nt" else "bin")
+            if bin_dir.exists():
+                env["VIRTUAL_ENV"] = str(venv_path)
+                env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
         return env
 
     def _blocking_review_errors(self, static_review: dict[str, Any]) -> list[str]:
@@ -684,7 +829,17 @@ class ProjectEvaluatorAgent:
 
     def _looks_like_traceback(self, output: str) -> bool:
         lower = output.lower()
-        return any(marker in lower for marker in ("traceback", "syntaxerror", "modulenotfounderror", "importerror", "nameerror"))
+        return any(
+            marker in lower
+            for marker in (
+                "traceback",
+                "syntaxerror",
+                "modulenotfounderror",
+                "importerror",
+                "nameerror",
+                "_curses.error",
+            )
+        )
 
     def _is_interactive_environment_error(self, output: str) -> bool:
         lower = self._strip_ansi(output).lower()

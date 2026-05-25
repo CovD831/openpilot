@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -96,10 +97,14 @@ class ProjectIterationHelper:
         autopilot.required_successful_improvements = iterations
         autopilot.enable_iterative_improvement = iterations > 0
         autopilot.iterative_improvement.required_successful_improvements = iterations
+        minimum_attempts = self.minimum_attempt_budget(iterations)
+        if autopilot.max_iteration_attempts < minimum_attempts:
+            autopilot.max_iteration_attempts = minimum_attempts
+            autopilot.iterative_improvement.max_iteration_attempts = minimum_attempts
         if autopilot.enhanced_ui:
             autopilot.enhanced_ui.log_activity(
                 "info",
-                f"Project improvement iterations set to {iterations}",
+                f"Project improvement iterations set to {iterations}; attempt budget {autopilot.max_iteration_attempts}",
             )
             autopilot.enhanced_ui.set_current_task_state(
                 title="Project Improvement Setup",
@@ -112,6 +117,13 @@ class ProjectIterationHelper:
             {"iterations": iterations},
         )
         return iterations > 0
+
+    @staticmethod
+    def minimum_attempt_budget(required_successful_improvements: int) -> int:
+        if required_successful_improvements <= 0:
+            return 0
+        repair_retry_buffer = max(2, math.ceil(required_successful_improvements * 0.5))
+        return required_successful_improvements + repair_retry_buffer
 
     def _log(
         self,

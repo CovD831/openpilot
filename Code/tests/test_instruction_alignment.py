@@ -287,3 +287,34 @@ def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> No
     )
     assert calls[-1] == ("autopilot", "帮我做一个项目")
     assert calls == [("agent", "生成一个可复用的研究报告 agent"), ("autopilot", "帮我做一个项目")]
+
+
+def test_execute_goal_interactive_intercepts_shell_activation(monkeypatch) -> None:
+    from ui import enhanced_cli
+
+    calls = []
+
+    class Console:
+        def __init__(self) -> None:
+            self.messages = []
+
+        def print(self, *args, **kwargs):
+            self.messages.append(" ".join(str(arg) for arg in args))
+
+    class UI:
+        console = Console()
+
+    monkeypatch.setattr(enhanced_cli, "_classify_task_route", lambda task: calls.append(("classify", task)))
+
+    result = enhanced_cli._execute_goal_interactive(
+        "source /tmp/project/.venv/bin/activate",
+        UI(),
+        tracker=None,
+        llm_client=None,
+        logger=None,
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+    )
+
+    assert result is None
+    assert calls == []
+    assert any("Shell state command" in message for message in UI.console.messages)

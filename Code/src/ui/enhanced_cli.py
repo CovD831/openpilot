@@ -299,6 +299,8 @@ def _execute_goal_interactive(
     runtime_options: OpenPilotRuntimeOptions,
 ):
     """Execute a goal in interactive mode."""
+    if _handle_shell_state_command(goal, ui):
+        return None
     classification = _classify_task_route(goal)
     _show_task_route(ui, classification)
     if classification.route == "agent_generator":
@@ -320,6 +322,31 @@ def _classify_task_route(task: str) -> "TaskRouteMetadata":
 def _show_task_route(ui: EnhancedUI, classification: "TaskRouteMetadata") -> None:
     """Show the selected route without interrupting execution."""
     ui.console.print(f"[dim]Task route: {classification.route} ({classification.confidence:.2f}) - {classification.reason}[/dim]")
+
+
+def _handle_shell_state_command(user_input: str, ui: EnhancedUI) -> bool:
+    """Explain shell state commands that cannot affect the user's outer shell."""
+    text = " ".join(str(user_input or "").strip().split())
+    lowered = text.casefold()
+    if not text:
+        return False
+    state_commands = (
+        lowered.startswith("source ")
+        or lowered.startswith(". ")
+        or lowered.startswith("conda activate")
+        or lowered == "deactivate"
+        or lowered.startswith("deactivate ")
+        or lowered.startswith("export ")
+        or lowered.startswith("cd ")
+    )
+    if not state_commands:
+        return False
+    ui.console.print("[yellow]Shell state command was not executed inside OpenPilot.[/yellow]")
+    ui.console.print(
+        "[dim]OpenPilot runs project commands with the target project cwd and .venv injected through metadata. "
+        "If you want to change your outer terminal environment, run this command in your system shell instead.[/dim]"
+    )
+    return True
 
 
 def _show_help(ui: EnhancedUI):
