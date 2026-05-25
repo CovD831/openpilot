@@ -19,10 +19,14 @@ from metadata.artifacts import (
 from metadata.base import JsonValue, MetadataBase, MetadataKind
 from metadata.bugfix import BugFixAttemptMetadata, BugFixResultMetadata
 from metadata.project import (
+    DependencyStrategyMetadata,
     EnvironmentSyncMetadata,
+    GitRepositoryMetadata,
+    GitSnapshotMetadata,
     ImprovementAnalysisMetadata,
     ImprovementCandidateMetadata,
     ProjectDiagnosisMetadata,
+    ProjectDependencyMetadata,
     ProjectStateMetadata,
 )
 from metadata.warnings import WarningCheckResultMetadata, WarningItemMetadata
@@ -258,6 +262,19 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             annotations=attr_without("command", "cwd", "warnings", "ignored_warnings", "requires_fix", "reason", "recommended_fix"),
         )
     if tool_name == "project_environment_tool":
+        dependencies = [
+            item if isinstance(item, ProjectDependencyMetadata) else ProjectDependencyMetadata.model_validate(item)
+            for item in payload.get("dependencies") or []
+        ]
+        dependency_strategy = payload.get("dependency_strategy")
+        if isinstance(dependency_strategy, dict):
+            dependency_strategy = DependencyStrategyMetadata.model_validate(dependency_strategy)
+        git_repository = payload.get("git_repository")
+        if isinstance(git_repository, dict):
+            git_repository = GitRepositoryMetadata.model_validate(git_repository)
+        git_snapshot = payload.get("git_snapshot")
+        if isinstance(git_snapshot, dict):
+            git_snapshot = GitSnapshotMetadata.model_validate(git_snapshot)
         return EnvironmentSyncMetadata(
             project_path=str(payload.get("project_path") or ""),
             env_name=str(payload.get("env_name") or ".venv"),
@@ -277,6 +294,10 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             detected_packages=list(payload.get("detected_packages") or []),
             installed_packages=list(payload.get("installed_packages") or []),
             missing_packages=list(payload.get("missing_packages") or []),
+            dependencies=dependencies,
+            dependency_strategy=dependency_strategy if isinstance(dependency_strategy, DependencyStrategyMetadata) else None,
+            git_repository=git_repository if isinstance(git_repository, GitRepositoryMetadata) else None,
+            git_snapshot=git_snapshot if isinstance(git_snapshot, GitSnapshotMetadata) else None,
             operations=list(payload.get("operations") or []),
             warnings=list(payload.get("warnings") or []),
             annotations=attr_without(
@@ -293,10 +314,21 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
                 "detected_packages",
                 "installed_packages",
                 "missing_packages",
+                "dependencies",
+                "dependency_strategy",
+                "git_repository",
+                "git_snapshot",
                 "warnings",
             ),
         )
     if tool_name == "project_state_reader":
+        dependencies = [
+            item if isinstance(item, ProjectDependencyMetadata) else ProjectDependencyMetadata.model_validate(item)
+            for item in payload.get("dependencies") or []
+        ]
+        dependency_strategy = payload.get("dependency_strategy")
+        if isinstance(dependency_strategy, dict):
+            dependency_strategy = DependencyStrategyMetadata.model_validate(dependency_strategy)
         return ProjectStateMetadata(
             project_path=str(payload.get("project_path") or ""),
             goal=str(payload.get("goal") or ""),
@@ -314,6 +346,8 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             runtime_evidence=[str(item) for item in payload.get("runtime_evidence") or []],
             test_evidence=[str(item) for item in payload.get("test_evidence") or []],
             module_summaries=[str(item) for item in payload.get("module_summaries") or []],
+            dependencies=dependencies,
+            dependency_strategy=dependency_strategy if isinstance(dependency_strategy, DependencyStrategyMetadata) else None,
             annotations=attr_without(
                 "project_path",
                 "goal",
@@ -328,6 +362,8 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
                 "runtime_evidence",
                 "test_evidence",
                 "module_summaries",
+                "dependencies",
+                "dependency_strategy",
             ),
         )
     if tool_name == "project_improvement_tool":

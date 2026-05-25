@@ -210,7 +210,7 @@ def test_builtin_tools_register_expected_contracts() -> None:
     names = {tool.name for tool in registry.list_all()}
     removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 14
+    assert len(names) == 15
     assert {
         "bug_fix_tool",
         "command_executor",
@@ -219,6 +219,7 @@ def test_builtin_tools_register_expected_contracts() -> None:
         "file_writer",
         "multi_file_reader",
         "task_classifier",
+        "task_file_resolver",
         "warning_check_tool",
         "web_searcher",
     }.issubset(names)
@@ -1241,6 +1242,99 @@ def test_code_reviewer_rejects_generic_product_intent_drift() -> None:
     assert result["approved"] is False
     assert "product_intent_drift" in result["rejection_categories"]
     assert any("Product intent drift" in item for item in result["warnings"])
+
+
+def test_code_reviewer_rejects_unapproved_dependency_drift() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "import curses\n\ndef main(stdscr):\n    stdscr.addstr(0, 0, 'game')\n",
+            "language": "python",
+            "prompt_context": {
+                "dependency_strategy": {
+                    "preserve_packages": ["pygame"],
+                    "replaceable_packages": [],
+                    "rationale": ["Preserve pygame rendering/input capability."],
+                },
+                "dependencies": [
+                    {
+                        "kind": "project_dependency",
+                        "package_name": "pygame",
+                        "import_names": ["pygame"],
+                        "dependency_sources": ["installed", "import_scan"],
+                        "role": "interactive_window_rendering_input_game_loop",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert result["approved"] is False
+    assert "dependency_drift" in result["rejection_categories"]
+    assert any("Dependency drift" in item for item in result["warnings"])
+
+
+def test_code_reviewer_requires_git_snapshot_for_critical_dangerous_operations() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "value = eval(user_input)\n",
+            "language": "python",
+            "prompt_context": {},
+        }
+    )
+
+    assert result["approved"] is False
+    assert "dangerous_operation" in result["rejection_categories"]
+
+
+def test_code_reviewer_allows_dangerous_operations_with_git_snapshot_context() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "value = eval(user_input)\n",
+            "language": "python",
+            "prompt_context": {
+                "git_safety_context": {
+                    "project_path": "/tmp/project",
+                    "snapshot_available": True,
+                    "snapshot": {
+                        "kind": "git_snapshot",
+                        "commit_hash": "abc123",
+                        "created": True,
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["approved"] is True
+    assert "dangerous_operation" not in result["rejection_categories"]
+    assert result["git_safety_context"]["snapshot_available"] is True
+
+
+def test_code_reviewer_rejects_out_of_scope_destructive_operation_even_with_git_snapshot(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside.txt"
+    result = code_reviewer_executor(
+        {
+            "code": f"import os\nos.remove('{outside}')\n",
+            "language": "python",
+            "prompt_context": {
+                "git_safety_context": {
+                    "project_path": str(project),
+                    "snapshot_available": True,
+                    "snapshot": {
+                        "kind": "git_snapshot",
+                        "commit_hash": "abc123",
+                        "created": True,
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["approved"] is False
+    assert "safety_boundary" in result["rejection_categories"]
+    assert any("outside project" in item for item in result["warnings"])
 
 
 def test_tool_executor_uses_contract_metadata_defaults() -> None:

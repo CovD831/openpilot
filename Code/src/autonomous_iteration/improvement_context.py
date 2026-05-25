@@ -23,7 +23,7 @@ class ImprovementContextHelper:
         self.session_id_getter = session_id_getter
 
     def select_iteration_target_file(self, written_files: list[str], actions: list[str]) -> Path | None:
-        candidates = [Path(path).expanduser() for path in written_files if str(path).endswith(".py")]
+        candidates = [Path(path).expanduser() for path in written_files]
         existing = [path for path in candidates if path.exists()]
         if len(existing) == 1:
             result = existing[0]

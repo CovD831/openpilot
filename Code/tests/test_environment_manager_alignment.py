@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from types import SimpleNamespace
 
 from memory.agents.virtual_environment_manager import (
@@ -77,3 +78,13 @@ def test_project_environment_tool_uses_injected_manager_without_real_venv(tmp_pa
     assert result.result.pip_command.endswith(".venv/bin/pip")
     assert result.result.command_env["VIRTUAL_ENV"].endswith(".venv")
     assert str(project / ".venv" / "bin") in result.result.command_env["PATH"]
+    assert result.result.dependencies[0].package_name == "pygame"
+    assert result.result.dependencies[0].import_names == ["pygame"]
+    assert "pygame" in result.result.dependency_strategy.preserve_packages
+    if shutil.which("git"):
+        assert result.result.git_repository is not None
+        assert result.result.git_repository.initialized is True
+        assert result.result.git_snapshot is not None
+        assert ".venv/" in (project / ".gitignore").read_text(encoding="utf-8")
+    else:
+        assert any("Git safety unavailable" in warning for warning in result.result.warnings)

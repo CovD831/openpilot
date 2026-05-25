@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import re
 import uuid
+from pathlib import Path
 from typing import Any
 
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
@@ -106,27 +107,49 @@ def code_reviewer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetad
 
         product_intent_warnings = _product_intent_warnings(code, prompt_context)
         diagnosis_warnings = _diagnosis_warnings(prompt_context)
+        dependency_warnings = _dependency_drift_warnings(code, prompt_context)
+        git_safety_context = _git_safety_context(prompt_context)
+        git_snapshot_available = _has_valid_git_snapshot(git_safety_context)
+        safety_boundary_warnings = _safety_boundary_warnings(code, result.dangerous_operations, prompt_context)
         rejection_categories = []
         if product_intent_warnings:
             rejection_categories.append("product_intent_drift")
         if diagnosis_warnings:
             rejection_categories.append("diagnosis_alignment")
+        if dependency_warnings:
+            rejection_categories.append("dependency_drift")
+        if safety_boundary_warnings:
+            rejection_categories.append("safety_boundary")
+        if result.dangerous_operations and not git_snapshot_available:
+            rejection_categories.append("dangerous_operation")
         approved = bool(result.approved)
-        approved = bool(approved and not product_intent_warnings)
+        if not approved and result.dangerous_operations and git_snapshot_available and not safety_boundary_warnings:
+            approved = True
+        approved = bool(approved and not product_intent_warnings and not dependency_warnings and not safety_boundary_warnings)
+        suggestions = list(result.recommendations)
+        if git_snapshot_available and result.dangerous_operations:
+            suggestions = [
+                item for item in suggestions if "严重危险操作" not in item and "高危操作" not in item
+            ]
+            suggestions.append("Git safety snapshot present; dangerous operations are recorded for audit and diff review.")
         return {
             "review": (
                 "Approved"
                 if approved
                 else "Review found issues"
             ),
-            "issues": [issue.dict() if hasattr(issue, 'dict') else str(issue) for issue in result.dangerous_operations],
-            "suggestions": result.recommendations + product_intent_warnings + diagnosis_warnings,
+            "issues": [
+                issue.model_dump(mode="json") if hasattr(issue, "model_dump") else str(issue)
+                for issue in result.dangerous_operations
+            ],
+            "suggestions": suggestions + product_intent_warnings + diagnosis_warnings + dependency_warnings + safety_boundary_warnings,
             "approved": approved,
             "syntax_errors": result.syntax_errors,
-            "warnings": result.warnings + product_intent_warnings + diagnosis_warnings,
+            "warnings": result.warnings + product_intent_warnings + diagnosis_warnings + dependency_warnings + safety_boundary_warnings,
             "rejection_categories": rejection_categories,
             "quality_score": result.quality_score,
             "complexity_score": result.complexity_score,
+            "git_safety_context": git_safety_context,
         }
     except Exception as e:
         raise Exception(f"Code review failed: {e}") from e
@@ -175,6 +198,175 @@ def _diagnosis_warnings(prompt_context: dict[str, Any]) -> list[str]:
     if selected.get("acceptance_criteria"):
         return []
     return ["Diagnosis alignment: selected improvement candidate lacks observable acceptance criteria."]
+
+
+def _git_safety_context(prompt_context: dict[str, Any]) -> dict[str, Any]:
+    context = prompt_context.get("git_safety_context")
+    if isinstance(context, dict):
+        return context
+    project_context = prompt_context.get("project_context")
+    if isinstance(project_context, dict) and isinstance(project_context.get("git_safety_context"), dict):
+        return project_context["git_safety_context"]
+    return {}
+
+
+def _has_valid_git_snapshot(git_safety_context: dict[str, Any]) -> bool:
+    if not git_safety_context:
+        return False
+    if bool(git_safety_context.get("snapshot_available")):
+        return True
+    snapshot = git_safety_context.get("snapshot")
+    return isinstance(snapshot, dict) and bool(snapshot.get("commit_hash")) and (
+        bool(snapshot.get("created")) or bool(snapshot.get("skipped"))
+    )
+
+
+def _safety_boundary_warnings(
+    code: str,
+    dangerous_operations: list[DangerousOperation],
+    prompt_context: dict[str, Any],
+) -> list[str]:
+    warnings: list[str] = []
+    blocked_operations = {"sudo", "su", "rm -rf"}
+    for operation in dangerous_operations:
+        op = str(operation.operation).strip()
+        if op in blocked_operations or op.startswith(">/dev") or "/dev/" in op:
+            warnings.append(
+                f"Safety boundary violation: {op} cannot be made safe by a project Git snapshot."
+            )
+    warnings.extend(_project_scope_delete_warnings(code, prompt_context))
+    return _dedupe(warnings)
+
+
+def _project_scope_delete_warnings(code: str, prompt_context: dict[str, Any]) -> list[str]:
+    project_path = _project_path_from_context(prompt_context)
+    if project_path is None:
+        return []
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    warnings: list[str] = []
+    destructive_calls = {"os.remove", "os.unlink", "os.rmdir", "shutil.rmtree"}
+    reviewer = CodeReviewer()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func_name = reviewer._get_function_name(node.func)
+        if func_name not in destructive_calls or not node.args:
+            continue
+        first_arg = node.args[0]
+        if not isinstance(first_arg, ast.Constant) or not isinstance(first_arg.value, str):
+            continue
+        raw_path = first_arg.value
+        candidate = Path(raw_path).expanduser()
+        if not candidate.is_absolute():
+            continue
+        try:
+            candidate.resolve().relative_to(project_path)
+        except ValueError:
+            warnings.append(
+                f"Safety boundary violation: {func_name} targets path outside project: {raw_path}"
+            )
+    return warnings
+
+
+def _project_path_from_context(prompt_context: dict[str, Any]) -> Path | None:
+    candidates = []
+    git_context = _git_safety_context(prompt_context)
+    if isinstance(git_context, dict):
+        candidates.append(git_context.get("project_path"))
+    project_context = prompt_context.get("project_context")
+    if isinstance(project_context, dict):
+        candidates.append(project_context.get("project_path"))
+    for value in candidates:
+        if not value:
+            continue
+        try:
+            return Path(str(value)).expanduser().resolve()
+        except OSError:
+            continue
+    return None
+
+
+def _dependency_drift_warnings(code: str, prompt_context: dict[str, Any]) -> list[str]:
+    strategy = _dependency_strategy(prompt_context)
+    if not isinstance(strategy, dict):
+        return []
+    preserve = [str(item) for item in strategy.get("preserve_packages") or [] if str(item)]
+    replaceable = {_package_key(item) for item in strategy.get("replaceable_packages") or []}
+    if not preserve:
+        return []
+
+    lowered = code.lower()
+    dependencies = _dependency_items(prompt_context)
+    warnings: list[str] = []
+    for package in preserve:
+        package_key = _package_key(package)
+        if package_key in replaceable:
+            continue
+        import_names = _import_names_for_package(package, dependencies)
+        if not import_names:
+            import_names = [_default_import_for_package(package)]
+        if not any(_code_imports_name(lowered, import_name) for import_name in import_names):
+            warnings.append(
+                f"Dependency drift: preserved package '{package}' is no longer imported or used; keep existing useful dependencies unless the strategy approves a replacement."
+            )
+        if package_key == "pygame" and _looks_terminal_only(lowered):
+            warnings.append(
+                "Dependency drift: pygame capability was replaced by terminal/curses interaction without an approved replacement rationale."
+            )
+    return _dedupe(warnings)
+
+
+def _dependency_strategy(prompt_context: dict[str, Any]) -> dict[str, Any] | None:
+    strategy = prompt_context.get("dependency_strategy")
+    if isinstance(strategy, dict):
+        return strategy
+    diagnosis = prompt_context.get("diagnosis")
+    if isinstance(diagnosis, dict) and isinstance(diagnosis.get("dependency_strategy"), dict):
+        return diagnosis["dependency_strategy"]
+    return None
+
+
+def _dependency_items(prompt_context: dict[str, Any]) -> list[dict[str, Any]]:
+    dependencies = prompt_context.get("dependencies")
+    if not isinstance(dependencies, list):
+        diagnosis = prompt_context.get("diagnosis")
+        if isinstance(diagnosis, dict):
+            dependencies = diagnosis.get("dependencies")
+    return [item for item in dependencies or [] if isinstance(item, dict)]
+
+
+def _import_names_for_package(package: str, dependencies: list[dict[str, Any]]) -> list[str]:
+    package_key = _package_key(package)
+    for dependency in dependencies:
+        if _package_key(str(dependency.get("package_name") or "")) == package_key:
+            return [str(item) for item in dependency.get("import_names") or [] if str(item)]
+    return []
+
+
+def _default_import_for_package(package: str) -> str:
+    aliases = {
+        "pillow": "PIL",
+        "opencv-python": "cv2",
+        "pyyaml": "yaml",
+        "scikit-learn": "sklearn",
+    }
+    return aliases.get(_package_key(package), str(package).split("==", 1)[0])
+
+
+def _code_imports_name(lowered_code: str, import_name: str) -> bool:
+    lowered_name = str(import_name).lower()
+    return (
+        f"import {lowered_name}" in lowered_code
+        or f"from {lowered_name}" in lowered_code
+        or f"{lowered_name}." in lowered_code
+    )
+
+
+def _package_key(package: str) -> str:
+    return str(package).lower().replace("_", "-")
 
 
 def _looks_terminal_only(lowered_code: str) -> bool:

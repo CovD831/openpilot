@@ -27,6 +27,8 @@ class ProjectStateMetadata(MetadataBase):
     runtime_evidence: list[str] = Field(default_factory=list)
     test_evidence: list[str] = Field(default_factory=list)
     module_summaries: list[str] = Field(default_factory=list)
+    dependencies: list["ProjectDependencyMetadata"] = Field(default_factory=list)
+    dependency_strategy: "DependencyStrategyMetadata | None" = None
 
 
 class ProductIntentMetadata(MetadataBase):
@@ -90,6 +92,101 @@ class ReferenceInsightMetadata(MetadataBase):
     confidence: float = 0.0
 
 
+class ProjectDependencyMetadata(MetadataBase):
+    kind: Literal[MetadataKind.PROJECT_DEPENDENCY] = MetadataKind.PROJECT_DEPENDENCY
+    package_name: str
+    version: str = ""
+    import_names: list[str] = Field(default_factory=list)
+    dependency_sources: list[str] = Field(default_factory=list)
+    import_usage: list[str] = Field(default_factory=list)
+    role: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+
+
+class DependencyStrategyMetadata(MetadataBase):
+    kind: Literal[MetadataKind.DEPENDENCY_STRATEGY] = MetadataKind.DEPENDENCY_STRATEGY
+    preserve_packages: list[str] = Field(default_factory=list)
+    recommended_packages: list[str] = Field(default_factory=list)
+    replaceable_packages: list[str] = Field(default_factory=list)
+    rejected_removals: list[str] = Field(default_factory=list)
+    rationale: list[str] = Field(default_factory=list)
+    reference_queries: list[str] = Field(default_factory=list)
+    confidence: float = 0.5
+
+
+class TaskFileResolutionRequestMetadata(MetadataBase):
+    kind: Literal[MetadataKind.TASK_FILE_RESOLUTION_REQUEST] = MetadataKind.TASK_FILE_RESOLUTION_REQUEST
+    project_path: str
+    task_description: str = ""
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    target_file_hints: list[str] = Field(default_factory=list)
+    diagnosis: dict[str, JsonValue] = Field(default_factory=dict)
+    selected_candidate: dict[str, JsonValue] = Field(default_factory=dict)
+    goal: str = ""
+
+
+class RelatedProjectFileMetadata(MetadataBase):
+    kind: Literal[MetadataKind.RELATED_PROJECT_FILE] = MetadataKind.RELATED_PROJECT_FILE
+    file_path: str
+    name: str = ""
+    suffix: str = ""
+    description: str = ""
+    role: str = ""
+    relevance_score: float = 0.0
+    evidence: list[str] = Field(default_factory=list)
+    relation_source: str = "sketch"
+
+
+class TaskFileResolutionMetadata(MetadataBase):
+    kind: Literal[MetadataKind.TASK_FILE_RESOLUTION] = MetadataKind.TASK_FILE_RESOLUTION
+    task_description: str = ""
+    project_path: str = ""
+    related_files: list[RelatedProjectFileMetadata] = Field(default_factory=list)
+    primary_file: RelatedProjectFileMetadata | None = None
+    recommended_edit_kind: str = "source_code"
+    resolution_reason: str = ""
+
+
+class GitRepositoryMetadata(MetadataBase):
+    kind: Literal[MetadataKind.GIT_REPOSITORY] = MetadataKind.GIT_REPOSITORY
+    project_path: str = ""
+    initialized: bool = False
+    branch: str = ""
+    head: str = ""
+    dirty: bool = False
+    status: list[str] = Field(default_factory=list)
+    ignored_paths: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class GitSnapshotMetadata(MetadataBase):
+    kind: Literal[MetadataKind.GIT_SNAPSHOT] = MetadataKind.GIT_SNAPSHOT
+    project_path: str = ""
+    reason: str = ""
+    message: str = ""
+    commit_hash: str = ""
+    created: bool = False
+    skipped: bool = False
+    changed_files: list[str] = Field(default_factory=list)
+    status_before: list[str] = Field(default_factory=list)
+    status_after: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class GitDiffContextMetadata(MetadataBase):
+    kind: Literal[MetadataKind.GIT_DIFF_CONTEXT] = MetadataKind.GIT_DIFF_CONTEXT
+    project_path: str = ""
+    base_ref: str = "HEAD"
+    head_ref: str = ""
+    status: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    diff_stat: str = ""
+    diff_preview: str = ""
+    target_files: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class ImprovementCandidateMetadata(MetadataBase):
     kind: Literal[MetadataKind.IMPROVEMENT_CANDIDATE] = MetadataKind.IMPROVEMENT_CANDIDATE
     candidate_id: str
@@ -122,6 +219,8 @@ class ProjectDiagnosisMetadata(MetadataBase):
     ranked_candidate_ids: list[str] = Field(default_factory=list)
     selected_candidate: ImprovementCandidateMetadata | None = None
     reference_insights: list[ReferenceInsightMetadata] = Field(default_factory=list)
+    dependencies: list[ProjectDependencyMetadata] = Field(default_factory=list)
+    dependency_strategy: DependencyStrategyMetadata | None = None
     summary: str = ""
     candidate_shortage_reason: str = ""
     confidence: float = 0.5
@@ -174,6 +273,10 @@ class EnvironmentSyncMetadata(MetadataBase):
     detected_packages: list[str] = Field(default_factory=list)
     installed_packages: list[str] = Field(default_factory=list)
     missing_packages: list[str] = Field(default_factory=list)
+    dependencies: list[ProjectDependencyMetadata] = Field(default_factory=list)
+    dependency_strategy: DependencyStrategyMetadata | None = None
+    git_repository: GitRepositoryMetadata | None = None
+    git_snapshot: GitSnapshotMetadata | None = None
     operations: list[dict[str, JsonValue]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 

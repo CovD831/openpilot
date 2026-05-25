@@ -7,18 +7,26 @@ from metadata import (
     BugFixResultMetadata,
     CodeArtifactMetadata,
     CommandArtifactMetadata,
+    DependencyStrategyMetadata,
     FailureMetadata,
+    GitDiffContextMetadata,
+    GitRepositoryMetadata,
+    GitSnapshotMetadata,
     MetadataKind,
     ProductIntentMetadata,
     ProjectDiagnosisMetadata,
     ProjectDimensionAssessmentMetadata,
+    ProjectDependencyMetadata,
     ProjectObjectiveMetadata,
     ImprovementCandidateMetadata,
     ReferenceInsightMetadata,
+    RelatedProjectFileMetadata,
     ResultStatus,
     SuccessMetricMetadata,
     TaskResultMetadata,
     TaskRouteMetadata,
+    TaskFileResolutionMetadata,
+    TaskFileResolutionRequestMetadata,
     ToolInputMetadata,
     ToolResultMetadata,
     ValidationIssueMetadata,
@@ -162,6 +170,36 @@ def test_warning_check_metadata_serializes_items() -> None:
     assert payload["requires_fix"] is True
 
 
+def test_git_metadata_serializes_repository_snapshot_and_diff() -> None:
+    repository = GitRepositoryMetadata(
+        project_path="/tmp/project",
+        initialized=True,
+        branch="main",
+        head="abc123",
+        dirty=False,
+        ignored_paths=[".venv/"],
+    )
+    snapshot = GitSnapshotMetadata(
+        project_path="/tmp/project",
+        reason="before_write",
+        message="openpilot: safety snapshot before write",
+        commit_hash="abc123",
+        created=True,
+        changed_files=["app.py"],
+    )
+    diff = GitDiffContextMetadata(
+        project_path="/tmp/project",
+        base_ref="abc123",
+        head_ref="def456",
+        changed_files=["app.py"],
+        diff_stat="app.py | 2 +-",
+    )
+
+    assert repository.to_json_dict()["kind"] == MetadataKind.GIT_REPOSITORY
+    assert snapshot.to_json_dict()["kind"] == MetadataKind.GIT_SNAPSHOT
+    assert diff.to_json_dict()["kind"] == MetadataKind.GIT_DIFF_CONTEXT
+
+
 def test_product_intent_and_validation_issue_metadata_serialize() -> None:
     intent = ProductIntentMetadata(
         experience_type="interactive_app",
@@ -233,3 +271,64 @@ def test_project_diagnosis_metadata_serializes_ranked_candidates() -> None:
     assert payload["success_metrics"][0]["kind"] == MetadataKind.SUCCESS_METRIC
     assert payload["selected_candidate"]["candidate_id"] == "gap_cli_help"
     assert payload["reference_insights"][0]["kind"] == MetadataKind.REFERENCE_INSIGHT
+
+
+def test_dependency_metadata_serializes_with_diagnosis() -> None:
+    dependency = ProjectDependencyMetadata(
+        package_name="pygame",
+        version="2.6.1",
+        import_names=["pygame"],
+        dependency_sources=["installed", "import_scan"],
+        import_usage=["import pygame"],
+        role="interactive_window_rendering_input_game_loop",
+        confidence=0.91,
+    )
+    strategy = DependencyStrategyMetadata(
+        preserve_packages=["pygame"],
+        rationale=["Preserve pygame as existing rendering/input capability."],
+        confidence=0.85,
+    )
+    objective = ProjectObjectiveMetadata(goal="Build a game", project_type="interactive_app")
+    diagnosis = ProjectDiagnosisMetadata(
+        project_path="/tmp/game",
+        objective=objective,
+        dependencies=[dependency],
+        dependency_strategy=strategy,
+    )
+
+    payload = diagnosis.to_json_dict()
+
+    assert payload["dependencies"][0]["kind"] == MetadataKind.PROJECT_DEPENDENCY
+    assert payload["dependency_strategy"]["kind"] == MetadataKind.DEPENDENCY_STRATEGY
+    assert payload["dependency_strategy"]["preserve_packages"] == ["pygame"]
+
+
+def test_task_file_resolution_metadata_serializes() -> None:
+    request = TaskFileResolutionRequestMetadata(
+        project_path="/tmp/project",
+        task_description="Update README controls",
+        acceptance_criteria=["README documents controls."],
+        target_file_hints=["README.md"],
+    )
+    file = RelatedProjectFileMetadata(
+        file_path="/tmp/project/README.md",
+        name="README.md",
+        suffix=".md",
+        role="documentation",
+        relevance_score=1.0,
+        relation_source="target_hint",
+    )
+    resolution = TaskFileResolutionMetadata(
+        task_description=request.task_description,
+        project_path=request.project_path,
+        related_files=[file],
+        primary_file=file,
+        recommended_edit_kind="documentation",
+    )
+
+    payload = resolution.to_json_dict()
+
+    assert request.to_json_dict()["kind"] == MetadataKind.TASK_FILE_RESOLUTION_REQUEST
+    assert payload["kind"] == MetadataKind.TASK_FILE_RESOLUTION
+    assert payload["primary_file"]["kind"] == MetadataKind.RELATED_PROJECT_FILE
+    assert payload["recommended_edit_kind"] == "documentation"

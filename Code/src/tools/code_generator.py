@@ -276,6 +276,7 @@ class CodeGenerator:
 
         intent_constraints = product_intent.get("non_regression_constraints") or []
         disallowed_substitutions = product_intent.get("disallowed_substitutions") or []
+        dependency_guidance = self._dependency_guidance(prompt_context)
         intent_guidance = ""
         if product_intent:
             intent_guidance = (
@@ -300,16 +301,41 @@ TOOL TASK:
 PRODUCT QUALITY RUBRIC:
 {rubric_text}
 {intent_guidance}
+{dependency_guidance}
 
 TOOL OUTPUT REQUIREMENTS:
 1. Generate complete, executable {request.language.value} code for the target file.
 2. Return the full replacement source code, not a patch.
 3. Keep existing useful behavior unless the Prompt Context explicitly asks to replace it for product fit.
+3a. Preserve existing useful third-party packages from the dependency strategy. Do not replace them with stdlib-only or lower-capability substitutes unless the strategy explicitly approves the replacement.
 4. Include necessary imports, entry point, and concise comments for non-obvious logic.
 5. Improve the selected diagnosis candidate with observable acceptance-criteria evidence.
 6. Return only code in a fenced code block; do not include explanations outside the code block.
 {constraints}
 """
+
+    def _dependency_guidance(self, prompt_context: dict[str, Any]) -> str:
+        strategy = prompt_context.get("dependency_strategy")
+        if not isinstance(strategy, dict):
+            diagnosis = prompt_context.get("diagnosis")
+            if isinstance(diagnosis, dict):
+                strategy = diagnosis.get("dependency_strategy")
+        if not isinstance(strategy, dict):
+            return ""
+        preserve = [str(item) for item in strategy.get("preserve_packages") or [] if str(item)]
+        recommended = [str(item) for item in strategy.get("recommended_packages") or [] if str(item)]
+        replaceable = [str(item) for item in strategy.get("replaceable_packages") or [] if str(item)]
+        rationale = [str(item) for item in strategy.get("rationale") or [] if str(item)]
+        lines = ["\nDependency strategy:"]
+        if preserve:
+            lines.append("- Preserve useful existing packages: " + ", ".join(preserve[:8]))
+        if recommended:
+            lines.append("- Recommended packages are available if environment sync installs them first: " + ", ".join(recommended[:6]))
+        if replaceable:
+            lines.append("- Approved replaceable packages: " + ", ".join(replaceable[:6]))
+        if rationale:
+            lines.append("- Rationale: " + " | ".join(rationale[:4]))
+        return "\n".join(lines)
 
     def _constraint_lines(self, request: CodeGenerationRequest) -> str:
         constraints = []

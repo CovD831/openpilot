@@ -256,6 +256,42 @@ def test_autonomous_task_executor_success_path_and_logs(tmp_path) -> None:
     assert any(payload["source_type"] == "agent" and payload["source_name"] == "autonomous_iteration.task_executor" for payload in payloads)
 
 
+def test_autonomous_task_executor_routes_readme_task_to_documentation_writer(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    readme = tmp_path / "README.md"
+    app.write_text("print('old')\n", encoding="utf-8")
+    readme.write_text("# Game\n", encoding="utf-8")
+    runtime = FakeRuntime(tmp_path)
+
+    result = AutonomousTaskExecutor(runtime).execute_improvement(
+        goal="Improve project",
+        project_path=tmp_path,
+        written_files=[str(app), str(readme)],
+        run_command="",
+        readme_path=readme,
+        iteration=1,
+        evaluation=_evaluation(),
+        actions=["在README.md中添加完整的控制键说明和游戏规则简介"],
+        improvement_report={
+            "summary": "report",
+            "must_implement_next": ["README包含完整的控制键说明"],
+            "designed_tasks": [
+                {
+                    "description": "在README.md中添加完整的控制键说明和游戏规则简介",
+                    "target_files": [str(readme)],
+                    "acceptance_criteria": ["README包含完整的控制键说明"],
+                }
+            ],
+        },
+        is_repair=False,
+    )
+
+    assert result.success is True
+    tool_names = [call["tool_name"] if "tool_name" in call else call["tool"] for call in runtime.calls]
+    assert tool_names == ["file_writer"]
+    assert runtime.calls[0]["input_metadata"].file_path == str(readme)
+
+
 def test_autonomous_task_executor_retries_full_compact_surgical_on_timeout(tmp_path) -> None:
     app = tmp_path / "app.py"
     app.write_text("print('old')\n", encoding="utf-8")
@@ -335,7 +371,7 @@ def test_autonomous_task_executor_retries_product_intent_reviewer_rejection(tmp_
 @pytest.mark.parametrize(
     ("setup", "failed_tool", "reason_part"),
     [
-        (lambda runtime, app: app.unlink(), "file_selector", "No safe target file"),
+        (lambda runtime, app: app.unlink(), "task_file_resolver", "No related project file"),
         (lambda runtime, app: runtime.code_results.append({"success": True, "result": {"code": app.read_text(encoding="utf-8")}}), "code_generator", "did not change"),
         (lambda runtime, app: runtime.code_results.append({"success": True, "result": {"code": "def broken(:\n"}}), "code_generator", "syntax error"),
         (lambda runtime, app: setattr(runtime, "write_result", {"success": False, "error": "write failed"}), "file_writer", "write failed"),
@@ -393,10 +429,9 @@ def test_autonomous_task_executor_environment_failure_stage(tmp_path) -> None:
     assert "env failed" in (result.failure_reason or "")
 
 
-def test_autonomous_task_executor_file_reader_failure(tmp_path) -> None:
+def test_autonomous_task_executor_resolver_failure_for_missing_target(tmp_path) -> None:
     target = tmp_path / "missing.py"
     runtime = FakeRuntime(tmp_path)
-    runtime._select_iteration_target_file = lambda written_files, actions: target
 
     result = AutonomousTaskExecutor(runtime).execute_improvement(
         goal="Improve project",
@@ -412,8 +447,8 @@ def test_autonomous_task_executor_file_reader_failure(tmp_path) -> None:
     )
 
     assert result.success is False
-    assert result.failed_tool == "file_reader"
-    assert "Failed to read" in (result.failure_reason or "")
+    assert result.failed_tool == "task_file_resolver"
+    assert "No related project file" in (result.failure_reason or "")
 
 
 def test_intelligent_autopilot_apply_project_improvement_proxy_uses_task_executor(tmp_path) -> None:

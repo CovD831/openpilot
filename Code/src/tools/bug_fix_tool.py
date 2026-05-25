@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from metadata import (
     ToolResultMetadata,
     WarningCheckResultMetadata,
 )
+from memory.agents.git_manager_agent import GitManagerAgent, GitManagerError
 from tools.command_tool import command_executor
 from tools.file_reader import file_reader_executor
 from tools.file_writer import file_writer_executor
@@ -494,6 +496,16 @@ def _allowed_path(raw_path: str, allowed_files: dict[str, Path]) -> Path | None:
 
 def _write_changes(changes: dict[Path, str]) -> list[str]:
     modified_files: list[str] = []
+    if changes:
+        project_path = _common_project_path(list(changes))
+        try:
+            GitManagerAgent().snapshot(
+                project_path,
+                reason="bug_fix_tool_internal_write",
+                target_files=[str(path) for path in changes],
+            )
+        except GitManagerError:
+            pass
     for path, content in changes.items():
         file_writer_executor(
             ToolInputMetadata.from_mapping(
@@ -509,6 +521,16 @@ def _write_changes(changes: dict[Path, str]) -> list[str]:
         )
         modified_files.append(str(path))
     return modified_files
+
+
+def _common_project_path(paths: list[Path]) -> Path:
+    if not paths:
+        return Path.cwd()
+    parents = [path.expanduser().resolve().parent for path in paths]
+    try:
+        return Path(os.path.commonpath([str(parent) for parent in parents]))
+    except ValueError:
+        return parents[0]
 
 
 def _attempt(

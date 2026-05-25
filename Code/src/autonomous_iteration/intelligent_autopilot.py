@@ -1114,6 +1114,28 @@ class IntelligentAutopilot:
                     description="Saved project environment dependency context to short-term memory",
                     kind="note",
                 )
+                git_repository = payload.get("git_repository")
+                if git_repository:
+                    head = git_repository.get("head") if hasattr(git_repository, "get") else ""
+                    self._append_dashboard_stage_child(
+                        "environment",
+                        child_id=f"git_{step_id}",
+                        description=f"Git initialized{f' at {head}' if head else ''}",
+                        kind="note",
+                    )
+                git_snapshot = payload.get("git_snapshot")
+                if git_snapshot:
+                    commit_hash = git_snapshot.get("commit_hash") if hasattr(git_snapshot, "get") else ""
+                    created = git_snapshot.get("created") if hasattr(git_snapshot, "get") else False
+                    self._append_dashboard_stage_child(
+                        "environment",
+                        child_id=f"git_snapshot_{step_id}",
+                        description=(
+                            f"Safety snapshot {'created' if created else 'ready'}"
+                            f"{f': {commit_hash}' if commit_hash else ''}"
+                        ),
+                        kind="note",
+                    )
                 self.enhanced_ui.set_current_task_state(
                     title="Environment Setup",
                     details=(
