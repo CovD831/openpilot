@@ -63,6 +63,7 @@ class AutonomousTaskExecutor:
             written_files=written_files,
             actions=actions,
             improvement_report=improvement_report,
+            evaluation=evaluation,
         )
         if isinstance(resolution, str):
             return self._failure(iteration, actions, resolution, "task_file_resolver")
@@ -394,17 +395,33 @@ class AutonomousTaskExecutor:
         written_files: list[str],
         actions: list[str],
         improvement_report: dict[str, Any],
+        evaluation: EvaluationResult,
     ) -> TaskFileResolutionMetadata | str:
         from autonomous_iteration.tool.task_file_resolver import task_file_resolver_executor
 
         designed_task = self._primary_designed_task(improvement_report)
         description = str((designed_task or {}).get("description") or (actions[0] if actions else ""))
-        target_hints = self._target_file_hints(designed_task, improvement_report, written_files)
+        validation_issues = [
+            issue.to_json_dict() if hasattr(issue, "to_json_dict") else issue
+            for issue in (getattr(evaluation, "validation_issues", []) or [])
+        ]
+        failing_files = self._validation_issue_target_files(evaluation)
+        designed_targets = self._string_list((designed_task or {}).get("target_files"))
+        scoped_failing_files = self._scope_failing_files_to_task(failing_files, designed_targets)
+        if scoped_failing_files:
+            failing_files = scoped_failing_files
+        self._append_validation_targets_to_dashboard(iteration, failing_files)
+        target_hints = self._target_file_hints(designed_task, improvement_report, written_files, failing_files)
+        primary_issue = self._primary_bug_fix_issue(evaluation)
         request = TaskFileResolutionRequestMetadata(
             project_path=str(project_path),
             task_description=description,
             acceptance_criteria=self._string_list((designed_task or {}).get("acceptance_criteria") or improvement_report.get("must_implement_next")),
             target_file_hints=target_hints,
+            fallback_files=self._string_list(written_files),
+            failing_files=failing_files,
+            validation_issues=validation_issues,
+            issue_category=str(getattr(primary_issue, "category", "") or ""),
             diagnosis=improvement_report.get("diagnosis") if isinstance(improvement_report.get("diagnosis"), dict) else {},
             selected_candidate=improvement_report.get("selected_candidate") if isinstance(improvement_report.get("selected_candidate"), dict) else {},
             goal=goal,
@@ -419,6 +436,9 @@ class AutonomousTaskExecutor:
                 "written_files": written_files,
                 "prompt_context": {
                     "acceptance_criteria": request.acceptance_criteria,
+                    "failing_files": failing_files,
+                    "validation_issues": validation_issues,
+                    "issue_category": request.issue_category,
                     "diagnosis": request.diagnosis,
                     "selected_candidate": request.selected_candidate,
                     "improvement_report": improvement_report,
@@ -601,6 +621,19 @@ class AutonomousTaskExecutor:
             kind="result",
         )
 
+    def _append_validation_targets_to_dashboard(self, iteration: int, target_files: list[str]) -> None:
+        if not target_files or not getattr(self.runtime, "enhanced_ui", None):
+            return
+        if not hasattr(self.runtime, "_append_dashboard_stage_child"):
+            return
+        labels = ", ".join(Path(path).name for path in target_files[:5])
+        self.runtime._append_dashboard_stage_child(
+            "execution",
+            child_id=f"validation_issue_targets_{iteration}",
+            description=f"Validation issue target: {labels}",
+            kind="result",
+        )
+
     def _uses_python_code_pipeline(self, target_file: Path, edit_kind: str) -> bool:
         return edit_kind == "source_code" and target_file.suffix.lower() == ".py"
 
@@ -617,16 +650,54 @@ class AutonomousTaskExecutor:
         designed_task: dict[str, Any] | None,
         improvement_report: dict[str, Any],
         written_files: list[str],
+        failing_files: list[str] | None = None,
     ) -> list[str]:
         hints = []
+        hints.extend(self._string_list(failing_files))
         if isinstance(designed_task, dict):
             hints.extend(self._string_list(designed_task.get("target_files")))
         selected_goal = improvement_report.get("selected_goal")
         if isinstance(selected_goal, dict):
             hints.extend(self._string_list(selected_goal.get("target_files")))
-        if not hints:
-            hints.extend(written_files)
         return self._dedupe_text(hints)
+
+    def _validation_issue_target_files(self, evaluation: EvaluationResult) -> list[str]:
+        primary_issue = self._primary_bug_fix_issue(evaluation)
+        ordered_issues = []
+        if primary_issue is not None:
+            ordered_issues.append(primary_issue)
+        ordered_issues.extend(
+            issue
+            for issue in (getattr(evaluation, "validation_issues", []) or [])
+            if issue is not primary_issue
+        )
+        targets: list[str] = []
+        for issue in ordered_issues:
+            if getattr(issue, "severity", "blocking") != "blocking":
+                continue
+            targets.extend(self._string_list(getattr(issue, "target_files", []) or []))
+        return self._dedupe_text(targets)
+
+    def _scope_failing_files_to_task(self, failing_files: list[str], task_targets: list[str]) -> list[str]:
+        if not failing_files or not task_targets:
+            return []
+        normalized_targets = {self._normalize_path_key(path) for path in task_targets}
+        scoped = [
+            path for path in failing_files
+            if self._normalize_path_key(path) in normalized_targets
+        ]
+        return self._dedupe_text(scoped)
+
+    @staticmethod
+    def _normalize_path_key(path: str) -> str:
+        text = str(path or "").strip()
+        if not text:
+            return ""
+        candidate = Path(text).expanduser()
+        try:
+            return str(candidate.resolve())
+        except OSError:
+            return candidate.as_posix()
 
     @staticmethod
     def _strip_outer_fence(text: str) -> str:
@@ -820,11 +891,12 @@ class AutonomousTaskExecutor:
         if warning_check:
             fix_instruction += f"\nWarning reason: {warning_check.reason}"
             fix_instruction += f"\nRecommended fix: {warning_check.recommended_fix}"
+        issue_target_files = self._validation_issue_target_files(evaluation) or [str(target_file)]
         snapshot = self._create_git_snapshot(
             project_path=target_file.parent,
             iteration=iteration,
             reason="bug_fix_tool",
-            target_files=[str(target_file)],
+            target_files=issue_target_files,
             stage_key="execution",
         )
         result = self.runtime._execute_fast_tool(
@@ -836,7 +908,7 @@ class AutonomousTaskExecutor:
                 {
                     "command": run_command,
                     "cwd": str(target_file.parent),
-                    "file_paths": [str(target_file)],
+                    "file_paths": issue_target_files,
                     "timeout": 30,
                     "warning_check_required": bool(warning_check and warning_check.requires_fix),
                     "warning_check_result": warning_check.to_json_dict() if warning_check else None,
@@ -845,7 +917,7 @@ class AutonomousTaskExecutor:
                         "git_safety_context": self._git_safety_context(
                             project_path=target_file.parent,
                             snapshot=snapshot,
-                            target_files=[str(target_file)],
+                            target_files=issue_target_files,
                         ),
                     },
                     "_llm_client": getattr(self.runtime, "llm_client", None),

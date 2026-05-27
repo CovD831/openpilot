@@ -362,6 +362,104 @@ def test_task_graph_live_tail_renders_transient_llm_stream() -> None:
     assert "Public visible model output" in output
 
 
+def test_tool_event_live_tail_renders_running_call() -> None:
+    ui = EnhancedUI(Console(record=True, width=100))
+    ui._task_graph_spinner_frame = "⠹"
+
+    ui.append_tool_event(
+        {
+            "event_type": "running",
+            "status": "running",
+            "tool_name": "code_generator",
+            "call_id": "task:r1:c1",
+            "tool_call": {"reason": "generate implementation"},
+        }
+    )
+
+    output = _render_tail(ui)
+    assert "⠹ Tool: code_generator" in output
+    assert "(r1:c1)" in output
+    assert "generate implementation" in output
+
+
+def test_tool_event_completed_enters_history_once_and_leaves_tail() -> None:
+    console = Console(record=True, width=100)
+    ui = EnhancedUI(console)
+
+    with ui.live_session("Executing: sample"):
+        ui.append_tool_event(
+            {
+                "event_type": "running",
+                "status": "running",
+                "tool_name": "file_writer",
+                "call_id": "call_1",
+                "tool_call": {"reason": "write file"},
+            }
+        )
+        assert "file_writer" in _render_tail(ui)
+        completed_event = {
+            "event_type": "completed",
+            "status": "completed",
+            "tool_name": "file_writer",
+            "call_id": "call_1",
+        }
+        ui.append_tool_event(completed_event)
+        ui.append_tool_event(completed_event)
+        assert "file_writer" not in _render_tail(ui)
+
+    output = console.export_text(clear=False)
+    assert output.count("Tool completed: file_writer (call_1)") == 1
+
+
+def test_tool_event_recoverable_error_is_history_not_error_panel() -> None:
+    console = Console(record=True, width=100)
+    ui = EnhancedUI(console)
+
+    with ui.live_session("Executing: sample"):
+        ui.append_tool_event(
+            {
+                "event_type": "error",
+                "status": "error",
+                "tool_name": "code_generator",
+                "call_id": "call_2",
+                "recoverable": True,
+                "tool_error": {
+                    "recoverable": True,
+                    "error_message": "Unsupported language: text",
+                    "suggested_recovery": "Use a documentation writer instead.",
+                },
+            }
+        )
+
+    output = console.export_text(clear=False)
+    assert "Tool error recovered: code_generator (call_2)" in output
+    assert "Use a documentation writer instead." in output
+    assert "Tool failed: code_generator (call_2)" not in output
+
+
+def test_tool_event_terminal_error_enters_history_once() -> None:
+    console = Console(record=True, width=100)
+    ui = EnhancedUI(console)
+    failed_event = {
+        "event_type": "error",
+        "status": "error",
+        "tool_name": "file_writer",
+        "call_id": "call_3",
+        "recoverable": False,
+        "tool_error": {
+            "recoverable": False,
+            "error_message": "Permission denied",
+        },
+    }
+
+    with ui.live_session("Executing: sample"):
+        ui.append_tool_event(failed_event)
+        ui.append_tool_event(failed_event)
+
+    output = console.export_text(clear=False)
+    assert output.count("Tool failed: file_writer (call_3)") == 1
+
+
 def test_task_graph_live_tail_clears_llm_stream_after_operation_finishes() -> None:
     ui = EnhancedUI(Console(record=True, width=100))
     ui.set_task_graph_state(

@@ -27,7 +27,12 @@ from metadata import (
     TaskRouteMetadata,
     TaskFileResolutionMetadata,
     TaskFileResolutionRequestMetadata,
+    ToolCallMetadata,
+    ToolContextMetadata,
+    ToolErrorMetadata,
+    ToolEventMetadata,
     ToolInputMetadata,
+    ToolLoopMetadata,
     ToolResultMetadata,
     ValidationIssueMetadata,
     WarningCheckResultMetadata,
@@ -101,6 +106,96 @@ def test_task_result_and_tool_chain_routing_use_metadata_types() -> None:
     assert writer_input.code is None
     assert executor_input.code == "print('ok')"
     assert executor_input.language == "python"
+
+
+def test_tool_event_loop_metadata_serializes() -> None:
+    input_metadata = ToolInputMetadata(tool_name="code_generator", task_description="make app", language="python")
+    tool_context = ToolContextMetadata(
+        session_id="session",
+        task_id="task",
+        step_id="step_1",
+        call_id="call_1",
+        project_path="/tmp/project",
+        cwd="/tmp/project",
+        env={"VIRTUAL_ENV": "/tmp/project/.venv"},
+        python_command="/tmp/project/.venv/bin/python",
+        git_snapshot={"commit_hash": "abc1234", "created": True},
+        safety_notes=["git snapshot available: abc1234"],
+    )
+    tool_call = ToolCallMetadata(
+        session_id="session",
+        task_id="task",
+        step_id="step_1",
+        call_id="call_1",
+        tool_name="code_generator",
+        input_metadata=input_metadata,
+        tool_context=tool_context,
+    )
+    failure = FailureMetadata(error_type="UnsupportedLanguage", error_message="language=text", recoverable=True)
+    tool_error = ToolErrorMetadata(
+        session_id="session",
+        task_id="task",
+        step_id="step_1",
+        call_id="call_1",
+        tool_name="code_generator",
+        error_type=failure.error_type,
+        error_message=failure.error_message,
+        failure=failure,
+        input_metadata=input_metadata,
+        tool_context=tool_context,
+    )
+    event = ToolEventMetadata(
+        session_id="session",
+        task_id="task",
+        step_id="step_1",
+        call_id="call_1",
+        tool_name="code_generator",
+        event_type="error",
+        status="error",
+        tool_call=tool_call,
+        tool_error=tool_error,
+        tool_context=tool_context,
+        failure=failure,
+    )
+    loop = ToolLoopMetadata(
+        session_id="session",
+        task_id="task",
+        status="failed",
+        success=False,
+        events=[event],
+        tool_calls=[tool_call],
+        recoverable_errors=[tool_error],
+        tool_contexts=[tool_context],
+        final_error=failure,
+    )
+
+    payload = loop.to_json_dict()
+
+    assert payload["kind"] == MetadataKind.TOOL_LOOP
+    assert payload["events"][0]["kind"] == MetadataKind.TOOL_EVENT
+    assert payload["tool_contexts"][0]["kind"] == MetadataKind.TOOL_CONTEXT
+    assert payload["tool_calls"][0]["kind"] == MetadataKind.TOOL_CALL
+    assert payload["tool_calls"][0]["tool_context"]["python_command"].endswith("/python")
+    assert payload["recoverable_errors"][0]["kind"] == MetadataKind.TOOL_ERROR
+    assert payload["events"][0]["call_id"] == "call_1"
+
+
+def test_tool_loop_metadata_remains_backward_compatible_without_context() -> None:
+    payload = {
+        "kind": MetadataKind.TOOL_LOOP,
+        "session_id": "session",
+        "task_id": "task",
+        "status": "completed",
+        "success": True,
+        "events": [],
+        "tool_calls": [],
+        "recoverable_errors": [],
+    }
+
+    loop = ToolLoopMetadata.model_validate(payload)
+
+    assert loop.success is True
+    assert loop.tool_contexts == []
 
 
 def test_bug_fix_metadata_serializes_attempts_and_failure_result() -> None:

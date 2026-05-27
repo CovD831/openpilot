@@ -21,6 +21,7 @@ from metadata import (
     ToolExecutionEnvelopeMetadata,
     ToolInputMetadata,
     ToolResultMetadata,
+    ValidationIssueMetadata,
     payload_to_artifact,
 )
 
@@ -290,6 +291,67 @@ def test_autonomous_task_executor_routes_readme_task_to_documentation_writer(tmp
     tool_names = [call["tool_name"] if "tool_name" in call else call["tool"] for call in runtime.calls]
     assert tool_names == ["file_writer"]
     assert runtime.calls[0]["input_metadata"].file_path == str(readme)
+
+
+def test_autonomous_task_executor_scopes_repair_to_designed_validation_target(tmp_path) -> None:
+    assistant = tmp_path / "assistant.py"
+    personal = tmp_path / "personal_assistant.py"
+    assistant.write_text("{{code_generator_output}}\n", encoding="utf-8")
+    personal.write_text("print('ready')\n", encoding="utf-8")
+    runtime = FakeRuntime(tmp_path)
+    evaluation = EvaluationResult(
+        validation_passed=False,
+        runnable=False,
+        has_blocking_bugs=True,
+        summary="Project validation failed with 2 blocking issue(s).",
+        validation_issues=[
+            ValidationIssueMetadata(
+                category="code_quality",
+                severity="blocking",
+                message="Generated content in personal_assistant.py still contains template placeholders.",
+                recommended_action="Replace placeholder content in personal_assistant.py with real implementation.",
+                target_files=[str(personal)],
+                issue_fingerprint="code_quality:personal",
+                recommended_repair_kind="replace_generated_placeholder",
+            ),
+            ValidationIssueMetadata(
+                category="code_quality",
+                severity="blocking",
+                message="Generated content in assistant.py still contains template placeholders.",
+                recommended_action="Replace placeholder content in assistant.py with real implementation.",
+                target_files=[str(assistant)],
+                issue_fingerprint="code_quality:assistant",
+                recommended_repair_kind="replace_generated_placeholder",
+            ),
+        ],
+    )
+
+    result = AutonomousTaskExecutor(runtime).execute_improvement(
+        goal="Build personal assistant",
+        project_path=tmp_path,
+        written_files=[str(personal), str(assistant)],
+        run_command="",
+        readme_path=tmp_path / "README.md",
+        iteration=1,
+        evaluation=evaluation,
+        actions=["Fix the validation failure in assistant.py"],
+        improvement_report={
+            "repair": True,
+            "designed_tasks": [
+                {
+                    "description": "Fix the validation failure in assistant.py",
+                    "target_files": [str(assistant)],
+                    "acceptance_criteria": ["assistant.py has no generated placeholder"],
+                }
+            ],
+            "must_implement_next": ["assistant.py has no generated placeholder"],
+        },
+        is_repair=True,
+    )
+
+    assert result.success is True
+    code_call = next(call for call in runtime.calls if call.get("tool_name") == "code_generator")
+    assert str(assistant) in code_call["input_metadata"].context
 
 
 def test_autonomous_task_executor_retries_full_compact_surgical_on_timeout(tmp_path) -> None:

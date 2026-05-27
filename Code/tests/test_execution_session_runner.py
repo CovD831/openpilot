@@ -9,7 +9,15 @@ from rich.console import Console
 from autonomous_iteration.task_models import Task, TaskDecompositionResult, TaskExecutionResult, TaskStatus
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.session_runner import AutopilotSessionRunner
-from metadata import FileArtifactMetadata, ResultStatus, ToolExecutionEnvelopeMetadata, ToolInputMetadata, ToolResultMetadata
+from metadata import (
+    FailureMetadata,
+    FileArtifactMetadata,
+    ResultStatus,
+    TaskResultMetadata,
+    ToolExecutionEnvelopeMetadata,
+    ToolInputMetadata,
+    ToolResultMetadata,
+)
 
 
 class FakeSemantic:
@@ -172,6 +180,42 @@ class FakeRuntime:
         self.tracker.stop_tracking()
 
 
+class FailingToolLoopRuntime(FakeRuntime):
+    def _execute_tasks(self, tasks, goal):
+        failure = FailureMetadata(
+            error_type="ToolLoopExceeded",
+            error_message="Tool event loop exceeded. Last unresolved tool error: multi_file_reader (call-1)",
+            details={
+                "tool_loop": {
+                    "final_error": {
+                        "details": {
+                            "tool_name": "multi_file_reader",
+                            "call_id": "call-1",
+                        }
+                    },
+                    "events": [],
+                }
+            },
+        )
+        for task in tasks:
+            task.mark_failed(failure.error_message)
+            task.result = TaskResultMetadata(
+                task_id=task.id,
+                status=ResultStatus.FAIL,
+                failure=failure,
+            )
+        return [
+            TaskExecutionResult(
+                task_id=task.id,
+                status=TaskStatus.FAILED,
+                error=failure.error_message,
+                result_metadata=task.result,
+                duration=0.1,
+            )
+            for task in tasks
+        ]
+
+
 def test_session_runner_standard_returns_existing_result_shape(tmp_path) -> None:
     runtime = FakeRuntime(tmp_path)
     runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
@@ -236,6 +280,21 @@ def test_session_runner_surfaces_autonomous_iteration_failure(tmp_path) -> None:
     assert result["failure_stage"] == "Task Executor"
     assert result["failed_tool"] == "code_generator"
     assert result["retry_history"] == [{"attempt": "full"}]
+
+
+def test_session_runner_failed_tool_loop_does_not_assemble_or_report_llm_transport(tmp_path) -> None:
+    runtime = FailingToolLoopRuntime(tmp_path)
+    runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
+    runner = AutopilotSessionRunner(runtime)
+
+    result = runner.run("Build app", {}, mode="enhanced_ui")
+
+    assert result["success"] is False
+    assert runtime.task_decomposer.assemble_called is False
+    assert result["failure_stage"] == "Task Executor"
+    assert result["failed_tool"] == "multi_file_reader"
+    assert result["failed_call_id"] == "call-1"
+    assert result["failed_tool"] != "llm_client"
 
 
 def test_session_runner_appends_iteration_skip_note_when_no_written_files(tmp_path) -> None:

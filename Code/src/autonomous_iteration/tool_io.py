@@ -108,6 +108,15 @@ class ExecutionToolIO:
             contract = getattr(tool, "contract_metadata", None)
             if contract:
                 params = [f"  - {field} [required]" for field in contract.required_input_fields]
+                required_any_of = getattr(contract, "required_any_of", []) or []
+                if required_any_of:
+                    readable_group = " or ".join(
+                        " + ".join(str(field) for field in field_group)
+                        for field_group in required_any_of
+                    )
+                    params.append(f"  - one of: {readable_group} [required]")
+                for requirement in getattr(contract, "conditional_requirements", []) or []:
+                    params.append(f"  - conditional: {requirement}")
                 params.extend(f"  - {field} [default={value!r}]" for field, value in contract.input_defaults.items())
                 params_str = "\n".join(params)
 

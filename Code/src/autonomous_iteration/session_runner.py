@@ -179,25 +179,29 @@ class AutopilotSessionRunner:
                 all_tasks_completed,
             )
 
-            stage_statuses["Result Assembly"] = "running"
-            runtime.enhanced_ui.set_task_graph_state(
-                stage_statuses=stage_statuses,
-                current_stage="Result Assembly",
-            )
-            runtime.enhanced_ui.set_current_task_state(
-                title="Result Assembly",
-                details="Assembling final result",
-                status="running",
-            )
-            with runtime.tracker.track_task("Result Assembly", {}):
-                runtime.task_decomposer.assemble_results(
-                    decomposition.original_task,
-                    decomposition.subtasks,
-                )
-            stage_statuses["Result Assembly"] = "completed"
-            runtime.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
-
             success, iteration_error_msg = self._update_stats(decomposition, improvement_result)
+            execution_failure = self._execution_failure_context(decomposition.subtasks)
+            if all_tasks_completed:
+                stage_statuses["Result Assembly"] = "running"
+                runtime.enhanced_ui.set_task_graph_state(
+                    stage_statuses=stage_statuses,
+                    current_stage="Result Assembly",
+                )
+                runtime.enhanced_ui.set_current_task_state(
+                    title="Result Assembly",
+                    details="Assembling final result",
+                    status="running",
+                )
+                with runtime.tracker.track_task("Result Assembly", {}):
+                    runtime.task_decomposer.assemble_results(
+                        decomposition.original_task,
+                        decomposition.subtasks,
+                    )
+                stage_statuses["Result Assembly"] = "completed"
+                runtime.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
+            else:
+                stage_statuses["Result Assembly"] = "failed"
+                runtime.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
             runtime._stop_tracking_if_owned()
             self._set_enhanced_completion_state(success, readme_result, improvement_result, iteration_error_msg)
 
@@ -211,6 +215,7 @@ class AutopilotSessionRunner:
                 iteration_error_msg=iteration_error_msg,
                 success=success,
                 include_final_result=False,
+                execution_failure=execution_failure,
             )
             self._log(
                 "session_completed",
@@ -293,12 +298,15 @@ class AutopilotSessionRunner:
                 all_tasks_completed,
             )
 
-            runtime.console.print()
-            runtime.console.print("[bold cyan]📦 Assembling results...[/bold cyan]")
-            final_result = runtime.task_decomposer.assemble_results(
-                decomposition.original_task,
-                decomposition.subtasks,
-            )
+            final_result = None
+            execution_failure = self._execution_failure_context(decomposition.subtasks)
+            if all_tasks_completed:
+                runtime.console.print()
+                runtime.console.print("[bold cyan]📦 Assembling results...[/bold cyan]")
+                final_result = runtime.task_decomposer.assemble_results(
+                    decomposition.original_task,
+                    decomposition.subtasks,
+                )
 
             success, iteration_error_msg = self._update_stats(decomposition, improvement_result)
             runtime._show_completion_summary(decomposition, results)
@@ -316,6 +324,7 @@ class AutopilotSessionRunner:
                 success=success,
                 include_final_result=True,
                 final_result=final_result,
+                execution_failure=execution_failure,
             )
             self._log(
                 "session_completed",
@@ -477,6 +486,39 @@ class AutopilotSessionRunner:
                 status="failed",
             )
 
+    def _execution_failure_context(self, subtasks: list[Any]) -> dict[str, Any] | None:
+        failed_tasks = [task for task in subtasks if getattr(task, "status", None) == TaskStatus.FAILED]
+        if not failed_tasks:
+            return None
+        task = failed_tasks[0]
+        task_result_metadata = getattr(task, "result_metadata", None)
+        if task_result_metadata is None:
+            task_result_metadata = getattr(task, "result", None)
+        failure = getattr(task_result_metadata, "failure", None)
+        details = getattr(failure, "details", {}) or {}
+        tool_loop = details.get("tool_loop") if isinstance(details, dict) else None
+        final_error = tool_loop.get("final_error") if isinstance(tool_loop, dict) else None
+        tool_name = None
+        call_id = None
+        if isinstance(final_error, dict):
+            final_details = final_error.get("details")
+            if isinstance(final_details, dict):
+                tool_name = final_details.get("tool_name")
+                call_id = final_details.get("call_id")
+        if not tool_name and isinstance(tool_loop, dict):
+            events = tool_loop.get("events") or []
+            for event in reversed(events):
+                if isinstance(event, dict) and event.get("event_type") == "error":
+                    tool_name = event.get("tool_name")
+                    call_id = event.get("call_id")
+                    break
+        return {
+            "failure_stage": "Task Executor",
+            "failed_tool": tool_name or "tool_event_loop",
+            "failed_call_id": call_id,
+            "failure_reason": getattr(failure, "error_message", None) or getattr(task, "error", None),
+        }
+
     def _build_result(
         self,
         *,
@@ -490,6 +532,7 @@ class AutopilotSessionRunner:
         success: bool,
         include_final_result: bool,
         final_result: Any | None = None,
+        execution_failure: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         runtime = self.runtime
         result = {
@@ -509,10 +552,23 @@ class AutopilotSessionRunner:
             "iterations": improvement_result.get("iterations", []) if improvement_result else [],
             "partial_success": improvement_result.get("partial_success", False) if improvement_result else False,
             "iteration_error": iteration_error_msg,
-            "failure_stage": improvement_result.get("failure_stage") if improvement_result else None,
+            "failure_stage": (
+                improvement_result.get("failure_stage")
+                if improvement_result
+                else (execution_failure or {}).get("failure_stage")
+            ),
             "failed_iteration": improvement_result.get("failed_iteration") if improvement_result else None,
-            "failed_tool": improvement_result.get("failed_tool") if improvement_result else None,
-            "failure_reason": improvement_result.get("failure_reason") if improvement_result else None,
+            "failed_tool": (
+                improvement_result.get("failed_tool")
+                if improvement_result
+                else (execution_failure or {}).get("failed_tool")
+            ),
+            "failed_call_id": (execution_failure or {}).get("failed_call_id"),
+            "failure_reason": (
+                improvement_result.get("failure_reason")
+                if improvement_result
+                else (execution_failure or {}).get("failure_reason")
+            ),
             "retry_attempted": improvement_result.get("retry_attempted", False) if improvement_result else False,
             "retry_history": improvement_result.get("retry_history", []) if improvement_result else [],
             "remaining_goals": improvement_result.get("remaining_goals", []) if improvement_result else [],

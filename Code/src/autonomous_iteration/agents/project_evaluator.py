@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import os
 import re
 import shlex
@@ -166,18 +167,37 @@ class ProjectEvaluatorAgent:
                     )
                 )
 
-        if "{{" in code_text or "}}" in code_text:
-            errors.append("Generated code still contains template placeholders.")
-            actions.append("Replace placeholder content with real implementation.")
-            validation_issues.append(
-                self._issue(
-                    category="code_quality",
-                    message=errors[-1],
-                    recommended_action=actions[-1],
-                    product_intent=product_intent,
-                    target_files=[str(path) for path in existing_files],
+        for path in existing_files:
+            if not self._is_text_project_file(path):
+                continue
+            file_text = self._read_text(path)
+            for finding in self._generated_placeholder_findings(path, file_text):
+                errors.append(f"Generated content in {path.name} still contains template placeholders.")
+                actions.append(f"Replace placeholder content in {path.name} with real implementation.")
+                validation_issues.append(
+                    self._issue(
+                        category="code_quality",
+                        message=errors[-1],
+                        recommended_action=actions[-1],
+                        product_intent=product_intent,
+                        target_files=[str(path)],
+                        evidence_spans=[finding],
+                        syntax_context=str(finding.get("syntax_context") or ""),
+                        issue_fingerprint=self._issue_fingerprint(
+                            "generated_placeholder",
+                            path,
+                            str(finding.get("text") or ""),
+                        ),
+                        recommended_repair_kind="replace_generated_placeholder",
+                        stale_artifact_candidate=self._is_stale_artifact_candidate(
+                            path=path,
+                            project_path=project,
+                            all_files=existing_files,
+                            run_command=effective_run_command,
+                            readme_text=readme_text,
+                        ),
+                    )
                 )
-            )
 
         if not effective_run_command:
             errors.append("README does not clearly explain how to run the project.")
@@ -236,7 +256,12 @@ class ProjectEvaluatorAgent:
                             message=smoke["message"],
                             recommended_action=actions[-1],
                             product_intent=product_intent,
-                            target_files=[str(path) for path in existing_files],
+                            target_files=self._target_files_from_smoke_message(
+                                project,
+                                smoke["message"],
+                                effective_run_command,
+                                existing_files,
+                            ),
                         )
                     )
                 else:
@@ -247,7 +272,12 @@ class ProjectEvaluatorAgent:
                             message=smoke["message"],
                             recommended_action=smoke.get("recommended_action") or actions[-1],
                             product_intent=product_intent,
-                            target_files=target_files,
+                            target_files=self._target_files_from_smoke_message(
+                                project,
+                                smoke["message"],
+                                effective_run_command,
+                                existing_files,
+                            ),
                         )
                     )
             elif smoke["warning"]:
@@ -260,7 +290,12 @@ class ProjectEvaluatorAgent:
                             message=smoke["message"],
                             recommended_action=warning_check_result.recommended_fix,
                             product_intent=product_intent,
-                            target_files=[str(path) for path in existing_files],
+                            target_files=self._target_files_from_smoke_message(
+                                project,
+                                smoke["message"],
+                                effective_run_command,
+                                existing_files,
+                            ),
                         )
                     )
 
@@ -329,6 +364,12 @@ class ProjectEvaluatorAgent:
         product_intent: ProductIntentMetadata | None,
         severity: str = "blocking",
         target_files: list[str] | None = None,
+        evidence_spans: list[dict[str, Any]] | None = None,
+        syntax_context: str = "",
+        issue_fingerprint: str = "",
+        recommended_repair_kind: str = "",
+        closure_status: str = "open",
+        stale_artifact_candidate: bool = False,
     ) -> ValidationIssueMetadata:
         return ValidationIssueMetadata(
             category=category,
@@ -336,9 +377,137 @@ class ProjectEvaluatorAgent:
             message=message,
             recommended_action=recommended_action,
             target_files=target_files or [],
+            evidence_spans=evidence_spans or [],
+            syntax_context=syntax_context,
+            issue_fingerprint=issue_fingerprint
+            or self._issue_fingerprint(category, None, message),
+            recommended_repair_kind=recommended_repair_kind,
+            closure_status=closure_status,
+            stale_artifact_candidate=stale_artifact_candidate,
             product_intent=product_intent,
             preserves_product_intent=category != "product_intent_drift",
         )
+
+    def _generated_placeholder_findings(self, path: Path, text: str) -> list[dict[str, Any]]:
+        """Return only generation leftovers, not legitimate template syntax."""
+        findings: list[dict[str, Any]] = []
+        if not text:
+            return findings
+        string_lines = self._python_string_literal_lines(text) if path.suffix == ".py" else set()
+        patterns = [
+            (r"\{\{\s*([A-Za-z0-9_.-]*(?:code[_-]?generator|generated|output|placeholder|replace[_-]?me|todo)[A-Za-z0-9_.-]*)\s*\}\}", "brace_generated_placeholder"),
+            (r"\b__(?:PLACEHOLDER|REPLACE_ME|TODO_GENERATED|CODE_GENERATOR_OUTPUT)__\b", "sentinel_generated_placeholder"),
+            (r"<(?:REPLACE_ME|PLACEHOLDER|CODE_GENERATOR_OUTPUT)>", "angle_generated_placeholder"),
+        ]
+        for line_no, line in enumerate(text.splitlines(), 1):
+            for pattern, context in patterns:
+                for match in re.finditer(pattern, line, flags=re.IGNORECASE):
+                    snippet = match.group(0).strip()
+                    findings.append(
+                        {
+                            "file_path": str(path),
+                            "line": line_no,
+                            "column": match.start() + 1,
+                            "text": snippet,
+                            "syntax_context": self._placeholder_syntax_context(
+                                path=path,
+                                line=line,
+                                line_no=line_no,
+                                context=context,
+                                in_python_string=line_no in string_lines,
+                            ),
+                        }
+                    )
+        return findings
+
+    def _python_string_literal_lines(self, source: str) -> set[int]:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return set()
+        lines: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                start = getattr(node, "lineno", None)
+                end = getattr(node, "end_lineno", None) or start
+                if start:
+                    lines.update(range(start, end + 1))
+        return lines
+
+    def _placeholder_syntax_context(
+        self,
+        *,
+        path: Path,
+        line: str,
+        line_no: int,
+        context: str,
+        in_python_string: bool,
+    ) -> str:
+        suffix = path.suffix.lower()
+        lowered = line.lower()
+        if in_python_string and any(marker in lowered for marker in ("<div", "{%", "</", "<html", "render_template")):
+            return f"python_string_template:{context}"
+        if suffix in {".html", ".jinja", ".jinja2", ".vue", ".hbs", ".handlebars"}:
+            return f"template_file:{context}"
+        if line.lstrip().startswith("#"):
+            return f"comment:{context}"
+        if suffix in {".md", ".markdown", ".txt"}:
+            return f"text_document:{context}"
+        if suffix == ".py" and in_python_string:
+            return f"python_string:{context}"
+        return f"source:{context}"
+
+    def _issue_fingerprint(self, category: str, path: Path | None, evidence: str) -> str:
+        path_key = path.name if path is not None else ""
+        digest = hashlib.sha1(f"{category}:{path_key}:{evidence.strip().lower()}".encode("utf-8")).hexdigest()[:12]
+        return f"{category}:{path_key}:{digest}" if path_key else f"{category}:{digest}"
+
+    def _is_stale_artifact_candidate(
+        self,
+        *,
+        path: Path,
+        project_path: Path,
+        all_files: list[Path],
+        run_command: str,
+        readme_text: str,
+    ) -> bool:
+        try:
+            relative_path = str(path.relative_to(project_path))
+        except ValueError:
+            relative_path = path.name
+        if path.name in readme_text or relative_path in readme_text:
+            return False
+        try:
+            args = shlex.split(run_command)
+        except ValueError:
+            args = []
+        entry = self._entry_module_from_args(project_path, args, all_files) if args else None
+        if entry is not None and entry.resolve() == path.resolve():
+            return False
+        if path.suffix == ".py" and self._python_file_is_imported(path, project_path, all_files):
+            return False
+        return True
+
+    def _python_file_is_imported(self, path: Path, project_path: Path, all_files: list[Path]) -> bool:
+        module = path.relative_to(project_path).with_suffix("").as_posix().replace("/", ".")
+        module_root = module.split(".", 1)[0]
+        for candidate in all_files:
+            if candidate == path or candidate.suffix != ".py":
+                continue
+            try:
+                tree = ast.parse(self._read_text(candidate))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imported = alias.name
+                        if imported == module or imported == module_root:
+                            return True
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    if node.module == module or node.module == module_root:
+                        return True
+        return False
 
     def _smoke_test(self, project_path: Path, run_command: str, files: list[Path] | None = None) -> dict[str, Any]:
         try:
@@ -533,6 +702,46 @@ class ProjectEvaluatorAgent:
                     f"{path.name} exits successfully in non-TTY mode, so non-interactive smoke tests cannot prove terminal runtime correctness."
                 )
         return self._dedupe(risks)
+
+    def _target_files_from_smoke_message(
+        self,
+        project_path: Path,
+        message: str,
+        run_command: str,
+        files: list[Path],
+    ) -> list[str]:
+        targets: list[str] = []
+        for raw_path in re.findall(r'File "([^"]+)"', message or ""):
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                path = project_path / path
+            try:
+                resolved = path.resolve()
+                resolved.relative_to(project_path.resolve())
+            except (OSError, ValueError):
+                continue
+            if resolved.exists() and resolved.is_file():
+                targets.append(str(resolved))
+        if not targets:
+            try:
+                args = shlex.split(run_command)
+            except ValueError:
+                args = []
+            entry = self._entry_module_from_args(project_path, args, files) if args else None
+            if entry is not None and entry.exists():
+                targets.append(str(entry.resolve()))
+        return self._dedupe(targets)
+
+    def _is_text_project_file(self, path: Path) -> bool:
+        if path.name.startswith(".") or path.is_dir():
+            return False
+        if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip"}:
+            return False
+        try:
+            path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            return False
+        return True
 
     def _runtime_contract_mismatches(self, readme_text: str, code_text: str) -> list[str]:
         readme_lower = readme_text.lower()

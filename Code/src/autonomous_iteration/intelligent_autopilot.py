@@ -18,6 +18,7 @@ from autonomous_iteration.agents.iteration_agent import AutonomousIterationAgent
 from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
 from core.llm import LLMClient
 from core.semantic_analyzer import SemanticAnalyzer
+from core.tool_event_emitter import ToolEventEmitter
 from memory.memory_store import MemoryStore
 from autonomous_iteration.task_models import (
     Task,
@@ -680,6 +681,39 @@ class IntelligentAutopilot:
             timeout_override = self._llm_tool_timeout_override(tool_name)
         typed_input = self._apply_project_command_context(tool_name, input_metadata)
         display_payload = typed_input.to_params()
+        session_id = self.session_id or "unknown"
+        task_id = str(task.id)
+        call_id = f"{task_id}:{step_id}"
+        event_emitter = ToolEventEmitter(self)
+        tool_context = event_emitter.build_context(
+            task_id=task_id,
+            session_id=session_id,
+            step_id=step_id,
+            call_id=call_id,
+            tool_name=tool_name,
+            input_metadata=typed_input,
+        )
+        tool_call = event_emitter.create_tool_call(
+            session_id=session_id,
+            task_id=task_id,
+            step_id=step_id,
+            call_id=call_id,
+            tool_name=tool_name,
+            input_metadata=typed_input,
+            tool_context=tool_context,
+            status="pending",
+            reason="capability_match",
+        )
+        tool_events = [
+            event_emitter.emit(
+                task_id=task_id,
+                tool_call=tool_call,
+                event_type="pending",
+                status="pending",
+                input_metadata=typed_input,
+                tool_context=tool_context,
+            )
+        ]
 
         if self.enhanced_ui:
             if parent_task_id:
@@ -725,6 +759,16 @@ class IntelligentAutopilot:
             turn_id=1,
         )
 
+        tool_events.append(
+            event_emitter.emit(
+                task_id=task_id,
+                tool_call=tool_call,
+                event_type="running",
+                status="running",
+                input_metadata=typed_input,
+                tool_context=tool_context,
+            )
+        )
         exec_result, retry_history = self._execute_tool_with_fast_retry(selection)
         if self.enhanced_ui:
             status = "completed" if exec_result.success else "failed"
@@ -745,6 +789,31 @@ class IntelligentAutopilot:
         status_text = getattr(exec_result.status, "value", str(exec_result.status))
         status = self._result_status_from_execution(status_text, exec_result.success)
         failure = self._failure_metadata_from_execution(exec_result.error)
+        if exec_result.success:
+            tool_events.append(
+                event_emitter.emit(
+                    task_id=task_id,
+                    tool_call=tool_call,
+                    event_type="completed",
+                    status="completed",
+                    input_metadata=typed_input,
+                    output_metadata=exec_result.output_metadata,
+                    tool_context=tool_context,
+                )
+            )
+        else:
+            tool_events.append(
+                event_emitter.emit(
+                    task_id=task_id,
+                    tool_call=tool_call,
+                    event_type="error",
+                    status="error",
+                    input_metadata=typed_input,
+                    tool_context=tool_context,
+                    failure=failure,
+                    recoverable=bool(failure and failure.recoverable),
+                )
+            )
         result = ToolExecutionEnvelopeMetadata(
             tool_name=tool_name,
             step_id=step_id,
@@ -758,6 +827,9 @@ class IntelligentAutopilot:
             attempts_used=getattr(exec_result, "attempt_number", 1),
             retry_count=getattr(exec_result, "retry_count", 0),
             retry_history=retry_history,
+            call_id=call_id,
+            tool_context=tool_context,
+            tool_events=tool_events,
         )
         self.logger.log_event(
             "tool_executed",

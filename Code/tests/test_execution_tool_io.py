@@ -20,6 +20,17 @@ class FakeLLM:
         return SimpleNamespace(content=self.content)
 
 
+class FakeUI:
+    def __init__(self) -> None:
+        self.events = []
+
+    def append_tool_event(self, event) -> None:
+        self.events.append(event.to_json_dict() if hasattr(event, "to_json_dict") else event)
+
+    def set_current_task_state(self, **_kwargs) -> None:
+        return None
+
+
 def test_tool_io_sanitizes_large_payloads_without_private_params() -> None:
     helper = ExecutionToolIO()
     params = {
@@ -133,6 +144,7 @@ def test_contextual_code_generator_executor_accepts_tool_input_metadata(tmp_path
 
 def test_fast_tool_code_generator_uses_metadata_without_mapping_error(tmp_path) -> None:
     autopilot = IntelligentAutopilot(FakeLLM(), log_file=tmp_path / "autopilot.jsonl")
+    autopilot.enhanced_ui = FakeUI()
     task = Task(id="task", description="Generate hello world", priority=TaskPriority.HIGH)
 
     result = autopilot._execute_fast_tool(
@@ -148,3 +160,26 @@ def test_fast_tool_code_generator_uses_metadata_without_mapping_error(tmp_path) 
     assert result.success is True
     assert isinstance(result.output, CodeArtifactMetadata)
     assert "print('ok')" in result.output.code
+    assert result.call_id == "task:test_code_generator"
+    assert result.tool_context.call_id == "task:test_code_generator"
+    assert [event.event_type for event in result.tool_events] == ["pending", "running", "completed"]
+    assert [event["event_type"] for event in autopilot.enhanced_ui.events] == ["pending", "running", "completed"]
+
+
+def test_fast_tool_failure_emits_error_event_with_recoverable_flag(tmp_path) -> None:
+    autopilot = IntelligentAutopilot(FakeLLM(), log_file=tmp_path / "autopilot.jsonl")
+    autopilot.enhanced_ui = FakeUI()
+    task = Task(id="task", description="Run missing tool", priority=TaskPriority.HIGH)
+
+    result = autopilot._execute_fast_tool(
+        task=task,
+        step_id="missing_step",
+        tool_name="missing_tool",
+        input_metadata=ToolInputMetadata.from_mapping("missing_tool", {}),
+    )
+
+    assert result.success is False
+    assert result.call_id == "task:missing_step"
+    assert [event.event_type for event in result.tool_events] == ["pending", "running", "error"]
+    assert result.tool_events[-1].recoverable == bool(result.failure.recoverable)
+    assert autopilot.enhanced_ui.events[-1]["event_type"] == "error"

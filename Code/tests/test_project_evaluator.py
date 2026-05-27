@@ -108,6 +108,122 @@ if __name__ == "__main__":
     assert any("ImportError: boom" in error for error in result.validation_errors)
 
 
+def test_placeholder_validation_issue_targets_only_failing_file(tmp_path) -> None:
+    good = tmp_path / "personal_assistant.py"
+    bad = tmp_path / "assistant.py"
+    readme = tmp_path / "README.md"
+    good.write_text("print('ready')\n", encoding="utf-8")
+    bad.write_text("{{code_generator.output}}\n", encoding="utf-8")
+    readme.write_text("## Run\n\n```bash\npython assistant.py\n```\n", encoding="utf-8")
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build personal assistant",
+        project_path=tmp_path,
+        written_files=[str(good), str(bad)],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    placeholder_issues = [
+        issue for issue in result.validation_issues if "template placeholders" in issue.message
+    ]
+    assert result.validation_passed is False
+    assert len(placeholder_issues) == 1
+    assert placeholder_issues[0].target_files == [str(bad)]
+    assert placeholder_issues[0].issue_fingerprint.startswith("generated_placeholder:assistant.py:")
+    assert placeholder_issues[0].recommended_repair_kind == "replace_generated_placeholder"
+    assert placeholder_issues[0].evidence_spans[0]["line"] == 1
+
+
+def test_jinja_template_variables_are_not_generated_placeholder_failures(tmp_path) -> None:
+    app = tmp_path / "personal_assistant.py"
+    readme = tmp_path / "README.md"
+    app.write_text(
+        '''
+from flask import Flask, render_template_string
+
+app = Flask(__name__)
+TEMPLATE = """
+{% if user_input %}
+<div>{{ user_input }}</div>
+<div>{{ reply }}</div>
+{% endif %}
+"""
+
+if __name__ == "__main__":
+    print(render_template_string(TEMPLATE, user_input="hello", reply="hi"))
+''',
+        encoding="utf-8",
+    )
+    readme.write_text("## Run\n\n```bash\npython personal_assistant.py\n```\n", encoding="utf-8")
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build personal assistant",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert not any("template placeholders" in error for error in result.validation_errors)
+    assert not any(issue.recommended_repair_kind == "replace_generated_placeholder" for issue in result.validation_issues)
+
+
+def test_generated_placeholder_inside_python_string_is_still_blocking(tmp_path) -> None:
+    app = tmp_path / "assistant.py"
+    readme = tmp_path / "README.md"
+    app.write_text('PROMPT = "{{code_generator_output}}"\nprint(PROMPT)\n', encoding="utf-8")
+    readme.write_text("## Run\n\n```bash\npython assistant.py\n```\n", encoding="utf-8")
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build personal assistant",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    placeholder_issue = next(issue for issue in result.validation_issues if issue.recommended_repair_kind == "replace_generated_placeholder")
+    assert result.validation_passed is False
+    assert placeholder_issue.target_files == [str(app)]
+    assert placeholder_issue.syntax_context.startswith("python_string:")
+
+
+def test_runtime_traceback_validation_issue_targets_traceback_file(tmp_path, monkeypatch) -> None:
+    app = tmp_path / "personal_assistant.py"
+    helper = tmp_path / "assistant.py"
+    readme = tmp_path / "README.md"
+    app.write_text("import assistant\nassistant.main()\n", encoding="utf-8")
+    helper.write_text("def main():\n    raise RuntimeError('boom')\n", encoding="utf-8")
+    readme.write_text("## Run\n\n```bash\npython personal_assistant.py\n```\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=(
+                "Traceback (most recent call last):\n"
+                f"  File \"{app}\", line 1, in <module>\n"
+                f"  File \"{helper}\", line 2, in main\n"
+                "RuntimeError: boom\n"
+            ),
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build personal assistant",
+        project_path=tmp_path,
+        written_files=[str(app), str(helper)],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    runtime_issue = next(issue for issue in result.validation_issues if issue.category == "runtime_error")
+    assert result.validation_passed is False
+    assert runtime_issue.target_files == [str(app), str(helper)]
+
+
 def test_pygame_font_warning_requires_repair(tmp_path, monkeypatch) -> None:
     app, readme = _write_project(
         tmp_path,

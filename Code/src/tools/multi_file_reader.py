@@ -27,6 +27,7 @@ MULTI_FILE_READER_DEFINITION = ToolDefinition(
         input_metadata_type="ToolInputMetadata",
         output_metadata_type="ToolResultMetadata",
         required_input_fields=[],
+        required_any_of=[["file_paths"], ["directory_path"]],
         input_defaults={'pattern': '*完成报告*.md', 'encoding': 'utf-8', 'max_total_chars': 50000},
     ),
     timeout_seconds=60,

@@ -317,7 +317,10 @@ class AutonomousIterationAgent:
                 improvement_report = {
                     **improvement_report,
                     "selected_goal": selected_goal.model_dump(),
-                    "designed_tasks": [task.model_dump() for task in tasks],
+                    "designed_tasks": [
+                        task.model_dump() if hasattr(task, "model_dump") else task
+                        for task in decomposition.get("subtasks", tasks)
+                    ],
                     "task_difficulty": decomposition["difficulty"],
                     "next_iteration_goal": selected_goal.title,
                     "must_implement_next": selected_goal.acceptance_criteria,
@@ -379,7 +382,10 @@ class AutonomousIterationAgent:
                     "validation_errors": current.validation_errors,
                     "recommended_actions": self._select_repair_actions(current),
                     "selected_goal": selected_goal.model_dump(),
-                    "designed_tasks": [task.model_dump() for task in tasks],
+                    "designed_tasks": [
+                        task.model_dump() if hasattr(task, "model_dump") else task
+                        for task in decomposition.get("subtasks", tasks)
+                    ],
                     "task_difficulty": decomposition["difficulty"],
                     "next_iteration_goal": selected_goal.title,
                     "must_implement_next": selected_goal.acceptance_criteria,
@@ -908,10 +914,16 @@ class AutonomousIterationAgent:
         project_state: ProjectStateSnapshot,
         evaluation: EvaluationResult,
     ) -> DesignedImprovementTask:
-        target_files = project_state.safe_target_files[:1] or project_state.written_files[:1]
         primary_issue = self._primary_validation_issue(evaluation)
+        target_files = self._blocking_issue_target_files(evaluation)
+        if not target_files and primary_issue is not None:
+            target_files = list(getattr(primary_issue, "target_files", []) or [])
+        if not target_files:
+            target_files = project_state.safe_target_files[:1] or project_state.written_files[:1]
         intent = (primary_issue.product_intent if primary_issue else None) or evaluation.product_intent
         risk_notes = [issue.message for issue in evaluation.validation_issues[:3]] or evaluation.validation_errors[:3] or evaluation.warnings[:3]
+        if target_files:
+            risk_notes.append("Validation issue target files: " + ", ".join(target_files[:5]))
         if intent is not None:
             risk_notes.extend(intent.non_regression_constraints[:3])
         return DesignedImprovementTask(
@@ -937,6 +949,14 @@ class AutonomousIterationAgent:
         if not candidates:
             return None
         return sorted(candidates, key=lambda issue: priority.get(getattr(issue, "category", ""), 99))[0]
+
+    def _blocking_issue_target_files(self, evaluation: EvaluationResult) -> list[str]:
+        targets: list[str] = []
+        for issue in getattr(evaluation, "validation_issues", []) or []:
+            if getattr(issue, "severity", "blocking") != "blocking":
+                continue
+            targets.extend(self._coerce_string_list(getattr(issue, "target_files", []) or []))
+        return self._dedupe_text(targets)
 
     def _actions_from_tasks(self, tasks: list[DesignedImprovementTask]) -> list[str]:
         actions = []

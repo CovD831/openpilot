@@ -46,3 +46,92 @@ def test_task_file_resolver_finds_source_file_from_sketch_query(tmp_path) -> Non
 
     assert result.result.primary_file.name == "main.py"
     assert result.result.recommended_edit_kind == "source_code"
+
+
+def test_task_file_resolver_prefers_validation_issue_target_over_sketch_match(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    assistant = project / "assistant.py"
+    personal = project / "personal_assistant.py"
+    assistant.write_text("{{code_generator.output}}\n", encoding="utf-8")
+    personal.write_text("def personal_assistant():\n    return 'ready'\n", encoding="utf-8")
+
+    result = task_file_resolver_executor(
+        ToolInputMetadata.from_mapping(
+            "task_file_resolver",
+            {
+                "project_path": str(project),
+                "task_description": "Replace placeholder content with real implementation for personal assistant",
+                "file_paths": [str(personal)],
+                "prompt_context": {
+                    "failing_files": [str(assistant)],
+                    "validation_issues": [
+                        {
+                            "kind": "validation_issue",
+                            "category": "code_quality",
+                            "severity": "blocking",
+                            "message": "Generated content in assistant.py still contains template placeholders.",
+                            "target_files": [str(assistant)],
+                        }
+                    ],
+                },
+            },
+        )
+    )
+
+    assert result.result.primary_file.name == "assistant.py"
+    assert result.result.primary_file.relation_source == "validation_issue"
+
+
+def test_task_file_resolver_fails_when_validation_issue_target_is_missing(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "main.py").write_text("print('ok')\n", encoding="utf-8")
+
+    try:
+        task_file_resolver_executor(
+            ToolInputMetadata.from_mapping(
+                "task_file_resolver",
+                {
+                    "project_path": str(project),
+                    "task_description": "Fix failing file",
+                    "prompt_context": {
+                        "failing_files": ["missing.py"],
+                        "validation_issues": [
+                            {
+                                "category": "runtime_error",
+                                "severity": "blocking",
+                                "message": "missing.py failed",
+                                "target_files": ["missing.py"],
+                            }
+                        ],
+                    },
+                },
+            )
+        )
+    except FileNotFoundError as exc:
+        assert "Validation issue target file(s) were not found" in str(exc)
+    else:
+        raise AssertionError("resolver should fail when validation issue target file is missing")
+
+
+def test_task_file_resolver_uses_written_files_only_as_last_resort(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    app = project / "app.py"
+    app.write_text("print('ok')\n", encoding="utf-8")
+
+    result = task_file_resolver_executor(
+        ToolInputMetadata.from_mapping(
+            "task_file_resolver",
+            {
+                "project_path": str(project),
+                "task_description": "",
+                "written_files": [str(app)],
+                "prompt_context": {},
+            },
+        )
+    )
+
+    assert result.result.primary_file.name == "app.py"
+    assert result.result.primary_file.relation_source == "written_files_fallback"

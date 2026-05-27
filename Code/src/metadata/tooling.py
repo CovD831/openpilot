@@ -15,7 +15,7 @@ from metadata.artifacts import (
     TextArtifactMetadata,
 )
 from metadata.base import JsonValue, MetadataBase, MetadataKind
-from metadata.results import ToolResultMetadata
+from metadata.results import FailureMetadata, ToolResultMetadata
 
 
 class ToolInputMetadata(MetadataBase):
@@ -151,6 +151,8 @@ class ToolContractMetadata(MetadataBase):
     input_metadata_type: str
     output_metadata_type: str
     required_input_fields: list[str] = Field(default_factory=list)
+    required_any_of: list[list[str]] = Field(default_factory=list)
+    conditional_requirements: list[dict[str, JsonValue]] = Field(default_factory=list)
     input_defaults: dict[str, JsonValue] = Field(default_factory=dict)
     capabilities: list[str] = Field(default_factory=list)
     permission_level: str = "medium"
@@ -160,6 +162,107 @@ class ToolChainMetadata(MetadataBase):
     kind: MetadataKind = MetadataKind.TOOL_CHAIN
     tool_results: list[ToolResultMetadata] = Field(default_factory=list)
     final_result: ToolResultMetadata | None = None
+
+
+class ToolContextMetadata(MetadataBase):
+    """Runtime context attached to a tool event without changing tool inputs."""
+
+    kind: MetadataKind = MetadataKind.TOOL_CONTEXT
+    session_id: str = ""
+    task_id: str = ""
+    step_id: str = ""
+    call_id: str = ""
+    project_path: str = ""
+    cwd: str = ""
+    env: dict[str, str] = Field(default_factory=dict)
+    python_command: str = ""
+    pip_command: str = ""
+    git_snapshot: dict[str, JsonValue] | None = None
+    permission_required: bool = False
+    safety_notes: list[str] = Field(default_factory=list)
+    attributes: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class ToolCallMetadata(MetadataBase):
+    """One requested tool call inside a typed tool event loop."""
+
+    kind: MetadataKind = MetadataKind.TOOL_CALL
+    session_id: str
+    task_id: str
+    step_id: str
+    call_id: str
+    tool_name: str
+    input_metadata: ToolInputMetadata
+    tool_context: ToolContextMetadata | None = None
+    status: str = "pending"
+    reason: str = ""
+    provider_executed: bool = False
+    recoverable: bool = True
+    round_index: int = 1
+    event_index: int = 0
+
+
+class ToolErrorMetadata(MetadataBase):
+    """Recoverable or terminal tool protocol/execution error."""
+
+    kind: MetadataKind = MetadataKind.TOOL_ERROR
+    session_id: str
+    task_id: str
+    step_id: str
+    call_id: str
+    tool_name: str
+    error_type: str
+    error_message: str
+    recoverable: bool = True
+    suggested_recovery: str = ""
+    failure: FailureMetadata | None = None
+    input_metadata: ToolInputMetadata | None = None
+    tool_context: ToolContextMetadata | None = None
+    provider_executed: bool = False
+    round_index: int = 1
+    event_index: int = 0
+
+
+class ToolEventMetadata(MetadataBase):
+    """Lifecycle event for a tool call in the event loop."""
+
+    kind: MetadataKind = MetadataKind.TOOL_EVENT
+    session_id: str
+    task_id: str
+    step_id: str
+    call_id: str
+    tool_name: str
+    event_type: str
+    status: str
+    input_metadata: ToolInputMetadata | None = None
+    output_metadata: ToolResultMetadata | None = None
+    tool_context: ToolContextMetadata | None = None
+    tool_call: ToolCallMetadata | None = None
+    tool_error: ToolErrorMetadata | None = None
+    failure: FailureMetadata | None = None
+    recoverable: bool = True
+    provider_executed: bool = False
+    round_index: int = 1
+    event_index: int = 0
+
+
+class ToolLoopMetadata(MetadataBase):
+    """Complete typed event-loop trace for one task."""
+
+    kind: MetadataKind = MetadataKind.TOOL_LOOP
+    session_id: str
+    task_id: str
+    status: str
+    success: bool
+    rounds_used: int = 0
+    max_rounds: int = 5
+    events: list[ToolEventMetadata] = Field(default_factory=list)
+    tool_calls: list[ToolCallMetadata] = Field(default_factory=list)
+    recoverable_errors: list[ToolErrorMetadata] = Field(default_factory=list)
+    tool_contexts: list[ToolContextMetadata] = Field(default_factory=list)
+    final_output: ToolResultMetadata | None = None
+    final_error: FailureMetadata | None = None
+    provider_executed: bool = False
 
 
 def artifact_to_tool_input(tool_name: str, artifact: Any) -> ToolInputMetadata:

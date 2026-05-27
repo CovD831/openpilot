@@ -514,6 +514,16 @@ class ToolExecutor:
             if params[field_name] is None:
                 errors.append(f"Required metadata field cannot be None: {field_name}")
 
+        required_any_of = getattr(contract, "required_any_of", []) if contract else []
+        if required_any_of:
+            group_satisfied = any(
+                all(params.get(field_name) not in (None, "", [], {}) for field_name in field_group)
+                for field_group in required_any_of
+            )
+            if not group_satisfied:
+                readable_group = " or ".join(" + ".join(str(field_name) for field_name in field_group) for field_group in required_any_of)
+                errors.append(f"Missing required metadata field group: provide {readable_group}")
+
         return {
             "valid": not errors,
             "errors": errors,

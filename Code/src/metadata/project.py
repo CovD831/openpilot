@@ -121,6 +121,10 @@ class TaskFileResolutionRequestMetadata(MetadataBase):
     task_description: str = ""
     acceptance_criteria: list[str] = Field(default_factory=list)
     target_file_hints: list[str] = Field(default_factory=list)
+    fallback_files: list[str] = Field(default_factory=list)
+    failing_files: list[str] = Field(default_factory=list)
+    validation_issues: list[dict[str, JsonValue]] = Field(default_factory=list)
+    issue_category: str = ""
     diagnosis: dict[str, JsonValue] = Field(default_factory=dict)
     selected_candidate: dict[str, JsonValue] = Field(default_factory=dict)
     goal: str = ""
@@ -233,6 +237,12 @@ class ValidationIssueMetadata(MetadataBase):
     message: str
     recommended_action: str = ""
     target_files: list[str] = Field(default_factory=list)
+    evidence_spans: list[dict[str, JsonValue]] = Field(default_factory=list)
+    syntax_context: str = ""
+    issue_fingerprint: str = ""
+    recommended_repair_kind: str = ""
+    closure_status: str = "open"
+    stale_artifact_candidate: bool = False
     product_intent: ProductIntentMetadata | None = None
     preserves_product_intent: bool = True
 

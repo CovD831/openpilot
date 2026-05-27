@@ -21,6 +21,7 @@ from agent_generator.runner import _complete_empty_slots
 from agent_generator.slot_generator import generate_slots
 from core.instrumented_llm import InstrumentedLLMClient
 from core.llm import LLMClient, LLMMessage, LLMRequest
+from core.exceptions import InvalidLLMResponseError
 from core.openpilot_log import OpenPilotLogger
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker
@@ -43,6 +44,7 @@ from core.tool_contracts import (
 )
 from tools.tool_selection import ToolSelection
 from tools.tool_registry import ToolRegistry
+from utils.json_utils import safe_parse_json
 
 
 def _registered_registry() -> ToolRegistry:
@@ -229,6 +231,9 @@ def test_builtin_tools_register_expected_contracts() -> None:
     assert "memory_context" not in names
     assert "project_state_reader" not in names
     assert "project_improvement_tool" not in names
+
+    multi_file_reader = registry.get("multi_file_reader")
+    assert multi_file_reader.contract_metadata.required_any_of == [["file_paths"], ["directory_path"]]
 
 
 def test_core_imports_remain_available() -> None:
@@ -506,6 +511,87 @@ def test_llm_empty_length_response_is_not_cached(monkeypatch) -> None:
     assert first.provider_details["empty_length_response"] is True
     assert second.content == "Recovered content"
     assert len(calls) == 2
+
+
+def test_safe_parse_json_failure_cache_never_returns_sentinel_object() -> None:
+    invalid = "{not valid json"
+
+    first = safe_parse_json(invalid)
+    second = safe_parse_json(invalid)
+
+    assert first is None
+    assert second is None
+
+
+def test_llm_json_mode_treats_non_dict_list_parsed_value_as_invalid(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    calls = []
+
+    def fake_create(_openai_client, payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return _fake_chat_response('"just a string"')
+        return _fake_chat_response('{"ok": true}')
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="json")],
+            response_format="json_object",
+        )
+    )
+
+    assert response.parsed_json == {"ok": True}
+    assert len(calls) == 2
+    assert response.provider_details["json_repair_attempts"] == 2
+
+
+def test_llm_json_mode_retries_after_cached_parse_failure(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    invalid = "{not valid json"
+    assert safe_parse_json(invalid) is None
+    assert safe_parse_json(invalid) is None
+    calls = []
+
+    def fake_create(_openai_client, _payload):
+        calls.append(_payload)
+        if len(calls) == 1:
+            return _fake_chat_response(invalid)
+        return _fake_chat_response('{"repaired": true}')
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="json")],
+            response_format="json_object",
+        )
+    )
+
+    assert response.parsed_json == {"repaired": True}
+    assert len(calls) == 2
+
+
+def test_llm_json_mode_invalid_after_retries_raises_clean_error(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+
+    def fake_create(_openai_client, _payload):
+        return _fake_chat_response("<not-json>")
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    with pytest.raises(InvalidLLMResponseError) as exc:
+        client.complete(
+            LLMRequest(
+                messages=[LLMMessage(role="user", content="json")],
+                response_format="json_object",
+            ),
+            max_retries=1,
+        )
+
+    assert "LLM returned invalid JSON" in str(exc.value)
+    assert "validation errors for LLMResponse" not in str(exc.value)
 
 
 def test_llm_extracts_text_from_content_parts(monkeypatch) -> None:

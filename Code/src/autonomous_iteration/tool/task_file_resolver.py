@@ -57,10 +57,17 @@ def task_file_resolver_executor(input_metadata: ToolInputMetadata) -> ToolResult
     manager = input_metadata.runtime_handles.get("_project_manager") or ProjectManager(project_path)
     manager.update(project_path)
 
+    failing = _failing_file_matches(project_path, request)
     explicit = _explicit_file_matches(project_path, request)
     query = _resolution_query(request)
     searched = _search_matches(manager, query)
-    related = _merge_related_files(explicit, searched)
+    fallback = _fallback_file_matches(project_path, request) if not failing and not explicit and not searched else []
+    if request.failing_files and not failing:
+        raise FileNotFoundError(
+            "Validation issue target file(s) were not found in project: "
+            + ", ".join(request.failing_files)
+        )
+    related = _merge_related_files(failing, explicit, searched, fallback)
     if not related:
         raise FileNotFoundError(f"No related project file found for task: {request.task_description[:160]}")
 
@@ -88,15 +95,51 @@ def _request_from_input(input_metadata: ToolInputMetadata, params: dict[str, Any
     criteria = _string_list(prompt_context.get("acceptance_criteria"))
     if not criteria and isinstance(prompt_context.get("improvement_report"), dict):
         criteria = _string_list(prompt_context["improvement_report"].get("must_implement_next"))
+    failing_files = _string_list(prompt_context.get("failing_files"))
+    validation_issues = [item for item in prompt_context.get("validation_issues") or [] if isinstance(item, dict)]
+    if not failing_files:
+        failing_files = _failing_files_from_issues(validation_issues)
     return TaskFileResolutionRequestMetadata(
         project_path=str(params.get("project_path") or ""),
         task_description=str(params.get("task_description") or params.get("task") or ""),
         acceptance_criteria=criteria,
-        target_file_hints=_string_list(params.get("file_paths") or params.get("written_files")),
+        target_file_hints=_string_list(params.get("file_paths")),
+        fallback_files=_string_list(params.get("written_files")),
+        failing_files=failing_files,
+        validation_issues=validation_issues,
+        issue_category=str(prompt_context.get("issue_category") or ""),
         diagnosis=diagnosis,
         selected_candidate=selected_candidate,
         goal=str(params.get("goal") or ""),
     )
+
+
+def _failing_file_matches(project_path: Path, request: TaskFileResolutionRequestMetadata) -> list[RelatedProjectFileMetadata]:
+    matches = []
+    issue_evidence = []
+    for issue in request.validation_issues:
+        message = issue.get("message")
+        if message:
+            issue_evidence.append(str(message)[:220])
+    for raw_path in request.failing_files:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = project_path / path
+        if not path.exists() or path.is_dir():
+            continue
+        matches.append(
+            RelatedProjectFileMetadata(
+                file_path=str(path),
+                name=path.name,
+                suffix=path.suffix,
+                description=f"Validation issue target for task: {request.task_description[:220]}",
+                role=_role_for_path(path),
+                relevance_score=2.0,
+                evidence=_dedupe(["validation issue target file", *issue_evidence, request.task_description[:220]]),
+                relation_source="validation_issue",
+            )
+        )
+    return matches
 
 
 def _explicit_file_matches(project_path: Path, request: TaskFileResolutionRequestMetadata) -> list[RelatedProjectFileMetadata]:
@@ -117,6 +160,29 @@ def _explicit_file_matches(project_path: Path, request: TaskFileResolutionReques
                 relevance_score=1.0,
                 evidence=["explicit target file hint", request.task_description[:220]],
                 relation_source="target_hint",
+            )
+        )
+    return matches
+
+
+def _fallback_file_matches(project_path: Path, request: TaskFileResolutionRequestMetadata) -> list[RelatedProjectFileMetadata]:
+    matches = []
+    for raw_path in request.fallback_files:
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = project_path / path
+        if not path.exists() or path.is_dir() or _should_ignore_project_file(path):
+            continue
+        matches.append(
+            RelatedProjectFileMetadata(
+                file_path=str(path),
+                name=path.name,
+                suffix=path.suffix,
+                description=f"Fallback project file for task: {request.task_description[:220]}",
+                role=_role_for_path(path),
+                relevance_score=0.1,
+                evidence=["low-confidence written_files fallback", request.task_description[:220]],
+                relation_source="written_files_fallback",
             )
         )
     return matches
@@ -163,7 +229,12 @@ def _merge_related_files(*groups: list[RelatedProjectFileMetadata]) -> list[Rela
                 merged[key] = item
             elif previous is not None:
                 previous.evidence = _dedupe([*previous.evidence, *item.evidence])
-    return sorted(merged.values(), key=lambda item: (item.relevance_score, item.relation_source == "target_hint"), reverse=True)
+    source_priority = {"validation_issue": 4, "target_hint": 3, "sketch": 2, "written_files_fallback": 1}
+    return sorted(
+        merged.values(),
+        key=lambda item: (source_priority.get(item.relation_source, 0), item.relevance_score),
+        reverse=True,
+    )
 
 
 def _resolution_query(request: TaskFileResolutionRequestMetadata) -> str:
@@ -214,6 +285,15 @@ def _string_list(value: Any) -> list[str]:
                 result.append(text)
         return result
     return [str(value)]
+
+
+def _failing_files_from_issues(issues: list[dict[str, Any]]) -> list[str]:
+    files = []
+    for issue in issues:
+        if str(issue.get("severity") or "blocking") != "blocking":
+            continue
+        files.extend(_string_list(issue.get("target_files")))
+    return _dedupe(files)
 
 
 def _dedupe(items: list[str]) -> list[str]:

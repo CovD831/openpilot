@@ -17,6 +17,7 @@ from .cache import memoize_with_lru
 _json_parse_cache = {}
 _json_parse_cache_order = []
 _JSON_CACHE_MAX_SIZE = 50
+_PARSE_FAILED = object()
 
 
 def safe_parse_json(text: str, default: Any = None) -> Any:
@@ -50,9 +51,6 @@ def safe_parse_json(text: str, default: Any = None) -> Any:
         except (json.JSONDecodeError, ValueError):
             return default
 
-    # Check cache (use a sentinel for parse failures)
-    _PARSE_FAILED = object()
-
     if text in _json_parse_cache:
         result = _json_parse_cache[text]
         if result is _PARSE_FAILED:
@@ -62,7 +60,7 @@ def safe_parse_json(text: str, default: Any = None) -> Any:
     # Parse and cache
     try:
         result = json.loads(text)
-        _json_parse_cache[text] = result
+        _json_parse_cache[text] = result if isinstance(result, (dict, list, str, int, float, bool)) or result is None else _PARSE_FAILED
         _json_parse_cache_order.append(text)
 
         # Evict oldest if cache is full

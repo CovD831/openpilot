@@ -165,11 +165,27 @@ class LLMClient:
                 # Try to extract JSON from markdown code blocks if present
                 cleaned_content = self._extract_json_from_content(content)
                 # Use safe_parse_json for better error handling and caching
-                parsed_json = safe_parse_json(cleaned_content)
+                raw_parsed_json = safe_parse_json(cleaned_content)
+                parsed_json, parse_diagnostics = self._normalize_parsed_json(raw_parsed_json)
 
                 if parsed_json is not None:
                     # Success! Return the response
                     usage = self._usage_metadata(response)
+                    provider_details = self._response_metadata(
+                        response=response,
+                        choice=choice,
+                        content=content,
+                        content_diagnostics=content_diagnostics,
+                        json_repair_attempt=attempt + 1,
+                    )
+                    provider_details.update(
+                        {
+                            "parsed_from_content": True,
+                            "parse_source": "content",
+                            "json_repair_attempts": attempt + 1,
+                            **parse_diagnostics,
+                        }
+                    )
                     result = LLMResponse(
                         content=content,
                         parsed_json=parsed_json,
@@ -177,13 +193,7 @@ class LLMClient:
                         provider=self.settings.provider,
                         usage=usage,
                         finish_reason=choice.finish_reason,
-                        provider_details=self._response_metadata(
-                            response=response,
-                            choice=choice,
-                            content=content,
-                            content_diagnostics=content_diagnostics,
-                            json_repair_attempt=attempt + 1,
-                        ),
+                        provider_details=provider_details,
                     )
 
                     # Cache successful response
@@ -194,8 +204,11 @@ class LLMClient:
                     return result
                 else:
                     # JSON parsing failed
+                    invalid_type = parse_diagnostics.get("invalid_parsed_json_type")
+                    preview = " ".join(content.split())[:300]
                     last_error = InvalidLLMResponseError(
-                        f"Failed to parse JSON (attempt {attempt + 1}/{max_retries})"
+                        f"LLM returned invalid JSON (attempt {attempt + 1}/{max_retries}; "
+                        f"parsed_type={invalid_type or 'None'}; preview={preview!r})"
                     )
                     if attempt < max_retries - 1:
                         self._emit_stream_event(
@@ -262,6 +275,16 @@ class LLMClient:
     ) -> None:
         if stream_callback is not None:
             stream_callback(event)
+
+    def _normalize_parsed_json(self, value: Any) -> tuple[dict[str, Any] | list[Any] | None, dict[str, Any]]:
+        if isinstance(value, (dict, list)):
+            return value, {"invalid_parsed_json_type": None}
+        if value is None:
+            return None, {"invalid_parsed_json_type": None, "parse_failed_cached": True}
+        return None, {
+            "invalid_parsed_json_type": type(value).__name__,
+            "parse_failed_cached": True,
+        }
 
     def _create_streaming_completion_with_transport_retry(
         self,

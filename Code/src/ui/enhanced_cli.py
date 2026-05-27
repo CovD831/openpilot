@@ -460,6 +460,8 @@ def _execute_autopilot(
                     f"Stage: {result.get('failure_stage') or 'unknown'}",
                     f"Tool: {result.get('failed_tool') or 'unknown'}",
                 ]
+                if result.get("failed_call_id"):
+                    context_lines.append(f"Call: {result.get('failed_call_id')}")
                 if result.get("failed_iteration"):
                     context_lines.append(f"Iteration: {result.get('failed_iteration')}")
                 details = f"{details}\n" + "\n".join(context_lines)

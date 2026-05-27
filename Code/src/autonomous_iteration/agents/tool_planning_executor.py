@@ -8,9 +8,14 @@ from datetime import datetime
 from typing import Any
 
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
-from core.llm import LLMMessage, LLMRequest
-from metadata import FailureMetadata, ResultStatus, TaskResultMetadata, TextArtifactMetadata, ToolInputMetadata
-from tools.tool_selection import ToolSelection
+from core.tool_event_loop import ToolEventLoopRunner
+from metadata import (
+    FailureMetadata,
+    ResultStatus,
+    TaskResultMetadata,
+    TextArtifactMetadata,
+)
+
 
 
 class ToolPlanningTaskExecutor:
@@ -45,25 +50,21 @@ class ToolPlanningTaskExecutor:
                 success=None,
             )
 
-            llm_request = LLMRequest(
-                messages=[LLMMessage(role="user", content=prompt)],
-                response_format="json_object",
-            )
-            llm_response = self.runtime.llm_client.complete(llm_request)
-            tool_calls = self._parse_tool_calls(llm_response)
-
-            tool_results, last_output = self._execute_tool_calls(task, tool_calls)
-            all_succeeded = all(item["success"] for item in tool_results)
+            loop_result = ToolEventLoopRunner(self).run(task, prompt)
+            tool_results = loop_result.tool_results
+            last_output = loop_result.last_output
+            all_succeeded = loop_result.success
             output = {
                 "task_id": task.id,
                 "description": task.description,
                 "status": "completed" if all_succeeded else "failed",
                 "tool_calls": tool_results,
+                "tool_loop": loop_result.loop_metadata.to_json_dict(),
                 "all_tools_succeeded": all_succeeded,
                 "final_output": last_output,
             }
             duration = (datetime.now() - start_time).total_seconds()
-            error_msg = self._build_tool_error(tool_results)
+            error_msg = loop_result.error_message or self._build_tool_error(tool_results)
 
             result = TaskExecutionResult(
                 task_id=task.id,
@@ -72,7 +73,15 @@ class ToolPlanningTaskExecutor:
                     task_id=task.id,
                     status=ResultStatus.SUCCESS if all_succeeded else ResultStatus.FAIL,
                     result=TextArtifactMetadata(content="completed", attributes=output) if all_succeeded else None,
-                    failure=FailureMetadata(error_type="ToolExecutionFailed", error_message=error_msg or "Tool execution failed") if not all_succeeded else None,
+                    failure=FailureMetadata(
+                        error_type=loop_result.loop_metadata.final_error.error_type
+                        if loop_result.loop_metadata.final_error
+                        else "ToolExecutionFailed",
+                        error_message=error_msg or "Tool execution failed",
+                        details={"tool_loop": loop_result.loop_metadata.to_json_dict()},
+                    )
+                    if not all_succeeded
+                    else None,
                     duration=duration,
                 ),
                 error=error_msg,
@@ -160,6 +169,8 @@ Output ONLY valid JSON in this format:
 
 Important:
 - For code generation tasks, use code_generator to generate code, then file_writer to save it
+- code_generator only supports executable code languages: python, shell, bash. Never use language "text"
+- For design, outline, planning, or prose-only tasks, either return planning metadata through an appropriate text/documentation tool or write Markdown/text with file_writer/readme_tool
 - For completed project/code deliveries, use readme_tool after file_writer to create README.md with run instructions
 - Autopilot will run hard validation and autonomous-iteration improvement analysis after project delivery
 - Provide actual values for all parameters, do not use null or placeholders
@@ -181,65 +192,6 @@ Important:
         if not tool_calls:
             raise ValueError("LLM generated empty tool plan")
         return tool_calls
-
-    def _execute_tool_calls(
-        self,
-        task: Task,
-        tool_calls: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], Any]:
-        tool_results = []
-        last_output = None
-        last_code_output = None
-
-        for index, tool_call in enumerate(tool_calls):
-            tool_name = tool_call.get("tool_name")
-            raw_input = dict(tool_call.get("input_metadata", {}))
-            reason_text = tool_call.get("reason", "")
-            input_metadata = ToolInputMetadata.from_mapping(tool_name, raw_input)
-            input_metadata = self.runtime._resolve_chained_metadata(
-                tool_name,
-                input_metadata,
-                last_output,
-                last_code_output,
-            )
-            apply_project_context = getattr(self.runtime, "_apply_project_command_context", None)
-            if callable(apply_project_context):
-                input_metadata = apply_project_context(tool_name, input_metadata)
-            input_payload = input_metadata.to_params()
-
-            self._show_tool_running(task, tool_name, input_payload, reason_text, index, len(tool_calls))
-            selection = ToolSelection(
-                step_id=f"step_{index + 1}",
-                tool_name=tool_name,
-                reason=self.runtime._map_reason_to_enum(reason_text),
-                confidence=0.9,
-                input_metadata=input_metadata,
-                requires_confirmation=False,
-                fallback_tools=[],
-                depends_on=[],
-                timeout_override=None,
-            )
-            self._log_tool_start(task, tool_name, input_payload)
-            exec_result = self.runtime.tool_executor.execute_single(selection, context=None)
-            self._show_tool_result(tool_name, exec_result)
-            log_output = self._summarize_metadata_output(exec_result.output_metadata)
-            output_result = exec_result.output_metadata.result if exec_result.output_metadata else None
-            tool_results.append(
-                {
-                    "tool": tool_name,
-                    "input_metadata": input_metadata.to_json_dict(),
-                    "result": output_result,
-                    "success": exec_result.success,
-                    "error": exec_result.error.error_message if exec_result.error else None,
-                }
-            )
-            self._log_tool_complete(task, tool_name, exec_result, log_output)
-
-            last_output = exec_result.output_metadata
-            if tool_name == "code_generator" and exec_result.success:
-                last_code_output = exec_result.output_metadata
-
-        return tool_results, last_output
 
     def _show_tool_running(
         self,
