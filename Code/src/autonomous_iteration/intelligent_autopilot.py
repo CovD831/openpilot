@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from rich.console import Console
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from autonomous_iteration.agents.iteration_agent import AutonomousIterationAgent
 from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
@@ -48,7 +49,7 @@ from metadata import (
     ToolResultMetadata,
 )
 from autonomous_iteration.improvement_context import ImprovementContextHelper
-from autonomous_iteration.runner import AutonomousIterationRunner
+from autonomous_iteration.project_improvement_runtime import ProjectImprovementRuntime
 from autonomous_iteration.task_executor import AutonomousTaskExecutor
 from autonomous_iteration.agents.execution_orchestrator import AgentOrchestrator
 from autonomous_iteration.agents.execution_task_decomposer import TaskDecomposer
@@ -56,9 +57,8 @@ from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskE
 from ui.console_presenter import ConsolePresenter
 from ui.iteration_dashboard import IterationDashboardAdapter
 from autonomous_iteration.project_iteration import ProjectIterationHelper
-from autonomous_iteration.session_runner import AutopilotSessionRunner
-from autonomous_iteration.task_runner import ExecutionTaskRunner
 from autonomous_iteration.tool_io import ExecutionToolIO
+from autonomous_iteration.runtime_controller import AgentRuntimeController
 
 
 class IntelligentAutopilot:
@@ -232,10 +232,9 @@ class IntelligentAutopilot:
             logger=self.logger,
             session_id_getter=lambda: self.session_id,
         )
-        self.autonomous_iteration_runner = AutonomousIterationRunner(self)
+        self.project_improvement_runtime = ProjectImprovementRuntime(self)
         self.autonomous_task_executor = AutonomousTaskExecutor(self)
         self.tool_planning_task_executor = ToolPlanningTaskExecutor(self)
-        self.execution_task_runner = ExecutionTaskRunner(self)
         self.console_presenter = ConsolePresenter(
             self.console,
             auto_approve_getter=lambda: self.auto_approve,
@@ -243,7 +242,7 @@ class IntelligentAutopilot:
             logger=self.logger,
             session_id_getter=lambda: self.session_id,
         )
-        self.session_runner = AutopilotSessionRunner(self)
+        self.runtime_controller = AgentRuntimeController(self)
 
         # Register task executor
         self.orchestrator.set_task_executor(self._execute_task)
@@ -334,36 +333,21 @@ class IntelligentAutopilot:
         self.stats["start_time"] = datetime.now()
         context = context or {}
 
-        # Use enhanced UI if available
-        if self.use_enhanced_ui and self.enhanced_ui and self.tracker:
-            try:
-                result = self.session_runner.run(goal, context, mode="enhanced_ui")
-                return result
-            except Exception as e:
-                if self.enhanced_ui:
-                    self.enhanced_ui.log_activity("error", f"Execution failed: {str(e)}")
-                self.logger.log_event(
-                    "execution_error",
-                    {"error": str(e), "goal": goal},
-                    session_id=self.session_id or "unknown",
-                    turn_id=1,
-                )
-                if classify_error(e) in {ErrorCategory.NETWORK, ErrorCategory.TIMEOUT, ErrorCategory.RETRYABLE}:
-                    return self._structured_execution_error(goal, e)
-                raise
-        else:
-            try:
-                return self.session_runner.run(goal, context, mode="standard")
-            except Exception as e:
-                self.logger.log_event(
-                    "execution_error",
-                    {"error": str(e), "goal": goal},
-                    session_id=self.session_id or "unknown",
-                    turn_id=1,
-                )
-                if classify_error(e) in {ErrorCategory.NETWORK, ErrorCategory.TIMEOUT, ErrorCategory.RETRYABLE}:
-                    return self._structured_execution_error(goal, e)
-                raise
+        mode = "enhanced_ui" if self.use_enhanced_ui and self.enhanced_ui and self.tracker else "standard"
+        try:
+            return self.runtime_controller.run(goal, context, mode=mode)
+        except Exception as e:
+            if self.enhanced_ui:
+                self.enhanced_ui.log_activity("error", f"Execution failed: {str(e)}")
+            self.logger.log_event(
+                "execution_error",
+                {"error": str(e), "goal": goal},
+                session_id=self.session_id or "unknown",
+                turn_id=1,
+            )
+            if classify_error(e) in {ErrorCategory.NETWORK, ErrorCategory.TIMEOUT, ErrorCategory.RETRYABLE}:
+                return self._structured_execution_error(goal, e)
+            raise
 
     def _structured_execution_error(self, goal: str, error: Exception) -> dict[str, Any]:
         category = classify_error(error)
@@ -563,7 +547,7 @@ class IntelligentAutopilot:
                     content="completed" if success else (error_msg or "failed"),
                     attributes={
                         "description": task.description,
-                        "tool_calls": [tool_result.to_json_dict() for tool_result in tool_results],
+                        "tool_results": [tool_result.to_json_dict() for tool_result in tool_results],
                         "all_tools_succeeded": success,
                         "final_output": tool_results[-1].output.to_json_dict() if tool_results and tool_results[-1].output else None,
                     },
@@ -1123,7 +1107,7 @@ class IntelligentAutopilot:
         readme_path: str | Path | None = None,
     ) -> dict[str, Any] | None:
         """Run fixed-count validation and improvement loop."""
-        return self.autonomous_iteration_runner.run(
+        return self.project_improvement_runtime.run(
             goal=goal,
             project_path=project_path,
             written_files=written_files,
@@ -1913,9 +1897,9 @@ class IntelligentAutopilot:
     def _results_include_tool(self, results: list[TaskExecutionResult], tool_name: str) -> bool:
         for result in results:
             task_payload = result.result_metadata.result if result.result_metadata else None
-            tool_calls = getattr(task_payload, "attributes", {}).get("tool_calls", []) if task_payload else []
-            for tool_call in tool_calls:
-                if tool_call.get("tool_name") == tool_name:
+            tool_results = getattr(task_payload, "attributes", {}).get("tool_results", []) if task_payload else []
+            for tool_result in tool_results:
+                if tool_result.get("tool_name") == tool_name or tool_result.get("tool") == tool_name:
                     return True
         return False
 
@@ -1924,28 +1908,28 @@ class IntelligentAutopilot:
         seen: set[str] = set()
         for result in results:
             task_payload = result.result_metadata.result if result.result_metadata else None
-            tool_calls = getattr(task_payload, "attributes", {}).get("tool_calls", []) if task_payload else []
-            for tool_call in tool_calls:
-                if not isinstance(tool_call, dict):
+            tool_results = getattr(task_payload, "attributes", {}).get("tool_results", []) if task_payload else []
+            for tool_result in tool_results:
+                if not isinstance(tool_result, dict):
                     continue
-                tool_name = tool_call.get("tool_name") or tool_call.get("tool")
-                if tool_name != "file_writer" or not tool_call.get("success"):
+                tool_name = tool_result.get("tool_name") or tool_result.get("tool")
+                if tool_name != "file_writer" or not tool_result.get("success"):
                     continue
-                output = self._tool_call_result_payload(tool_call)
+                output = self._tool_result_payload(tool_result)
                 path = self._file_path_from_payload(output)
                 if not path:
-                    input_metadata = tool_call.get("input_metadata") or {}
+                    input_metadata = tool_result.get("input_metadata") or {}
                     path = self._file_path_from_payload(input_metadata)
                 if path and path not in seen:
                     files.append(path)
                     seen.add(path)
         return files
 
-    def _tool_call_result_payload(self, tool_call: dict[str, Any]) -> Any:
-        direct_result = tool_call.get("result")
+    def _tool_result_payload(self, tool_result: dict[str, Any]) -> Any:
+        direct_result = tool_result.get("result")
         if direct_result is not None:
             return direct_result
-        output_metadata = tool_call.get("output_metadata") or {}
+        output_metadata = tool_result.get("output_metadata") or {}
         if hasattr(output_metadata, "result"):
             return output_metadata.result
         if isinstance(output_metadata, dict):
@@ -2013,15 +1997,50 @@ class IntelligentAutopilot:
         return self.tool_io.extract_generated_content(output)
 
     def _execute_with_enhanced_ui_v2(self, goal, context):
-        return self.session_runner.run(goal, context, mode="enhanced_ui")
+        return self.runtime_controller.run(goal, context, mode="enhanced_ui")
 
     def _execute_standard(self, goal: str, context: dict[str, Any]) -> dict[str, Any]:
         """Execute with standard console output."""
-        return self.session_runner.run(goal, context, mode="standard")
+        return self.runtime_controller.run(goal, context, mode="standard")
 
     def _execute_tasks(self, tasks: list[Task], goal: str = "") -> list[TaskExecutionResult]:
-        """Execute tasks using the extracted task runner."""
-        return self.execution_task_runner.execute_tasks(tasks, goal)
+        """Execute tasks using the runtime task graph and selected UI mode."""
+        self._log_task_execution_event(
+            "task_execution_started",
+            input_summary={"total_tasks": len(tasks), "goal": goal},
+            success=None,
+        )
+        task_graph = self.task_decomposer.build_task_graph(tasks)
+
+        try:
+            execution_order = self.task_decomposer.get_execution_order(task_graph)
+        except ValueError:
+            if self.use_enhanced_ui:
+                self.enhanced_ui.log_activity(
+                    "error",
+                    "Cannot determine execution order, executing sequentially",
+                )
+            else:
+                self.console.print(
+                    "[yellow]⚠ Cannot determine execution order (cyclic dependencies?), executing sequentially[/yellow]"
+                )
+            execution_order = [task.id for task in tasks]
+
+        if self.use_enhanced_ui:
+            results = self._execute_tasks_enhanced_ui(tasks, execution_order, goal)
+        else:
+            results = self._execute_tasks_standard(tasks, execution_order, goal)
+
+        self._log_task_execution_event(
+            "task_execution_completed",
+            output_summary={
+                "results": len(results),
+                "completed": len([result for result in results if result.status == TaskStatus.COMPLETED]),
+                "failed": len([result for result in results if result.status == TaskStatus.FAILED]),
+            },
+            success=all(result.status == TaskStatus.COMPLETED for result in results),
+        )
+        return results
 
     def _dashboard_task_items(
         self,
@@ -2029,15 +2048,336 @@ class IntelligentAutopilot:
         running_task_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Convert task models into UI dashboard rows."""
-        return self.execution_task_runner.dashboard_task_items(tasks, running_task_id)
+        items = []
+        for task in tasks:
+            status = task.status.value if hasattr(task.status, "value") else str(task.status)
+            if running_task_id and task.id == running_task_id and status == "pending":
+                status = "running"
+            items.append(
+                {
+                    "id": task.id,
+                    "description": task.description,
+                    "status": status,
+                    "effort": f"{task.estimated_effort:.1f}u" if task.estimated_effort else "",
+                }
+            )
+        return items
 
     def _execute_tasks_enhanced_ui(self, tasks: list[Task], execution_order: list[str], goal: str) -> list[TaskExecutionResult]:
         """Execute tasks with enhanced UI updates."""
-        return self.execution_task_runner.execute_tasks_enhanced_ui(tasks, execution_order, goal)
+        results = []
+
+        self.logger.log_event(
+            "task_execution_started",
+            {
+                "total_tasks": len(tasks),
+                "execution_order": execution_order,
+                "goal": goal,
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        self._log_task_execution_event(
+            "enhanced_task_execution_started",
+            input_summary={"total_tasks": len(tasks), "execution_order": execution_order},
+            success=None,
+        )
+
+        for index, task_id in enumerate(execution_order, 1):
+            task = next((candidate for candidate in tasks if candidate.id == task_id), None)
+            if not task:
+                self.logger.log_event(
+                    "task_not_found",
+                    {"task_id": task_id, "index": index},
+                    session_id=self.session_id or "unknown",
+                    turn_id=1,
+                )
+                continue
+
+            self.logger.log_event(
+                "task_execution_start",
+                {
+                    "task_id": task.id,
+                    "task_index": index,
+                    "description": task.description,
+                    "priority": task.priority.value if hasattr(task.priority, "value") else str(task.priority),
+                },
+                session_id=self.session_id or "unknown",
+                turn_id=1,
+            )
+
+            completed_count = len([result for result in results if result.status == TaskStatus.COMPLETED])
+            failed_count = len([result for result in results if result.status == TaskStatus.FAILED])
+            status_detail = (
+                f"{task.description}\n\n"
+                f"Completed: {completed_count}\n"
+                f"Failed: {failed_count}\n"
+                f"Remaining: {len(tasks) - index}"
+            )
+
+            self.enhanced_ui.set_task_graph_state(
+                tasks=self._dashboard_task_items(tasks, running_task_id=task.id),
+                current_task_id=task.id,
+            )
+            self.enhanced_ui.set_current_task_state(
+                title=f"Task {index}/{len(tasks)}",
+                details=status_detail,
+                status="running",
+            )
+
+            task_context = TaskExecutionContext(
+                task=task,
+                parent_context={"goal": goal, "session_id": self.session_id},
+                shared_state={},
+                execution_history=[],
+            )
+
+            try:
+                result = self._execute_task(task, task_context)
+                results.append(result)
+
+                self.logger.log_event(
+                    "task_execution_complete",
+                    {
+                        "task_id": task.id,
+                        "task_index": index,
+                        "status": result.status.value if hasattr(result.status, "value") else str(result.status),
+                        "success": result.status == TaskStatus.COMPLETED,
+                        "error": result.error,
+                        "duration": result.duration,
+                        "result_summary": str(result.result_metadata)[:200] if result.result_metadata else None,
+                    },
+                    session_id=self.session_id or "unknown",
+                    turn_id=1,
+                )
+
+                if result.status == TaskStatus.COMPLETED:
+                    task.mark_completed(result.result_metadata)
+                    self.enhanced_ui.set_task_graph_state(
+                        tasks=self._dashboard_task_items(tasks),
+                        current_task_id=task.id,
+                    )
+                    self.enhanced_ui.set_current_task_state(
+                        title=f"Task {index}/{len(tasks)}",
+                        details=task.description,
+                        status="completed",
+                    )
+                    self.enhanced_ui.log_activity(
+                        "success",
+                        f"✓ Task {index}: {task.description[:50]}... ({result.duration:.1f}s)",
+                    )
+                else:
+                    task.mark_failed(result.error or "Unknown error")
+                    self.enhanced_ui.set_task_graph_state(
+                        tasks=self._dashboard_task_items(tasks),
+                        current_task_id=task.id,
+                    )
+                    self.enhanced_ui.set_current_task_state(
+                        title=f"Task {index}/{len(tasks)}",
+                        details=result.error or "Unknown error",
+                        status="failed",
+                    )
+                    self.enhanced_ui.log_activity("error", f"✗ Task {index} failed: {result.error}")
+                    self.logger.log_event(
+                        "task_execution_failed",
+                        {
+                            "task_id": task.id,
+                            "task_index": index,
+                            "description": task.description,
+                            "error": result.error,
+                            "result_metadata": result.result_metadata.to_json_dict() if result.result_metadata else None,
+                        },
+                        session_id=self.session_id or "unknown",
+                        turn_id=1,
+                    )
+
+                if task.status == TaskStatus.PENDING:
+                    self.logger.log_event(
+                        "task_status_update_failed",
+                        {
+                            "task_id": task.id,
+                            "task_index": index,
+                            "result_status": result.status.value if hasattr(result.status, "value") else str(result.status),
+                            "task_status": task.status.value if hasattr(task.status, "value") else str(task.status),
+                        },
+                        session_id=self.session_id or "unknown",
+                        turn_id=1,
+                    )
+                    if result.status == TaskStatus.COMPLETED:
+                        task.status = TaskStatus.COMPLETED
+                        task.result = result.result_metadata
+                    else:
+                        task.status = TaskStatus.FAILED
+                        task.error = result.error
+
+            except Exception as exc:
+                error_msg = f"Task execution exception: {str(exc)}"
+                self.enhanced_ui.log_activity("error", f"✗ Task {index} exception: {str(exc)}")
+                self.logger.log_event(
+                    "task_execution_exception",
+                    {
+                        "task_id": task.id,
+                        "task_index": index,
+                        "description": task.description,
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                    },
+                    session_id=self.session_id or "unknown",
+                    turn_id=1,
+                )
+
+                result = TaskExecutionResult(
+                    task_id=task.id,
+                    status=TaskStatus.FAILED,
+                    error=error_msg,
+                    duration=0.0,
+                    attributes={},
+                )
+                results.append(result)
+                task.mark_failed(error_msg)
+                self.enhanced_ui.set_task_graph_state(
+                    tasks=self._dashboard_task_items(tasks),
+                    current_task_id=task.id,
+                )
+                self.enhanced_ui.set_current_task_state(
+                    title=f"Task {index}/{len(tasks)}",
+                    details=error_msg,
+                    status="failed",
+                )
+
+        completed = len([result for result in results if result.status == TaskStatus.COMPLETED])
+        failed = len([result for result in results if result.status == TaskStatus.FAILED])
+        self.logger.log_event(
+            "task_execution_summary",
+            {
+                "total": len(results),
+                "completed": completed,
+                "failed": failed,
+                "task_statuses": [
+                    {
+                        "id": task.id,
+                        "description": task.description[:50],
+                        "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+                    }
+                    for task in tasks
+                ],
+            },
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        self._log_task_execution_event(
+            "enhanced_task_execution_completed",
+            output_summary={"completed": completed, "failed": failed},
+            success=failed == 0,
+        )
+
+        return results
 
     def _execute_tasks_standard(self, tasks: list[Task], execution_order: list[str], goal: str) -> list[TaskExecutionResult]:
         """Execute tasks with standard console output."""
-        return self.execution_task_runner.execute_tasks_standard(tasks, execution_order, goal)
+        results = []
+        self._log_task_execution_event(
+            "standard_task_execution_started",
+            input_summary={"total_tasks": len(tasks), "execution_order": execution_order},
+            success=None,
+        )
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            console=self.console,
+        ) as progress:
+            task_progress = progress.add_task("Executing tasks...", total=len(tasks))
+
+            for index, task_id in enumerate(execution_order, 1):
+                task = next((candidate for candidate in tasks if candidate.id == task_id), None)
+                if not task:
+                    continue
+
+                progress.update(
+                    task_progress,
+                    description=f"[{index}/{len(tasks)}] {task.description[:50]}...",
+                )
+
+                task_context = TaskExecutionContext(
+                    task=task,
+                    parent_context={"goal": goal, "session_id": self.session_id},
+                    shared_state={},
+                    execution_history=[],
+                )
+
+                try:
+                    result = self._execute_task(task, task_context)
+                except Exception as exc:
+                    result = TaskExecutionResult(
+                        task_id=task.id,
+                        status=TaskStatus.FAILED,
+                        error=f"Task execution exception: {str(exc)}",
+                        duration=0.0,
+                        attributes={},
+                    )
+                results.append(result)
+
+                if result.status == TaskStatus.COMPLETED:
+                    task.mark_completed(result.result_metadata)
+                    self.stats["tasks_completed"] += 1
+                    status_icon = "✓"
+                    status_color = "green"
+                else:
+                    task.mark_failed(result.error or "Unknown error")
+                    self.stats["tasks_failed"] += 1
+                    status_icon = "✗"
+                    status_color = "red"
+
+                self.console.print(
+                    f"  [{status_color}]{status_icon}[/{status_color}] "
+                    f"Task {index}: {task.description[:60]} "
+                    f"({result.duration:.1f}s)"
+                )
+
+                if result.error:
+                    self.console.print(f"    [red]Error: {result.error}[/red]")
+
+                progress.advance(task_progress)
+
+        self._log_task_execution_event(
+            "standard_task_execution_completed",
+            output_summary={
+                "results": len(results),
+                "completed": len([result for result in results if result.status == TaskStatus.COMPLETED]),
+                "failed": len([result for result in results if result.status == TaskStatus.FAILED]),
+            },
+            success=all(result.status == TaskStatus.COMPLETED for result in results),
+        )
+        return results
+
+    def _log_task_execution_event(
+        self,
+        event_type: str,
+        *,
+        success: bool | None = None,
+        input_summary: Any | None = None,
+        output_summary: Any | None = None,
+        error: str | None = None,
+    ) -> None:
+        logger = getattr(self, "logger", None)
+        if not logger:
+            return
+        logger.log_structured_event(
+            source_type="module",
+            source_name="autonomous_iteration.intelligent_autopilot",
+            phase="task_execution",
+            event_type=event_type,
+            session_id=getattr(self, "session_id", None) or "unknown",
+            turn_id=1,
+            success=success,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            error=error,
+        )
 
     def _map_reason_to_enum(self, reason_text: str) -> str:
         """Map free-form reason text to SelectionReason enum value.

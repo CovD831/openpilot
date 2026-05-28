@@ -1,4 +1,4 @@
-"""Autonomous iteration runner owned by the autonomous_iteration module."""
+"""Project improvement runtime owned by the autonomous_iteration module."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from autonomous_iteration.tool.project_improvement_tool import project_state_rea
 from metadata import ToolExecutionEnvelopeMetadata, ToolInputMetadata
 
 
-class AutonomousIterationRunner:
+class ProjectImprovementRuntime:
     """Bridge IntelligentAutopilot runtime services into the iteration pipeline."""
 
     STAGES = {
@@ -121,7 +121,7 @@ class AutonomousIterationRunner:
         )
 
         self._finalize_dashboard(result)
-        self._log_legacy_result(goal, project_path, written_files, result)
+        self._log_project_improvement_result(goal, project_path, written_files, result)
         self._log(
             "pipeline_end",
             {"goal": goal, "project_path": str(project_path)},
@@ -322,7 +322,7 @@ class AutonomousIterationRunner:
             status=result_status,
         )
 
-    def _log_legacy_result(
+    def _log_project_improvement_result(
         self,
         goal: str,
         project_path: Path,
@@ -374,8 +374,8 @@ class AutonomousIterationRunner:
             return
         logger.log_structured_event(
             source_type="module",
-            source_name=f"autonomous_iteration.runner.{source_name}",
-            phase="autonomous_iteration_runner",
+            source_name=f"autonomous_iteration.project_improvement_runtime.{source_name}",
+            phase="project_improvement_runtime",
             event_type="module_completed" if success else "module_failed",
             session_id=self.autopilot.session_id or "unknown",
             turn_id=1,

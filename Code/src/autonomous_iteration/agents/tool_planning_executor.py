@@ -7,11 +7,14 @@ import time
 from datetime import datetime
 from typing import Any
 
+from autonomous_iteration.runtime_controller import ToolRouter
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.tool_event_loop import ToolEventLoopRunner
 from metadata import (
+    DecisionNeedMetadata,
     FailureMetadata,
     ResultStatus,
+    RuntimeStateMetadata,
     TaskResultMetadata,
     TextArtifactMetadata,
 )
@@ -58,7 +61,7 @@ class ToolPlanningTaskExecutor:
                 "task_id": task.id,
                 "description": task.description,
                 "status": "completed" if all_succeeded else "failed",
-                "tool_calls": tool_results,
+                "tool_results": tool_results,
                 "tool_loop": loop_result.loop_metadata.to_json_dict(),
                 "all_tools_succeeded": all_succeeded,
                 "final_output": last_output,
@@ -151,27 +154,30 @@ Overall Goal: {goal}
 Available Tools:
 {tools_description}
 
-Generate a JSON plan with a list of tool calls to accomplish this task. Each tool call should specify:
-- tool_name: name of the tool to use
-- reason: why this tool is needed
-- input_metadata: object containing strict metadata fields for the selected tool
+Generate a JSON plan with decision_needs. The runtime ToolRouter is the only component
+allowed to map needs to concrete tools using budget, risk, and permission checks.
 
 Output ONLY valid JSON in this format:
 {{
-  "tool_calls": [
+  "decision_needs": [
     {{
-      "tool_name": "tool_name_here",
-      "reason": "explanation",
-      "input_metadata": {{"task_description": "value", "language": "python"}}
+      "need_type": "file_read | project_structure | web_search | command_check | file_write | code_generation | code_execution | readme_generation",
+      "question": "what decision this information will unlock",
+      "target_path": "optional path",
+      "candidate_paths": ["optional paths"],
+      "query": "optional search query",
+      "command": "optional command",
+      "risk_level": "low | medium | high | forbidden",
+      "attributes": {{"optional": "tool-specific inputs"}}
     }}
   ]
 }}
 
 Important:
-- For code generation tasks, use code_generator to generate code, then file_writer to save it
+- For code generation tasks, emit a code_generation need, then a file_write need to save the generated output
 - code_generator only supports executable code languages: python, shell, bash. Never use language "text"
 - For design, outline, planning, or prose-only tasks, either return planning metadata through an appropriate text/documentation tool or write Markdown/text with file_writer/readme_tool
-- For completed project/code deliveries, use readme_tool after file_writer to create README.md with run instructions
+- For completed project/code deliveries, emit a readme_generation need after file_write to create README.md with run instructions
 - Autopilot will run hard validation and autonomous-iteration improvement analysis after project delivery
 - Provide actual values for all parameters, do not use null or placeholders
 - If you need to pass output from one tool to another, generate the content directly in the first tool
@@ -179,7 +185,7 @@ Important:
 - For project commands, use mode "automatic" and do not use source/activate/cd/export; OpenPilot injects the target cwd and virtual environment from metadata
 """
 
-    def _parse_tool_calls(self, llm_response: Any) -> list[dict[str, Any]]:
+    def _parse_decision_needs(self, llm_response: Any) -> list[dict[str, Any]]:
         try:
             plan_data = (
                 llm_response.parsed_json
@@ -188,10 +194,40 @@ Important:
             )
         except json.JSONDecodeError as exc:
             raise ValueError(f"Failed to parse LLM response as JSON: {exc}") from exc
-        tool_calls = plan_data.get("tool_calls", [])
-        if not tool_calls:
-            raise ValueError("LLM generated empty tool plan")
-        return tool_calls
+        tool_requests = self._route_decision_needs(plan_data)
+        if not tool_requests:
+            raise ValueError("LLM generated empty decision_needs plan")
+        return tool_requests
+
+    def _route_decision_needs(self, plan_data: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_needs = plan_data.get("decision_needs", [])
+        if not raw_needs:
+            return []
+        controller = getattr(self.runtime, "runtime_controller", None)
+        router = getattr(controller, "router", None)
+        state = getattr(controller, "state", None)
+        if router is None:
+            router = ToolRouter(getattr(self.runtime, "tool_registry", None))
+        if state is None:
+            state = RuntimeStateMetadata(goal=str(plan_data.get("goal") or "tool planning"))
+            if controller is not None:
+                controller.state = state
+
+        tool_requests: list[dict[str, Any]] = []
+        for raw_need in raw_needs:
+            if not isinstance(raw_need, dict):
+                continue
+            need = DecisionNeedMetadata.model_validate(raw_need)
+            selections = router.route(state, need)
+            for selection in selections:
+                tool_requests.append(
+                    {
+                        "tool_name": selection.tool_name,
+                        "reason": need.question,
+                        "input_metadata": selection.input_metadata.to_params(),
+                    }
+                )
+        return tool_requests
 
     def _show_tool_running(
         self,

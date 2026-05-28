@@ -1,0 +1,368 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from autonomous_iteration.runtime_controller import (
+    AgentRuntimeController,
+    EditGuard,
+    FileSelector,
+    RuntimeGuard,
+    RuntimeReporter,
+    StateUpdater,
+    ToolRouter,
+)
+from metadata import (
+    AgentPhase,
+    DecisionNeedMetadata,
+    EditPlanMetadata,
+    ResultStatus,
+    RuntimeStateMetadata,
+    TextArtifactMetadata,
+    ToolResultMetadata,
+)
+
+
+def test_runtime_state_serializes_budget_and_phase() -> None:
+    state = RuntimeStateMetadata(goal="Refactor runtime")
+    state.add_fact("goal understood")
+    state.add_unknown("project entrypoint")
+    state.budget.consume_tool_call(file_read=True)
+    payload = state.to_json_dict()
+
+    assert payload["phase"] == "understand_task"
+    assert payload["budget"]["max_tool_calls"] == 20
+    assert payload["budget"]["max_file_reads"] == 30
+    assert payload["budget"]["max_file_edits"] == 3
+    assert payload["budget"]["max_verification_attempts"] == 3
+    assert payload["budget"]["max_recovery_rounds"] == 3
+    assert payload["budget"]["max_replan_rounds"] == 3
+    assert payload["budget"]["tool_calls_used"] == 1
+    assert payload["known_facts"] == ["goal understood"]
+    assert payload["unknowns"] == ["project entrypoint"]
+    assert payload["assumptions"] == []
+    assert payload["resolved_questions"] == []
+    assert payload["decision_history"] == []
+
+
+def test_tool_router_routes_information_gaps_and_blocks_on_budget() -> None:
+    state = RuntimeStateMetadata(goal="Inspect project")
+    router = ToolRouter()
+
+    file_need = DecisionNeedMetadata(
+        need_type="file_read",
+        question="What does README say?",
+        target_path="README.md",
+    )
+    directory_need = DecisionNeedMetadata(
+        need_type="project_structure",
+        question="What files exist?",
+        target_path=".",
+    )
+    search_need = DecisionNeedMetadata(
+        need_type="web_search",
+        question="Find reference",
+        query="agent runtime design",
+    )
+    command_need = DecisionNeedMetadata(
+        need_type="smoke_test",
+        question="Does it run?",
+        command="pytest",
+    )
+
+    assert router.route(state, file_need)[0].tool_name == "file_reader"
+    assert router.route(state, directory_need)[0].tool_name == "multi_file_reader"
+    assert router.route(state, search_need)[0].tool_name == "web_searcher"
+    assert router.route(state, command_need)[0].tool_name == "command_executor"
+    assert [decision.selected_tool for decision in state.decision_history] == [
+        "file_reader",
+        "multi_file_reader",
+        "web_searcher",
+        "command_executor",
+    ]
+
+    state.budget.tool_calls_used = state.budget.max_tool_calls
+    assert router.route(state, file_need) == []
+    assert state.phase == AgentPhase.BLOCKED
+    assert "budget exhausted" in state.completion_reason
+
+
+def test_runtime_guard_centralizes_risk_budget_and_confirmation_policy() -> None:
+    guard = RuntimeGuard()
+    state = RuntimeStateMetadata(goal="Risky work")
+    high_risk_need = DecisionNeedMetadata(
+        need_type="command_check",
+        question="Run migration",
+        command="python migrate.py",
+        risk_level="high",
+    )
+
+    decision = guard.approve_need(state, high_risk_need, "command_executor")
+
+    assert decision.approved is False
+    assert decision.attributes["requires_user_confirmation"] is True
+    assert "user confirmation" in decision.reason
+
+    forbidden = DecisionNeedMetadata(
+        need_type="command_check",
+        question="Delete project",
+        command="rm -rf .",
+        risk_level="forbidden",
+    )
+    decision = guard.approve_need(state, forbidden, "command_executor")
+    assert decision.approved is False
+    assert "forbidden" in decision.reason
+
+
+def test_tool_router_moves_high_risk_need_to_ask_user() -> None:
+    state = RuntimeStateMetadata(goal="Risky work")
+    router = ToolRouter()
+
+    selections = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="command_check",
+            question="Run migration",
+            command="python migrate.py",
+            risk_level="high",
+        ),
+    )
+
+    assert selections == []
+    assert state.phase == AgentPhase.ASK_USER
+    assert "user confirmation" in state.completion_reason
+
+
+def test_file_selector_promotes_only_evidence_backed_candidates() -> None:
+    state = RuntimeStateMetadata(goal="Patch bug")
+    selector = FileSelector()
+    state.add_candidate_file("app.py", "traceback references app.py")
+
+    selected = selector.select(state, ["app.py", "guess.py"])
+
+    assert selected == ["app.py"]
+    assert state.selected_files["app.py"] == ["traceback references app.py"]
+    assert state.unknowns == ["Missing file-selection evidence for guess.py"]
+
+
+def test_edit_guard_requires_evidence_selection_scope_and_verification() -> None:
+    guard = EditGuard()
+    state = RuntimeStateMetadata(goal="Patch bug")
+    state.add_candidate_file("app.py", "traceback points here")
+
+    no_evidence = EditPlanMetadata(subgoal="Patch", target_files=["app.py"])
+    decision = guard.approve(state, no_evidence)
+    assert decision.approved is False
+    assert "evidence" in decision.reason.lower()
+
+    unselected = EditPlanMetadata(
+        subgoal="Patch",
+        target_files=["app.py"],
+        evidence=["traceback points here"],
+        allowed_changes=["Fix failing branch"],
+        verification=["pytest"],
+    )
+    decision = guard.approve(state, unselected)
+    assert decision.approved is False
+    assert decision.blocked_files == ["app.py"]
+
+    state.select_file("app.py", "traceback points here")
+    too_many_files = EditPlanMetadata(
+        subgoal="Patch",
+        target_files=["app.py", "b.py", "c.py", "d.py"],
+        evidence=["traceback points here"],
+        allowed_changes=["Fix failing branch"],
+        verification=["pytest"],
+    )
+    decision = guard.approve(state, too_many_files)
+    assert decision.approved is False
+    assert "budget" in decision.reason.lower()
+
+    approved = EditPlanMetadata(
+        subgoal="Patch",
+        target_files=["app.py"],
+        evidence=["traceback points here"],
+        allowed_changes=["Fix failing branch"],
+        forbidden_changes=["Do not change public CLI"],
+        verification=["pytest"],
+    )
+    decision = guard.approve(state, approved)
+    assert decision.approved is True
+
+
+def test_state_updater_absorbs_tool_results_and_forces_write_verification() -> None:
+    state = RuntimeStateMetadata(goal="Write file", phase=AgentPhase.EXECUTE)
+    router = ToolRouter()
+    updater = StateUpdater()
+    selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="file_write",
+            question="Save app",
+            target_path="app.py",
+            attributes={"content": "print('ok')"},
+        ),
+    )[0]
+    result = SimpleNamespace(
+        success=True,
+        output_metadata=ToolResultMetadata(
+            tool_name="file_writer",
+            status=ResultStatus.SUCCESS,
+            result=TextArtifactMetadata(content="written", attributes={"file_path": "app.py"}),
+        ),
+        error=None,
+    )
+
+    updater.apply_tool_result(state, selection, result)
+
+    assert state.phase == AgentPhase.VERIFY
+    assert state.verification_status == "required"
+    assert "app.py" in state.modified_files
+    assert state.budget.file_edits_used == 1
+    assert state.tool_history[0]["tool_name"] == "file_writer"
+
+
+def test_state_updater_moves_successful_verification_to_summary() -> None:
+    state = RuntimeStateMetadata(goal="Verify", phase=AgentPhase.VERIFY, modified_files=["app.py"], verification_status="required")
+    router = ToolRouter()
+    updater = StateUpdater()
+    selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="smoke_test",
+            question="Run tests",
+            command="pytest",
+        ),
+    )[0]
+    result = SimpleNamespace(
+        success=True,
+        output_metadata=ToolResultMetadata(
+            tool_name="command_executor",
+            status=ResultStatus.SUCCESS,
+            result=TextArtifactMetadata(content="passed"),
+        ),
+        error=None,
+    )
+
+    updater.apply_tool_result(state, selection, result)
+
+    assert state.phase == AgentPhase.SUMMARIZE
+    assert state.verification_status == "passed"
+    assert state.completion_reason == "verification passed"
+
+
+def test_state_updater_replans_after_failed_verification() -> None:
+    state = RuntimeStateMetadata(goal="Verify", phase=AgentPhase.VERIFY, modified_files=["app.py"], verification_status="required")
+    router = ToolRouter()
+    updater = StateUpdater()
+    selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="smoke_test",
+            question="Run tests",
+            command="pytest",
+        ),
+    )[0]
+    result = SimpleNamespace(
+        success=False,
+        output_metadata=None,
+        error=SimpleNamespace(error_message="pytest failed"),
+    )
+
+    updater.apply_tool_result(state, selection, result)
+
+    assert state.phase == AgentPhase.REPLAN
+    assert state.verification_status == "failed"
+    assert state.replan_count == 1
+    assert state.budget.replan_rounds_used == 1
+
+
+def test_state_updater_blocks_after_repeated_no_progress_results() -> None:
+    state = RuntimeStateMetadata(goal="Observe")
+    updater = StateUpdater()
+    selection = SimpleNamespace(
+        tool_name="noop_tool",
+        step_id="noop",
+        reason="observe",
+        input_metadata=SimpleNamespace(to_params=lambda: {}),
+    )
+    result = SimpleNamespace(success=True, output_metadata=None, error=None)
+
+    updater.apply_tool_result(state, selection, result)
+    updater.apply_tool_result(state, selection, result)
+    updater.apply_tool_result(state, selection, result)
+
+    assert state.phase == AgentPhase.BLOCKED
+    assert state.completion_reason == "no new runtime facts after repeated tool results"
+
+
+def test_runtime_controller_streamed_need_interrupt_routes_and_resumes_state() -> None:
+    runtime = SimpleNamespace(tool_registry=None)
+    controller = AgentRuntimeController(runtime, session_executor=SimpleNamespace(run=lambda *_args, **_kwargs: {"success": True}))
+
+    selections = controller.handle_streamed_need(
+        DecisionNeedMetadata(
+            need_type="file_read",
+            question="Inspect app",
+            target_path="app.py",
+        )
+    )
+
+    assert selections[0].tool_name == "file_reader"
+    assert controller.state.tool_history[0]["event_type"] == "stream_need_interrupt"
+
+    result = SimpleNamespace(
+        success=True,
+        output_metadata=ToolResultMetadata(
+            tool_name="file_reader",
+            status=ResultStatus.SUCCESS,
+            result=TextArtifactMetadata(content="app", attributes={"file_path": "app.py"}),
+        ),
+        error=None,
+    )
+    state = controller.absorb_streamed_tool_result(selections[0], result)
+
+    assert "app.py" in state.candidate_files
+    assert state.tool_history[-1]["event_type"] == "stream_need_resume"
+
+
+def test_runtime_reporter_summarizes_evidence_changes_and_risks() -> None:
+    state = RuntimeStateMetadata(goal="Patch bug", phase=AgentPhase.BLOCKED, verification_status="failed")
+    state.add_fact("Observed failing test")
+    state.add_unknown("Need failure diagnosis")
+    state.select_file("app.py", "test failure references app.py")
+    state.add_modified_file("app.py")
+    state.completion_reason = "verification failed"
+
+    report = RuntimeReporter().report(state)
+
+    assert report.goal == "Patch bug"
+    assert report.phase == AgentPhase.BLOCKED
+    assert report.selected_files == {"app.py": ["test failure references app.py"]}
+    assert report.modified_files == ["app.py"]
+    assert "unresolved runtime questions remain" in report.residual_risks
+    assert "verification status is failed" in report.residual_risks
+
+
+def test_agent_runtime_controller_returns_runtime_state_and_report() -> None:
+    class FakeSessionRunner:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def run(self, goal, context, mode="standard"):
+            self.calls.append((goal, context, mode))
+            return {"success": True, "stats": {"tasks_completed": 1, "tasks_failed": 0}, "written_files": ["app.py"]}
+
+    session_executor = FakeSessionRunner()
+    runtime = SimpleNamespace(tool_registry=None)
+    controller = AgentRuntimeController(runtime, session_executor=session_executor)
+
+    result = controller.run("Build app", {"project_path": "/tmp/project"}, mode="standard")
+
+    assert result["success"] is True
+    assert session_executor.calls == [("Build app", {"project_path": "/tmp/project"}, "standard")]
+    state = result["agent_runtime_state"]
+    assert state["goal"] == "Build app"
+    assert state["phase"] == "summarize"
+    assert state["modified_files"] == ["app.py"]
+    assert result["runtime_report"]["goal"] == "Build app"
+    assert result["runtime_report"]["modified_files"] == ["app.py"]

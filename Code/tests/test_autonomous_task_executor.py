@@ -168,7 +168,7 @@ def test_collect_written_files_reads_typed_tool_result_metadata(tmp_path) -> Non
             result=TextArtifactMetadata(
                 content="completed",
                 attributes={
-                    "tool_calls": [
+                    "tool_results": [
                         {
                             "tool": "file_writer",
                             "success": True,
@@ -195,7 +195,7 @@ def test_collect_written_files_falls_back_to_input_metadata_file_path(tmp_path) 
             result=TextArtifactMetadata(
                 content="completed",
                 attributes={
-                    "tool_calls": [
+                    "tool_results": [
                         {
                             "tool": "file_writer",
                             "success": True,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from autonomous_iteration.models import EvaluationResult, IterationResult
-from autonomous_iteration.runner import AutonomousIterationRunner
+from autonomous_iteration.project_improvement_runtime import ProjectImprovementRuntime
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from metadata import FailureMetadata, ResultStatus, ToolExecutionEnvelopeMetadata, ToolInputMetadata, ToolResultMetadata, payload_to_artifact
@@ -64,7 +64,7 @@ class FakeAutopilot:
         self.max_iteration_attempts = 2
         self.enhanced_ui = None
         self.session_id = "session"
-        self.logger = OpenPilotLogger(tmp_path / "runner.jsonl")
+        self.logger = OpenPilotLogger(tmp_path / "project_improvement_runtime.jsonl")
         self.iterative_improvement = FakeIterationAgent()
         self.memory_store = None
         self.progress_events: list[str] = []
@@ -136,10 +136,10 @@ class FakeLLM:
     pass
 
 
-def test_autonomous_iteration_runner_environment_failure(tmp_path) -> None:
-    runner = AutonomousIterationRunner(FakeAutopilot(tmp_path, environment_success=False))
+def test_project_improvement_runtime_environment_failure(tmp_path) -> None:
+    runtime = ProjectImprovementRuntime(FakeAutopilot(tmp_path, environment_success=False))
 
-    result = runner.run(
+    result = runtime.run(
         goal="Improve project",
         project_path=tmp_path,
         written_files=[str(tmp_path / "app.py")],
@@ -151,11 +151,11 @@ def test_autonomous_iteration_runner_environment_failure(tmp_path) -> None:
     assert result["validation"].validation_errors == ["env failed"]
 
 
-def test_autonomous_iteration_runner_success_callbacks_and_shape(tmp_path) -> None:
+def test_project_improvement_runtime_success_callbacks_and_shape(tmp_path) -> None:
     autopilot = FakeAutopilot(tmp_path)
-    runner = AutonomousIterationRunner(autopilot)
+    runtime = ProjectImprovementRuntime(autopilot)
 
-    result = runner.run(
+    result = runtime.run(
         goal="Improve project",
         project_path=tmp_path,
         written_files=[str(tmp_path / "app.py")],
@@ -173,13 +173,13 @@ def test_autonomous_iteration_runner_success_callbacks_and_shape(tmp_path) -> No
     assert autopilot.progress_events == ["context_loader"]
 
 
-def test_intelligent_autopilot_iterative_improvement_proxy_uses_runner(tmp_path) -> None:
-    class FakeRunner:
+def test_intelligent_autopilot_iterative_improvement_proxy_uses_project_improvement_runtime(tmp_path) -> None:
+    class FakeProjectImprovementRuntime:
         def run(self, **kwargs):
             return {"success": True, "goal": kwargs["goal"]}
 
     autopilot = IntelligentAutopilot(FakeLLM(), log_file=tmp_path / "autopilot.jsonl")
-    autopilot.autonomous_iteration_runner = FakeRunner()
+    autopilot.project_improvement_runtime = FakeProjectImprovementRuntime()
 
     result = autopilot._run_iterative_improvement(
         goal="Improve project",

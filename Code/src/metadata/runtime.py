@@ -88,7 +88,7 @@ class AgentExecutionMetadata(MetadataBase):
     result_metadata: TaskResultMetadata | MetadataBase | None = None
     failure: FailureMetadata | None = None
     duration_seconds: float = 0.0
-    tool_calls: list[ToolExecutionEnvelopeMetadata] = Field(default_factory=list)
+    tool_invocations: list[ToolExecutionEnvelopeMetadata] = Field(default_factory=list)
 
 
 class ModuleExecutionMetadata(MetadataBase):

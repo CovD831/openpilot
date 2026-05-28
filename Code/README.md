@@ -62,11 +62,14 @@ The active runtime path is:
 
 ```text
 ui.cli -> ui.enhanced_cli -> tools.task_classifier
-        -> agent_generator.runner OR execution.IntelligentAutopilot
-        -> core.SemanticAnalyzer / agents.TaskDecomposer
-        -> tools.ToolOrchestrator / tools.ToolExecutor
+        -> agent_generator.runner OR autonomous_iteration.IntelligentAutopilot
+        -> autonomous_iteration.AgentRuntimeController
+        -> core.SemanticAnalyzer / autonomous_iteration.agents.TaskDecomposer
+        -> RuntimeGuard / ToolRouter / FileSelector / EditGuard
+        -> StateUpdater / RuntimeVerifier / RuntimeReporter
+        -> core.ToolEventLoopRunner / tools.ToolExecutor
         -> built-in tools
-        -> agents.ProjectEvaluatorAgent / agents.AutonomousIterationAgent
+        -> autonomous_iteration.agents.ProjectEvaluatorAgent / ProjectImprovementRuntime
         -> memory + logs + enhanced UI dashboard
 ```
 
@@ -75,15 +78,26 @@ Important directories:
 | Path | Purpose |
 | --- | --- |
 | `src/ui/` | CLI, interactive mode, Rich dashboard, progress tracking, question UI. |
-| `src/execution/` | Modern autopilot and code execution/generation/review support. |
-| `src/agents/` | Task decomposition, orchestration, project evaluation, autonomous iteration. |
+| `src/autonomous_iteration/` | Modern autopilot runtime, phase controller, task execution, project evaluation, and autonomous iteration. |
 | `src/tools/` | Standard ToolDefinition protocol, tool registry, built-in tool executors. |
 | `src/metadata/` | Strict Pydantic v2 model-harness contracts exchanged by agents, tools, and runtime services. |
 | `src/core/` | LLM client, instrumentation, config, logging, semantic analysis, risk helpers. |
 | `src/memory/` | Memory store, short memory, context compression, memory vault. |
 | `src/utils/` | Pure utility functions and data structures without LLM/tool protocol behavior. |
 
-The legacy `planning/`, `validation/`, `autonomy/`, `reporting/`, `models/`, and `WorkflowExecutor` code paths have been removed. Pydantic contracts now live beside their owning package, with one exception: strict model-harness exchange objects live in `src/metadata/`. Tool calls use typed `input_metadata` and typed `output_metadata`; free-form diagnostic or domain attributes should use names such as `annotations`, `attributes`, `trace_info`, or `provider_details`.
+The agent runtime is now phase-driven. `AgentRuntimeController` maintains an explicit
+`RuntimeStateMetadata` with the current phase, known facts, unknowns, candidate and
+selected files, planned edits, modified files, tool history, verification status,
+risk, and bounded runtime budgets. `RuntimeGuard` owns budget, risk, user-confirmation,
+and stop-condition policy. `ToolRouter` maps explicit decision needs to tools,
+`FileSelector` upgrades evidence-backed candidates into selected files, `EditGuard`
+approves scoped edit plans, and `StateUpdater` absorbs tool results back into state.
+`RuntimeVerifier` selects the smallest verification path after project-state changes,
+and `RuntimeReporter` builds the final evidence, verification, and risk report. Any
+write or shell/code execution that changes project state must be followed by verification
+before the runtime can summarize success.
+
+The legacy `planning/`, `validation/`, `autonomy/`, `reporting/`, `models/`, and `WorkflowExecutor` code paths have been removed. Pydantic contracts now live beside their owning package, with one exception: strict model-harness exchange objects live in `src/metadata/`. Tool invocations use typed `input_metadata` and typed `output_metadata`; free-form diagnostic or domain attributes should use names such as `annotations`, `attributes`, `trace_info`, or `provider_details`.
 
 ## Refactoring Notes
 

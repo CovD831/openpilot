@@ -8,7 +8,7 @@ from rich.console import Console
 
 from autonomous_iteration.task_models import Task, TaskDecompositionResult, TaskExecutionResult, TaskStatus
 from core.openpilot_log import OpenPilotLogger
-from autonomous_iteration.session_runner import AutopilotSessionRunner
+from autonomous_iteration.runtime_controller import _RuntimeSessionExecutor
 from metadata import (
     FailureMetadata,
     FileArtifactMetadata,
@@ -102,7 +102,7 @@ class FakeEnhancedUI:
 class FakeRuntime:
     def __init__(self, tmp_path: Path) -> None:
         self.console = Console(record=True, width=100)
-        self.logger = OpenPilotLogger(tmp_path / "session_runner.jsonl")
+        self.logger = OpenPilotLogger(tmp_path / "runtime_session.jsonl")
         self.session_id = "session"
         self.stats = {
             "start_time": None,
@@ -216,12 +216,12 @@ class FailingToolLoopRuntime(FakeRuntime):
         ]
 
 
-def test_session_runner_standard_returns_existing_result_shape(tmp_path) -> None:
+def test_runtime_session_standard_returns_result(tmp_path) -> None:
     runtime = FakeRuntime(tmp_path)
     runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
-    runner = AutopilotSessionRunner(runtime)
+    executor = _RuntimeSessionExecutor(runtime)
 
-    result = runner.run("Build app", {}, mode="standard")
+    result = executor.run("Build app", {}, mode="standard")
 
     assert result["success"] is True
     assert result["goal"] == "Build app"
@@ -230,13 +230,13 @@ def test_session_runner_standard_returns_existing_result_shape(tmp_path) -> None
     assert runtime.task_decomposer.decompose_called is True
 
 
-def test_session_runner_enhanced_returns_existing_result_shape(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr("autonomous_iteration.session_runner.time.sleep", lambda seconds: None)
+def test_runtime_session_enhanced_returns_result(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("autonomous_iteration.runtime_controller.time.sleep", lambda seconds: None)
     runtime = FakeRuntime(tmp_path)
     runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
-    runner = AutopilotSessionRunner(runtime)
+    executor = _RuntimeSessionExecutor(runtime)
 
-    result = runner.run("Build app", {}, mode="enhanced_ui")
+    result = executor.run("Build app", {}, mode="enhanced_ui")
 
     assert result["success"] is True
     assert "final_result" not in result
@@ -245,18 +245,18 @@ def test_session_runner_enhanced_returns_existing_result_shape(tmp_path, monkeyp
     assert runtime.enhanced_ui.current_updates[-1]["title"] == "Success"
 
 
-def test_session_runner_fast_path_skips_decomposition(tmp_path) -> None:
+def test_runtime_session_fast_path_skips_decomposition(tmp_path) -> None:
     runtime = FakeRuntime(tmp_path)
     runtime.fast_result = {"success": True, "fast": True}
-    runner = AutopilotSessionRunner(runtime)
+    executor = _RuntimeSessionExecutor(runtime)
 
-    result = runner.run("print hello", {}, mode="standard")
+    result = executor.run("print hello", {}, mode="standard")
 
     assert result == {"success": True, "fast": True}
     assert runtime.task_decomposer.decompose_called is False
 
 
-def test_session_runner_surfaces_autonomous_iteration_failure(tmp_path) -> None:
+def test_runtime_session_surfaces_autonomous_iteration_failure(tmp_path) -> None:
     runtime = FakeRuntime(tmp_path)
     runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
     runtime.written_files = [str(tmp_path / "app.py")]
@@ -271,9 +271,9 @@ def test_session_runner_surfaces_autonomous_iteration_failure(tmp_path) -> None:
         "retry_history": [{"attempt": "full"}],
         "remaining_goals": ["Fix app"],
     }
-    runner = AutopilotSessionRunner(runtime)
+    executor = _RuntimeSessionExecutor(runtime)
 
-    result = runner.run("Build app", {}, mode="standard")
+    result = executor.run("Build app", {}, mode="standard")
 
     assert result["success"] is False
     assert result["iteration_error"] == "generation failed"
@@ -282,12 +282,12 @@ def test_session_runner_surfaces_autonomous_iteration_failure(tmp_path) -> None:
     assert result["retry_history"] == [{"attempt": "full"}]
 
 
-def test_session_runner_failed_tool_loop_does_not_assemble_or_report_llm_transport(tmp_path) -> None:
+def test_runtime_session_failed_tool_loop_does_not_assemble_or_report_llm_transport(tmp_path) -> None:
     runtime = FailingToolLoopRuntime(tmp_path)
     runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
-    runner = AutopilotSessionRunner(runtime)
+    executor = _RuntimeSessionExecutor(runtime)
 
-    result = runner.run("Build app", {}, mode="enhanced_ui")
+    result = executor.run("Build app", {}, mode="enhanced_ui")
 
     assert result["success"] is False
     assert runtime.task_decomposer.assemble_called is False
@@ -297,12 +297,12 @@ def test_session_runner_failed_tool_loop_does_not_assemble_or_report_llm_transpo
     assert result["failed_tool"] != "llm_client"
 
 
-def test_session_runner_appends_iteration_skip_note_when_no_written_files(tmp_path) -> None:
+def test_runtime_session_appends_iteration_skip_note_when_no_written_files(tmp_path) -> None:
     runtime = FakeRuntime(tmp_path)
     runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
-    runner = AutopilotSessionRunner(runtime)
+    executor = _RuntimeSessionExecutor(runtime)
 
-    result = runner.run("Build app", {}, mode="enhanced_ui")
+    result = executor.run("Build app", {}, mode="enhanced_ui")
 
     assert result["success"] is True
     tasks = runtime.enhanced_ui.task_graph_state["tasks"]
@@ -311,7 +311,7 @@ def test_session_runner_appends_iteration_skip_note_when_no_written_files(tmp_pa
     assert any("Project improvement skipped" in message for _level, message in runtime.enhanced_ui.activities)
 
 
-def test_session_runner_calls_iteration_when_written_files_detected(tmp_path) -> None:
+def test_runtime_session_calls_iteration_when_written_files_detected(tmp_path) -> None:
     runtime = FakeRuntime(tmp_path)
     runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
     runtime.written_files = [str(tmp_path / "app.py")]
@@ -324,9 +324,9 @@ def test_session_runner_calls_iteration_when_written_files_detected(tmp_path) ->
         "completed_iterations": 1,
         "required_iterations": 1,
     }
-    runner = AutopilotSessionRunner(runtime)
+    executor = _RuntimeSessionExecutor(runtime)
 
-    result = runner.run("Build app", {}, mode="enhanced_ui")
+    result = executor.run("Build app", {}, mode="enhanced_ui")
 
     assert result["success"] is True
     assert result["completed_improvements"] == 1

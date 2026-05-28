@@ -163,7 +163,7 @@ def test_tool_event_loop_metadata_serializes() -> None:
         status="failed",
         success=False,
         events=[event],
-        tool_calls=[tool_call],
+        tool_invocations=[tool_call],
         recoverable_errors=[tool_error],
         tool_contexts=[tool_context],
         final_error=failure,
@@ -174,13 +174,13 @@ def test_tool_event_loop_metadata_serializes() -> None:
     assert payload["kind"] == MetadataKind.TOOL_LOOP
     assert payload["events"][0]["kind"] == MetadataKind.TOOL_EVENT
     assert payload["tool_contexts"][0]["kind"] == MetadataKind.TOOL_CONTEXT
-    assert payload["tool_calls"][0]["kind"] == MetadataKind.TOOL_CALL
-    assert payload["tool_calls"][0]["tool_context"]["python_command"].endswith("/python")
+    assert payload["tool_invocations"][0]["kind"] == MetadataKind.TOOL_CALL
+    assert payload["tool_invocations"][0]["tool_context"]["python_command"].endswith("/python")
     assert payload["recoverable_errors"][0]["kind"] == MetadataKind.TOOL_ERROR
     assert payload["events"][0]["call_id"] == "call_1"
 
 
-def test_tool_loop_metadata_remains_backward_compatible_without_context() -> None:
+def test_tool_loop_metadata_accepts_runtime_invocation_trace_without_context() -> None:
     payload = {
         "kind": MetadataKind.TOOL_LOOP,
         "session_id": "session",
@@ -188,7 +188,7 @@ def test_tool_loop_metadata_remains_backward_compatible_without_context() -> Non
         "status": "completed",
         "success": True,
         "events": [],
-        "tool_calls": [],
+        "tool_invocations": [],
         "recoverable_errors": [],
     }
 

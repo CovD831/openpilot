@@ -10,6 +10,8 @@ from typing import Any
 from core.llm import LLMMessage, LLMRequest
 from core.tool_event_emitter import ToolEventEmitter
 from metadata import (
+    AgentPhase,
+    EditPlanMetadata,
     FailureMetadata,
     ToolCallMetadata,
     ToolContextMetadata,
@@ -20,6 +22,10 @@ from metadata import (
     ToolResultMetadata,
 )
 from tools.tool_selection import ToolSelection
+
+
+def _phase_value(phase: AgentPhase | str) -> str:
+    return phase.value if isinstance(phase, AgentPhase) else str(phase)
 
 
 @dataclass
@@ -40,7 +46,7 @@ class ToolEventLoopRunner:
         self.max_steps = max_steps
         self.doom_loop_threshold = doom_loop_threshold
         self.events: list[ToolEventMetadata] = []
-        self.tool_calls: list[ToolCallMetadata] = []
+        self.tool_invocations: list[ToolCallMetadata] = []
         self.tool_contexts: list[ToolContextMetadata] = []
         self.recoverable_errors: list[ToolErrorMetadata] = []
         self.tool_results: list[dict[str, Any]] = []
@@ -64,10 +70,10 @@ class ToolEventLoopRunner:
                     response_format="json_object",
                 )
             )
-            tool_calls = self.owner._parse_tool_calls(llm_response)
+            tool_requests = self.owner._parse_decision_needs(llm_response)
             round_had_recoverable_error = False
 
-            for index, tool_call in enumerate(tool_calls):
+            for index, tool_call in enumerate(tool_requests):
                 tool_name = str(tool_call.get("tool_name") or "").strip()
                 reason_text = str(tool_call.get("reason") or "")
                 raw_input = tool_call.get("input_metadata")
@@ -108,7 +114,7 @@ class ToolEventLoopRunner:
                     reason=reason_text,
                     round_index=round_index,
                 )
-                self.tool_calls.append(tool_call_metadata)
+                self.tool_invocations.append(tool_call_metadata)
                 self._append_event(
                     task_id,
                     tool_call_metadata,
@@ -175,7 +181,7 @@ class ToolEventLoopRunner:
                     tool_context=tool_context,
                     round_index=round_index,
                 )
-                self.owner._show_tool_running(task, tool_name, input_payload, reason_text, index, len(tool_calls))
+                self.owner._show_tool_running(task, tool_name, input_payload, reason_text, index, len(tool_requests))
                 selection = ToolSelection(
                     step_id=step_id,
                     tool_name=tool_name,
@@ -187,8 +193,16 @@ class ToolEventLoopRunner:
                     depends_on=[],
                     timeout_override=None,
                 )
+                guard_error = self._guard_project_state_change_if_needed(task, tool_call_metadata, selection)
+                if guard_error:
+                    self._record_tool_error(task_id, tool_call_metadata, guard_error, round_index)
+                    self._append_tool_result(tool_call_metadata, input_metadata, False, guard_error.error_message)
+                    final_error = guard_error.failure
+                    return self._finish(task_id, session_id, False, rounds_used, last_output, final_error, guard_error.error_message)
+
                 self.owner._log_tool_start(task, tool_name, input_payload)
                 exec_result = self.runtime.tool_executor.execute_single(selection, context=None)
+                self._update_runtime_state(selection, exec_result)
                 self.owner._show_tool_result(tool_name, exec_result)
                 log_output = self.owner._summarize_metadata_output(exec_result.output_metadata)
                 self.owner._log_tool_complete(task, tool_name, exec_result, log_output)
@@ -209,6 +223,17 @@ class ToolEventLoopRunner:
                         round_index=round_index,
                     )
                     self._append_tool_result(tool_call_metadata, input_metadata, True, None, output_metadata)
+                    verification_error = self._verify_state_change_if_needed(
+                        task=task,
+                        task_id=task_id,
+                        session_id=session_id,
+                        source_selection=selection,
+                        round_index=round_index,
+                        last_output=last_output,
+                    )
+                    if verification_error:
+                        final_error = verification_error
+                        return self._finish(task_id, session_id, False, rounds_used, last_output, final_error, final_error.error_message)
                     continue
 
                 failure = exec_result.error or FailureMetadata(
@@ -414,6 +439,347 @@ class ToolEventLoopRunner:
                 )
         return None
 
+    def _guard_project_state_change_if_needed(self, task: Any, tool_call: ToolCallMetadata, selection: ToolSelection) -> ToolErrorMetadata | None:
+        if not self._requires_edit_guard(selection):
+            return None
+        controller = getattr(self.runtime, "runtime_controller", None)
+        state = getattr(controller, "state", None)
+        guard = getattr(controller, "edit_guard", None)
+        file_selector = getattr(controller, "file_selector", None)
+        if state is None or guard is None:
+            return None
+
+        params = selection.input_metadata.to_params()
+        target_files = self._edit_target_files(selection)
+        if not target_files:
+            return self._protocol_error(
+                tool_call.session_id,
+                tool_call.task_id,
+                tool_call.step_id,
+                tool_call.call_id,
+                selection.tool_name,
+                "MissingEditTarget",
+                f"{selection.tool_name} requires an affected path before the state change can be approved",
+                selection.input_metadata,
+                tool_call.tool_context,
+            )
+
+        edit_plan = self._matching_edit_plan(state, target_files)
+        if edit_plan is None:
+            evidence = tool_call.reason or f"Tool plan for task: {getattr(task, 'description', '')}"
+            for file_path in target_files:
+                if file_path not in getattr(state, "candidate_files", {}):
+                    state.add_candidate_file(file_path, evidence)
+            if file_selector is not None:
+                selected = file_selector.select(
+                    state,
+                    target_files,
+                    {file_path: list(state.candidate_files.get(file_path) or [evidence]) for file_path in target_files},
+                )
+            else:
+                selected = []
+                for file_path in target_files:
+                    state.select_file(file_path, evidence)
+                    selected.append(file_path)
+            if set(selected) != set(target_files):
+                return self._protocol_error(
+                    tool_call.session_id,
+                    tool_call.task_id,
+                    tool_call.step_id,
+                    tool_call.call_id,
+                    selection.tool_name,
+                    "FileSelectionMissingEvidence",
+                    "Edit targets must be selected by FileSelector with evidence before approval",
+                    selection.input_metadata,
+                    tool_call.tool_context,
+                    suggested_recovery="Provide evidence-backed candidate files before requesting the edit.",
+                    details={"target_files": target_files, "selected_files": selected},
+                )
+            verification = self._verification_steps_for_state_change(selection, target_files)
+            edit_plan = EditPlanMetadata(
+                subgoal=str(getattr(task, "description", "") or f"Run {selection.tool_name}"),
+                target_files=target_files,
+                evidence=[evidence],
+                allowed_changes=[self._allowed_change_description(selection, target_files)],
+                forbidden_changes=["Do not modify files outside the approved edit plan."],
+                risk_level=str(selection.input_metadata.risk_level or "medium"),
+                verification=verification,
+            )
+            state.planned_edits.append(edit_plan)
+
+        decision = guard.approve(state, edit_plan)
+        state.record_tool_event(
+            {
+                "tool_name": selection.tool_name,
+                "step_id": selection.step_id,
+                "event_type": "edit_guard",
+                "approved": decision.approved,
+                "reason": decision.reason,
+                "target_files": list(edit_plan.target_files),
+            }
+        )
+        if decision.approved:
+            return None
+        return self._protocol_error(
+            tool_call.session_id,
+            tool_call.task_id,
+            tool_call.step_id,
+            tool_call.call_id,
+            selection.tool_name,
+            "EditGuardRejected",
+            decision.reason,
+            selection.input_metadata,
+            tool_call.tool_context,
+            suggested_recovery="Create a scoped EditPlanMetadata with selected target files, evidence, allowed changes, and verification.",
+            details=decision.to_json_dict(),
+        )
+
+    def _requires_edit_guard(self, selection: ToolSelection) -> bool:
+        if selection.tool_name == "file_writer":
+            return True
+        if selection.tool_name != "command_executor":
+            return False
+        input_metadata = selection.input_metadata
+        mode = str(input_metadata.mode or "").lower()
+        if mode == "dry_run":
+            return False
+        controller = getattr(self.runtime, "runtime_controller", None)
+        state = getattr(controller, "state", None)
+        if state is not None and (
+            _phase_value(getattr(state, "phase", "")) == AgentPhase.VERIFY.value
+            or getattr(state, "verification_status", "") == "required"
+        ):
+            return False
+        return self._command_may_modify_project(str(input_metadata.command or ""))
+
+    def _command_may_modify_project(self, command: str) -> bool:
+        lowered = command.lower()
+        mutation_markers = (
+            " rm ",
+            " rm -",
+            " mv ",
+            " cp ",
+            " mkdir ",
+            " touch ",
+            " chmod ",
+            " chown ",
+            " sed -i",
+            " tee ",
+            " >",
+            ">>",
+            " pip install",
+            " uv add",
+            " poetry add",
+            " npm install",
+            " pnpm add",
+            " yarn add",
+            " cargo add",
+            " go get",
+        )
+        padded = f" {lowered} "
+        return any(marker in padded for marker in mutation_markers)
+
+    def _edit_target_files(self, selection: ToolSelection) -> list[str]:
+        params = selection.input_metadata.to_params()
+        if selection.tool_name == "file_writer":
+            return [str(params["file_path"])] if params.get("file_path") else []
+        if selection.tool_name == "command_executor":
+            explicit = params.get("file_paths") or params.get("files") or []
+            if explicit:
+                return [str(path) for path in explicit]
+            cwd = params.get("cwd") or self._project_from_path(str(params.get("command") or "")) or "."
+            return [str(cwd)]
+        return []
+
+    def _verification_steps_for_state_change(self, selection: ToolSelection, target_files: list[str]) -> list[str]:
+        controller = getattr(self.runtime, "runtime_controller", None)
+        state = getattr(controller, "state", None)
+        verifier = getattr(controller, "verifier", None)
+        if state is not None and verifier is not None:
+            plan = verifier.plan(state, self._runtime_context())
+            if plan.commands:
+                return list(plan.commands)
+            if plan.fallback_checks:
+                return list(plan.fallback_checks)
+        if selection.tool_name == "file_writer":
+            return ["Run the runtime-selected verification after the write."]
+        return [f"Verify command side effects for: {', '.join(target_files)}"]
+
+    def _allowed_change_description(self, selection: ToolSelection, target_files: list[str]) -> str:
+        if selection.tool_name == "file_writer":
+            return f"Write requested content to {', '.join(target_files)}"
+        command = str(selection.input_metadata.command or "")
+        return f"Run approved command with bounded side effects: {command[:160]}"
+
+    def _matching_edit_plan(self, state: Any, target_files: list[str]) -> EditPlanMetadata | None:
+        targets = set(target_files)
+        for edit_plan in getattr(state, "planned_edits", []) or []:
+            if targets.issubset(set(getattr(edit_plan, "target_files", []))):
+                return edit_plan
+        return None
+
+    def _verify_state_change_if_needed(
+        self,
+        *,
+        task: Any,
+        task_id: str,
+        session_id: str,
+        source_selection: ToolSelection,
+        round_index: int,
+        last_output: ToolResultMetadata | None,
+    ) -> FailureMetadata | None:
+        if source_selection.tool_name not in {"file_writer", "command_executor"}:
+            return None
+        controller = getattr(self.runtime, "runtime_controller", None)
+        state = getattr(controller, "state", None)
+        verifier = getattr(controller, "verifier", None)
+        if state is None or verifier is None:
+            return None
+        if getattr(state, "verification_status", "") != "required":
+            return None
+        if state.budget.verification_attempts_used >= state.budget.max_verification_attempts:
+            state.block("verification budget exhausted")
+            return FailureMetadata(
+                error_type="VerificationBudgetExceeded",
+                error_message="Project state change requires verification, but verification budget is exhausted.",
+                recoverable=False,
+            )
+
+        plan = verifier.plan(state, self._runtime_context())
+        if not plan.commands:
+            state.block("verification plan did not provide a command")
+            return FailureMetadata(
+                error_type="MissingVerificationCommand",
+                error_message="Project state change requires verification, but no verification command was available.",
+                recoverable=False,
+            )
+
+        command = plan.commands[0]
+        step_id = f"{source_selection.step_id}_verify"
+        call_id = f"{task_id}:r{round_index}:verify"
+        input_metadata = ToolInputMetadata.from_mapping(
+            "command_executor",
+            {
+                "command": command,
+                "mode": "automatic",
+                "cwd": self._runtime_context().get("cwd"),
+                "test_command": command,
+            },
+        )
+        apply_project_context = getattr(self.runtime, "_apply_project_command_context", None)
+        if callable(apply_project_context):
+            input_metadata = apply_project_context("command_executor", input_metadata)
+
+        tool_context = self._build_tool_context(
+            task_id=task_id,
+            session_id=session_id,
+            step_id=step_id,
+            call_id=call_id,
+            tool_name="command_executor",
+            input_metadata=input_metadata,
+        )
+        tool_call = self.event_emitter.create_tool_call(
+            session_id=session_id,
+            task_id=task_id,
+            step_id=step_id,
+            call_id=call_id,
+            tool_name="command_executor",
+            input_metadata=input_metadata,
+            tool_context=tool_context,
+            status="pending",
+            reason="verify write operation",
+            round_index=round_index,
+        )
+        self.tool_contexts.append(tool_context)
+        self.tool_invocations.append(tool_call)
+        self._append_event(task_id, tool_call, "pending", "pending", input_metadata=input_metadata, tool_context=tool_context, round_index=round_index)
+        self._append_event(task_id, tool_call, "running", "running", input_metadata=input_metadata, tool_context=tool_context, round_index=round_index)
+
+        selection = ToolSelection(
+            step_id=step_id,
+            tool_name="command_executor",
+            reason=self.runtime._map_reason_to_enum("verify write operation"),
+            confidence=1.0,
+            input_metadata=input_metadata,
+            requires_confirmation=False,
+            fallback_tools=[],
+            depends_on=[source_selection.step_id],
+            timeout_override=None,
+        )
+        self.owner._show_tool_running(task, "command_executor", input_metadata.to_params(), "verify write operation", 0, 1)
+        self.owner._log_tool_start(task, "command_executor", input_metadata.to_params())
+        exec_result = self.runtime.tool_executor.execute_single(selection, context=None)
+        self._update_runtime_state(selection, exec_result)
+        self.owner._show_tool_result("command_executor", exec_result)
+        log_output = self.owner._summarize_metadata_output(exec_result.output_metadata)
+        self.owner._log_tool_complete(task, "command_executor", exec_result, log_output)
+
+        if exec_result.success:
+            self._append_event(
+                task_id,
+                tool_call,
+                "completed",
+                "completed",
+                input_metadata=input_metadata,
+                output_metadata=exec_result.output_metadata,
+                tool_context=tool_context,
+                round_index=round_index,
+            )
+            self._append_tool_result(tool_call, input_metadata, True, None, exec_result.output_metadata)
+            return None
+
+        failure = exec_result.error or FailureMetadata(
+            error_type="VerificationFailed",
+            error_message="Write verification failed.",
+            recoverable=False,
+        )
+        if not isinstance(failure, FailureMetadata):
+            failure = FailureMetadata(
+                error_type=str(getattr(failure, "error_type", "") or type(failure).__name__),
+                error_message=str(getattr(failure, "error_message", failure)),
+                recoverable=False,
+            )
+        self._append_event(
+            task_id,
+            tool_call,
+            "error",
+            "error",
+            input_metadata=input_metadata,
+            tool_context=tool_context,
+            failure=failure,
+            round_index=round_index,
+        )
+        self._append_tool_result(tool_call, input_metadata, False, failure.error_message)
+        return failure
+
+    def _runtime_context(self) -> dict[str, Any]:
+        environments = getattr(self.runtime, "_project_environments", {}) or {}
+        if len(environments) == 1:
+            environment = next(iter(environments.values()))
+            return {
+                "project_path": environment.get("project_path"),
+                "cwd": environment.get("command_cwd"),
+                "run_command": environment.get("run_command"),
+                "test_command": environment.get("test_command"),
+            }
+        return {}
+
+    def _update_runtime_state(self, selection: ToolSelection, exec_result: Any) -> None:
+        controller = getattr(self.runtime, "runtime_controller", None)
+        state = getattr(controller, "state", None)
+        updater = getattr(controller, "state_updater", None)
+        if state is None or updater is None:
+            return
+        try:
+            updater.apply_tool_result(state, selection, exec_result)
+        except Exception as exc:
+            self.owner._log(
+                "runtime_state_update_failed",
+                output_summary={"tool": selection.tool_name, "step_id": selection.step_id},
+                success=False,
+                error=str(exc),
+            )
+
     def _input_from_raw(self, tool_name: str, raw_input: dict[str, Any]) -> ToolInputMetadata:
         try:
             return ToolInputMetadata.from_mapping(tool_name, raw_input)
@@ -431,7 +797,7 @@ class ToolEventLoopRunner:
             return list(required)
         fallback = {
             "code_generator": ["task_description"],
-            "file_writer": ["file_path"],
+            "file_writer": ["file_path", "content"],
             "readme_tool": ["project_path"],
             "command_executor": ["command"],
         }
@@ -598,7 +964,7 @@ class ToolEventLoopRunner:
             rounds_used=rounds_used,
             max_rounds=self.max_steps,
             events=self.events,
-            tool_calls=self.tool_calls,
+            tool_invocations=self.tool_invocations,
             recoverable_errors=self.recoverable_errors,
             tool_contexts=self.tool_contexts,
             final_output=last_output,
@@ -640,8 +1006,8 @@ class ToolEventLoopRunner:
         return (
             f"{initial_prompt}\n\n"
             "The previous tool call attempt produced recoverable tool protocol errors. "
-            "Revise the tool_calls JSON and try again. Focus on correcting the failed call only; "
-            "do not repeat successful calls unless their output is strictly needed again, and do not repeat the same invalid tool/input.\n"
+            "Revise the decision_needs JSON and try again. Focus on the unresolved information need only; "
+            "do not repeat needs that already produced useful state, and do not repeat the same invalid need/input.\n"
             f"Recoverable errors:\n{json.dumps(errors_payload, ensure_ascii=False, indent=2)}"
         )
 

@@ -257,7 +257,7 @@ class ToolLoopMetadata(MetadataBase):
     rounds_used: int = 0
     max_rounds: int = 5
     events: list[ToolEventMetadata] = Field(default_factory=list)
-    tool_calls: list[ToolCallMetadata] = Field(default_factory=list)
+    tool_invocations: list[ToolCallMetadata] = Field(default_factory=list)
     recoverable_errors: list[ToolErrorMetadata] = Field(default_factory=list)
     tool_contexts: list[ToolContextMetadata] = Field(default_factory=list)
     final_output: ToolResultMetadata | None = None

@@ -7,8 +7,9 @@ from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExe
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskExecutor
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+from autonomous_iteration.runtime_controller import EditGuard, FileSelector, RuntimeVerifier, StateUpdater, ToolRouter
 from autonomous_iteration.tool_io import ExecutionToolIO
-from metadata import CodeArtifactMetadata, FileArtifactMetadata, ResultStatus, TaskResultMetadata, TextArtifactMetadata, ToolResultMetadata
+from metadata import AgentPhase, CodeArtifactMetadata, FileArtifactMetadata, ResultStatus, RuntimeStateMetadata, TaskResultMetadata, TextArtifactMetadata, ToolResultMetadata
 from tools.multi_file_reader import MULTI_FILE_READER_DEFINITION
 
 
@@ -203,9 +204,17 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
     runtime = FakeRuntime(
         tmp_path,
         {
-            "tool_calls": [
-                {"tool_name": "code_generator", "reason": "generate code", "input_metadata": {"task_description": "make app"}},
-                {"tool_name": "file_writer", "reason": "write file", "input_metadata": {"file_path": "app.py"}},
+            "decision_needs": [
+                {
+                    "need_type": "code_generation",
+                    "question": "generate code",
+                    "attributes": {"task_description": "make app"},
+                },
+                {
+                    "need_type": "file_write",
+                    "question": "write file",
+                    "target_path": "app.py",
+                },
             ]
         },
     )
@@ -215,8 +224,8 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
 
     assert result.status == TaskStatus.COMPLETED
     assert result.result_metadata.result.attributes["all_tools_succeeded"] is True
-    assert result.result_metadata.result.attributes["tool_calls"][1]["input_metadata"]["content"] == "print('ok')"
-    assert result.result_metadata.result.attributes["tool_calls"][1]["tool_context"]["git_snapshot"]["commit_hash"] == "abc1234"
+    assert result.result_metadata.result.attributes["tool_results"][1]["input_metadata"]["content"] == "print('ok')"
+    assert result.result_metadata.result.attributes["tool_results"][1]["tool_context"]["git_snapshot"]["commit_hash"] == "abc1234"
     assert runtime.tool_executor.selections[1].input_metadata.to_params() == {"file_path": "app.py", "content": "print('ok')"}
     payloads = [
         json.loads(line)["payload"]
@@ -232,20 +241,21 @@ def test_tool_event_loop_recovers_from_text_language_code_generator(tmp_path) ->
         tmp_path,
         [
             {
-                "tool_calls": [
+                "decision_needs": [
                     {
-                        "tool_name": "code_generator",
-                        "reason": "write design prose",
-                        "input_metadata": {"task_description": "outline design", "language": "text"},
+                        "need_type": "code_generation",
+                        "question": "write design prose",
+                        "attributes": {"task_description": "outline design", "language": "text"},
                     }
                 ]
             },
             {
-                "tool_calls": [
+                "decision_needs": [
                     {
-                        "tool_name": "file_writer",
-                        "reason": "write design note",
-                        "input_metadata": {"file_path": "DESIGN.md", "content": "# Design\n"},
+                        "need_type": "file_write",
+                        "question": "write design note",
+                        "target_path": "DESIGN.md",
+                        "attributes": {"content": "# Design\n"},
                     }
                 ]
             },
@@ -259,9 +269,9 @@ def test_tool_event_loop_recovers_from_text_language_code_generator(tmp_path) ->
     attrs = result.result_metadata.result.attributes
     assert attrs["all_tools_succeeded"] is True
     assert len(runtime.llm_client.requests) == 2
-    assert attrs["tool_calls"][0]["success"] is False
-    assert attrs["tool_calls"][0]["error"].startswith("Unsupported language")
-    assert attrs["tool_calls"][1]["tool"] == "file_writer"
+    assert attrs["tool_results"][0]["success"] is False
+    assert attrs["tool_results"][0]["error"].startswith("Unsupported language")
+    assert attrs["tool_results"][1]["tool"] == "file_writer"
     loop = attrs["tool_loop"]
     assert loop["recoverable_errors"][0]["error_type"] == "UnsupportedLanguage"
     assert any(event["event_type"] == "error" for event in loop["events"])
@@ -272,9 +282,17 @@ def test_tool_event_loop_emits_lifecycle_events_to_ui_hook(tmp_path) -> None:
     runtime = FakeRuntime(
         tmp_path,
         {
-            "tool_calls": [
-                {"tool_name": "code_generator", "reason": "generate code", "input_metadata": {"task_description": "make app"}},
-                {"tool_name": "file_writer", "reason": "write file", "input_metadata": {"file_path": "app.py"}},
+            "decision_needs": [
+                {
+                    "need_type": "code_generation",
+                    "question": "generate code",
+                    "attributes": {"task_description": "make app"},
+                },
+                {
+                    "need_type": "file_write",
+                    "question": "write file",
+                    "target_path": "app.py",
+                },
             ]
         },
     )
@@ -297,20 +315,21 @@ def test_tool_event_loop_emits_recoverable_error_to_ui_hook(tmp_path) -> None:
         tmp_path,
         [
             {
-                "tool_calls": [
+                "decision_needs": [
                     {
-                        "tool_name": "code_generator",
-                        "reason": "write design prose",
-                        "input_metadata": {"task_description": "outline design", "language": "text"},
+                        "need_type": "code_generation",
+                        "question": "write design prose",
+                        "attributes": {"task_description": "outline design", "language": "text"},
                     }
                 ]
             },
             {
-                "tool_calls": [
+                "decision_needs": [
                     {
-                        "tool_name": "file_writer",
-                        "reason": "write design note",
-                        "input_metadata": {"file_path": "DESIGN.md", "content": "# Design\n"},
+                        "need_type": "file_write",
+                        "question": "write design note",
+                        "target_path": "DESIGN.md",
+                        "attributes": {"content": "# Design\n"},
                     }
                 ]
             },
@@ -334,8 +353,12 @@ def test_tool_event_loop_ui_hook_failure_does_not_fail_task(tmp_path) -> None:
     runtime = FakeRuntime(
         tmp_path,
         {
-            "tool_calls": [
-                {"tool_name": "code_generator", "reason": "generate code", "input_metadata": {"task_description": "make app"}}
+            "decision_needs": [
+                {
+                    "need_type": "code_generation",
+                    "question": "generate code",
+                    "attributes": {"task_description": "make app"},
+                }
             ]
         },
     )
@@ -357,11 +380,12 @@ def test_tool_event_loop_normalizes_command_executor_execute_mode(tmp_path) -> N
     runtime = FakeRuntime(
         tmp_path,
         {
-            "tool_calls": [
+            "decision_needs": [
                 {
-                    "tool_name": "command_executor",
-                    "reason": "run command",
-                    "input_metadata": {"command": "python main.py", "mode": "execute"},
+                    "need_type": "command_check",
+                    "question": "run command",
+                    "command": "python main.py",
+                    "attributes": {"mode": "execute"},
                 }
             ]
         },
@@ -379,35 +403,52 @@ def test_tool_event_loop_normalizes_command_executor_execute_mode(tmp_path) -> N
     assert loop["tool_contexts"][0]["python_command"].endswith("/.venv/bin/python")
 
 
-def test_tool_event_loop_unknown_tool_can_be_recovered(tmp_path) -> None:
-    task = Task(id="task", description="Use available tools")
+def test_tool_planning_executor_routes_decision_needs_through_tool_router(tmp_path) -> None:
+    task = Task(id="task", description="Run tests")
     runtime = FakeRuntime(
         tmp_path,
-        [
-            {
-                "tool_calls": [
-                    {"tool_name": "imaginary_tool", "reason": "try bad tool", "input_metadata": {"value": "x"}}
-                ]
-            },
-            {
-                "tool_calls": [
-                    {
-                        "tool_name": "file_writer",
-                        "reason": "write output",
-                        "input_metadata": {"file_path": "note.md", "content": "ok"},
-                    }
-                ]
-            },
-        ],
+        {
+            "decision_needs": [
+                {
+                    "need_type": "command_check",
+                    "question": "verify generated project",
+                    "command": "pytest",
+                    "attributes": {"mode": "automatic"},
+                }
+            ]
+        },
+    )
+    state = RuntimeStateMetadata(goal="build app")
+    runtime.runtime_controller = SimpleNamespace(
+        state=state,
+        router=ToolRouter(runtime.tool_registry),
+        edit_guard=EditGuard(),
+        file_selector=FileSelector(),
+        state_updater=StateUpdater(),
+        verifier=RuntimeVerifier(),
     )
     executor = ToolPlanningTaskExecutor(runtime)
 
     result = executor.execute_task(task, _context(task))
 
     assert result.status == TaskStatus.COMPLETED
-    assert len(runtime.llm_client.requests) == 2
-    loop = result.result_metadata.result.attributes["tool_loop"]
-    assert loop["recoverable_errors"][0]["error_type"] == "UnknownTool"
+    assert runtime.tool_executor.selections[0].tool_name == "command_executor"
+    assert runtime.tool_executor.selections[0].input_metadata.command == "pytest"
+    assert state.tool_history[0]["tool_name"] == "command_executor"
+
+
+def test_tool_planning_executor_rejects_old_tool_calls_protocol(tmp_path) -> None:
+    task = Task(id="task", description="Use available tools")
+    runtime = FakeRuntime(
+        tmp_path,
+        {"tool_calls": [{"tool_name": "file_writer", "reason": "write output", "input_metadata": {"file_path": "note.md"}}]},
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.FAILED
+    assert result.error == "LLM generated empty decision_needs plan"
 
 
 def test_tool_event_loop_missing_required_field_is_recoverable(tmp_path) -> None:
@@ -415,13 +456,22 @@ def test_tool_event_loop_missing_required_field_is_recoverable(tmp_path) -> None
     runtime = FakeRuntime(
         tmp_path,
         [
-            {"tool_calls": [{"tool_name": "code_generator", "reason": "generate", "input_metadata": {}}]},
             {
-                "tool_calls": [
+                "decision_needs": [
                     {
-                        "tool_name": "code_generator",
-                        "reason": "generate",
-                        "input_metadata": {"task_description": "make app", "language": "python"},
+                        "need_type": "file_write",
+                        "question": "write generated code",
+                        "target_path": "app.py",
+                    }
+                ]
+            },
+            {
+                "decision_needs": [
+                    {
+                        "need_type": "file_write",
+                        "question": "write generated code",
+                        "target_path": "app.py",
+                        "attributes": {"content": "print('ok')"},
                     }
                 ]
             },
@@ -436,43 +486,36 @@ def test_tool_event_loop_missing_required_field_is_recoverable(tmp_path) -> None
     assert loop["recoverable_errors"][0]["error_type"] == "MissingRequiredInput"
 
 
-def test_tool_event_loop_required_any_of_is_recoverable(tmp_path) -> None:
+def test_tool_router_blocks_incomplete_directory_need_before_tool_call(tmp_path) -> None:
     task = Task(id="task", description="Validate files")
+    state = RuntimeStateMetadata(goal="validate files")
     runtime = FakeRuntime(
         tmp_path,
-        [
-            {
-                "tool_calls": [
-                    {
-                        "tool_name": "multi_file_reader",
-                        "reason": "read project files",
-                        "input_metadata": {"pattern": "*.py"},
-                    }
-                ]
-            },
-            {
-                "tool_calls": [
-                    {
-                        "tool_name": "multi_file_reader",
-                        "reason": "read project files",
-                        "input_metadata": {"directory_path": str(tmp_path), "pattern": "*.py"},
-                    }
-                ]
-            },
-        ],
+        {
+            "decision_needs": [
+                {
+                    "need_type": "project_structure",
+                    "question": "read project files",
+                    "attributes": {"pattern": "*.py"},
+                }
+            ]
+        },
+    )
+    runtime.runtime_controller = SimpleNamespace(
+        state=state,
+        router=ToolRouter(runtime.tool_registry),
+        edit_guard=EditGuard(),
+        file_selector=FileSelector(),
+        state_updater=StateUpdater(),
+        verifier=RuntimeVerifier(),
     )
     executor = ToolPlanningTaskExecutor(runtime)
 
     result = executor.execute_task(task, _context(task))
 
-    assert result.status == TaskStatus.COMPLETED
-    assert len(runtime.llm_client.requests) == 2
-    loop = result.result_metadata.result.attributes["tool_loop"]
-    assert loop["recoverable_errors"][0]["error_type"] == "MissingRequiredInputGroup"
-    assert loop["recoverable_errors"][0]["failure"]["details"]["required_any_of"] == [["file_paths", "directory_path"]]
-    recovery_prompt = runtime.llm_client.requests[1].messages[0].content
-    assert "required_any_of" in recovery_prompt
-    assert "directory_path" in recovery_prompt
+    assert result.status == TaskStatus.FAILED
+    assert result.error == "LLM generated empty decision_needs plan"
+    assert state.unknowns == ["read project files"]
 
 
 def test_tool_event_loop_execution_value_error_can_recover(tmp_path) -> None:
@@ -481,20 +524,21 @@ def test_tool_event_loop_execution_value_error_can_recover(tmp_path) -> None:
         tmp_path,
         [
             {
-                "tool_calls": [
+                "decision_needs": [
                     {
-                        "tool_name": "multi_file_reader",
-                        "reason": "read project files",
-                        "input_metadata": {"directory_path": str(tmp_path)},
+                        "need_type": "project_structure",
+                        "question": "read project files",
+                        "target_path": str(tmp_path),
                     }
                 ]
             },
             {
-                "tool_calls": [
+                "decision_needs": [
                     {
-                        "tool_name": "file_writer",
-                        "reason": "record validation",
-                        "input_metadata": {"file_path": "validation.md", "content": "ok"},
+                        "need_type": "file_write",
+                        "question": "record validation",
+                        "target_path": "validation.md",
+                        "attributes": {"content": "ok"},
                     }
                 ]
             },
@@ -512,8 +556,81 @@ def test_tool_event_loop_execution_value_error_can_recover(tmp_path) -> None:
     assert runtime.tool_executor.selections[-1].tool_name == "file_writer"
 
 
+def test_tool_event_loop_auto_verifies_file_writer_when_runtime_state_is_active(tmp_path) -> None:
+    task = Task(id="task", description="Generate and write app")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "file_write",
+                    "question": "write app file",
+                    "target_path": "app.py",
+                    "attributes": {"content": "print('ok')"},
+                }
+            ]
+        },
+    )
+    state = RuntimeStateMetadata(goal="build app", phase=AgentPhase.EXECUTE)
+    runtime.runtime_controller = SimpleNamespace(
+        state=state,
+        edit_guard=EditGuard(),
+        file_selector=FileSelector(),
+        state_updater=StateUpdater(),
+        verifier=RuntimeVerifier(),
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == ["file_writer", "command_executor"]
+    assert runtime.tool_executor.selections[1].input_metadata.command == "pytest"
+    attrs = result.result_metadata.result.attributes
+    assert attrs["tool_results"][-1]["tool"] == "command_executor"
+    assert state.verification_status == "passed"
+    assert state.phase == AgentPhase.SUMMARIZE
+
+
+def test_tool_event_loop_guards_mutating_command_executor(tmp_path) -> None:
+    task = Task(id="task", description="Create project directory")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "command_check",
+                    "question": "create directory",
+                    "command": "mkdir generated",
+                    "attributes": {"mode": "automatic"},
+                }
+            ]
+        },
+    )
+    state = RuntimeStateMetadata(goal="create project", phase=AgentPhase.EXECUTE)
+    runtime.runtime_controller = SimpleNamespace(
+        state=state,
+        edit_guard=EditGuard(),
+        file_selector=FileSelector(),
+        state_updater=StateUpdater(),
+        verifier=RuntimeVerifier(),
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == ["command_executor", "command_executor"]
+    assert runtime.tool_executor.selections[1].input_metadata.command == "pytest"
+    assert state.planned_edits
+    assert state.planned_edits[0].target_files == [str(tmp_path)]
+    assert any(event.get("event_type") == "edit_guard" and event.get("approved") for event in state.tool_history)
+    assert state.verification_status == "passed"
+    assert state.phase == AgentPhase.SUMMARIZE
+
+
 def test_tool_prompt_describes_required_any_of_contract(tmp_path) -> None:
-    runtime = FakeRuntime(tmp_path, {"tool_calls": []})
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
 
     prompt = runtime.tool_io.format_tools_for_llm([MULTI_FILE_READER_DEFINITION])
 
@@ -522,12 +639,12 @@ def test_tool_prompt_describes_required_any_of_contract(tmp_path) -> None:
 
 def test_tool_planning_executor_invalid_or_empty_plan_returns_failed_result(tmp_path) -> None:
     task = Task(id="task", description="Do impossible thing")
-    executor = ToolPlanningTaskExecutor(FakeRuntime(tmp_path, {"tool_calls": []}))
+    executor = ToolPlanningTaskExecutor(FakeRuntime(tmp_path, {"decision_needs": []}))
 
     result = executor.execute_task(task, _context(task))
 
     assert result.status == TaskStatus.FAILED
-    assert result.error == "LLM generated empty tool plan"
+    assert result.error == "LLM generated empty decision_needs plan"
 
 
 def test_tool_planning_executor_bad_json_returns_failed_result(tmp_path) -> None:
