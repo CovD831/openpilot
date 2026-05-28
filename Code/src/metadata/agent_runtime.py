@@ -142,6 +142,12 @@ class DecisionNeedMetadata(MetadataBase):
     phase: AgentPhase = AgentPhase.UNDERSTAND_TASK
     target_path: str | None = None
     candidate_paths: list[str] = Field(default_factory=list)
+    operation_kind: str | None = None
+    target_scope: str | None = None
+    symbol_name: str | None = None
+    symbol_type: str | None = None
+    insertion_hint: str | None = None
+    patch_mode: str | None = None
     query: str | None = None
     command: str | None = None
     decision_to_unlock: str | None = None

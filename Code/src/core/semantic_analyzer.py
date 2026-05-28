@@ -115,14 +115,15 @@ code_execution, shell_execution, email, calendar, database, network.
 
 Allowed preferred_tool values:
 multi_file_reader, llm_summarizer, file_writer, command_executor,
-code_generator, code_reviewer, code_executor, readme_tool, web_searcher,
+code_generator, code_unit_generator, code_editor, file_patch_writer,
+code_reviewer, code_executor, readme_tool, web_searcher,
 bug_fix_tool, warning_check_tool,
 unsupported_file_mutation.
 
 Use these operation_type values when appropriate:
 list_completion_reports, read_reports, summarize, generate_final_report,
 write_output_file, move_files, archive_files, rename_files,
-generate_code, review_code, execute_code,
+generate_code, generate_code_unit, modify_code_symbol, apply_code_patch, review_code, execute_code,
 generate_readme, analyze_project_improvements,
 unsupported_file_mutation, other.
 
@@ -153,6 +154,10 @@ Code Generation Policy:
   * preferred_tool: "warning_check_tool"
 - For code generation workflows, the typical chain is:
   generate_code → (optional: review_code) → file_writer → readme_tool
+- For adding a function/class to an existing file, prefer:
+  file_read → code_unit_generator → file_patch_writer
+- For modifying a function/class in an existing file, prefer:
+  file_read → code_editor → file_patch_writer
 - If the step describes creating usage instructions or README documentation for
   a generated project, classify as:
   * capability: "file_write"

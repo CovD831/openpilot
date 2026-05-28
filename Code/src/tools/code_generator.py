@@ -76,6 +76,9 @@ def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMeta
     language_str = params["language"].lower()
     context = params.get("context", "")
     prompt_context = params.get("prompt_context") or {}
+    operation_kind = str(params.get("operation_kind") or "file_create")
+    if isinstance(prompt_context, dict):
+        prompt_context = {**prompt_context, "operation_kind": operation_kind}
 
     # Map language string to CodeLanguage enum
     language_map = {
@@ -304,8 +307,9 @@ PRODUCT QUALITY RUBRIC:
 {dependency_guidance}
 
 TOOL OUTPUT REQUIREMENTS:
-1. Generate complete, executable {request.language.value} code for the target file.
-2. Return the full replacement source code, not a patch.
+1. Generate complete, executable {request.language.value} code only when operation_kind is file_create, directory_generate, or file_replace.
+2. Do not use this tool for symbol-level edits. For add_symbol use code_unit_generator; for modify_symbol/code_patch use code_editor.
+2a. Return full replacement source code only when operation_kind is explicitly file_replace/full_file_replace or the target file is new.
 3. Keep existing useful behavior unless the Prompt Context explicitly asks to replace it for product fit.
 3a. Preserve existing useful third-party packages from the dependency strategy. Do not replace them with stdlib-only or lower-capability substitutes unless the strategy explicitly approves the replacement.
 4. Include necessary imports, entry point, and concise comments for non-obvious logic.

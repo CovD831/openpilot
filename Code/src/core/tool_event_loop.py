@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,7 @@ class ToolEventLoopRunner:
             for index, tool_call in enumerate(tool_requests):
                 tool_name = str(tool_call.get("tool_name") or "").strip()
                 reason_text = str(tool_call.get("reason") or "")
+                timeout_override = tool_call.get("timeout_override")
                 raw_input = tool_call.get("input_metadata")
                 if not isinstance(raw_input, dict):
                     raw_input = {}
@@ -191,7 +193,7 @@ class ToolEventLoopRunner:
                     requires_confirmation=False,
                     fallback_tools=[],
                     depends_on=[],
-                    timeout_override=None,
+                    timeout_override=timeout_override if isinstance(timeout_override, int) else None,
                 )
                 guard_error = self._guard_project_state_change_if_needed(task, tool_call_metadata, selection)
                 if guard_error:
@@ -210,7 +212,7 @@ class ToolEventLoopRunner:
                 if exec_result.success:
                     output_metadata = exec_result.output_metadata
                     last_output = output_metadata
-                    if tool_name == "code_generator":
+                    if tool_name in {"code_generator", "code_unit_generator", "code_editor"}:
                         last_code_output = output_metadata
                     self._append_event(
                         task_id,
@@ -246,6 +248,12 @@ class ToolEventLoopRunner:
                         error_message=str(getattr(failure, "error_message", failure)),
                         recoverable=self._is_recoverable_error(tool_name, str(getattr(failure, "error_message", failure))),
                     )
+                failure = self._enrich_execution_failure(
+                    failure,
+                    tool_call=tool_call_metadata,
+                    input_metadata=input_metadata,
+                    suggested_recovery=self._suggest_recovery(tool_name, failure.error_message),
+                )
                 recoverable = bool(failure.recoverable) or self._is_recoverable_error(
                     tool_name,
                     f"{failure.error_type}: {failure.error_message}",
@@ -437,6 +445,58 @@ class ToolEventLoopRunner:
                     tool_call.tool_context,
                     suggested_recovery="Use command_executor mode dry_run, interactive, or automatic.",
                 )
+        if tool_name == "file_reader" and input_metadata.file_path:
+            file_path = Path(str(input_metadata.file_path)).expanduser()
+            try:
+                is_directory = file_path.is_dir()
+            except OSError:
+                is_directory = False
+            if is_directory:
+                return self._protocol_error(
+                    session_id,
+                    task_id,
+                    step_id,
+                    call_id,
+                    tool_name,
+                    "FileReaderDirectoryPath",
+                    f"file_reader expected a file path but received a directory: {input_metadata.file_path}",
+                    input_metadata,
+                    tool_call.tool_context,
+                    suggested_recovery="Use multi_file_reader with directory_path to inspect directories.",
+                    details={
+                        "tool_name": tool_name,
+                        "call_id": call_id,
+                        "step_id": step_id,
+                        "received_path": str(input_metadata.file_path),
+                        "suggested_tool": "multi_file_reader",
+                        "suggested_input": {"directory_path": str(input_metadata.file_path), "pattern": "*"},
+                    },
+                )
+        if tool_name == "file_writer" and input_metadata.content:
+            placeholder_reason = self._generated_placeholder_reason(str(input_metadata.content))
+            if placeholder_reason:
+                return self._protocol_error(
+                    session_id,
+                    task_id,
+                    step_id,
+                    call_id,
+                    tool_name,
+                    "GeneratedPlaceholderContent",
+                    f"file_writer content still contains generated placeholder text: {placeholder_reason}",
+                    input_metadata,
+                    tool_call.tool_context,
+                    suggested_recovery=(
+                        "Regenerate real implementation content, or let chained metadata fill file_writer.content "
+                        "from code_generator output before writing."
+                    ),
+                    details={
+                        "tool_name": tool_name,
+                        "call_id": call_id,
+                        "step_id": step_id,
+                        "file_path": str(input_metadata.file_path or ""),
+                        "placeholder_reason": placeholder_reason,
+                    },
+                )
         return None
 
     def _guard_project_state_change_if_needed(self, task: Any, tool_call: ToolCallMetadata, selection: ToolSelection) -> ToolErrorMetadata | None:
@@ -535,7 +595,7 @@ class ToolEventLoopRunner:
         )
 
     def _requires_edit_guard(self, selection: ToolSelection) -> bool:
-        if selection.tool_name == "file_writer":
+        if selection.tool_name in {"file_writer", "file_patch_writer"}:
             return True
         if selection.tool_name != "command_executor":
             return False
@@ -581,7 +641,7 @@ class ToolEventLoopRunner:
 
     def _edit_target_files(self, selection: ToolSelection) -> list[str]:
         params = selection.input_metadata.to_params()
-        if selection.tool_name == "file_writer":
+        if selection.tool_name in {"file_writer", "file_patch_writer"}:
             return [str(params["file_path"])] if params.get("file_path") else []
         if selection.tool_name == "command_executor":
             explicit = params.get("file_paths") or params.get("files") or []
@@ -601,13 +661,16 @@ class ToolEventLoopRunner:
                 return list(plan.commands)
             if plan.fallback_checks:
                 return list(plan.fallback_checks)
-        if selection.tool_name == "file_writer":
+        if selection.tool_name in {"file_writer", "file_patch_writer"}:
             return ["Run the runtime-selected verification after the write."]
         return [f"Verify command side effects for: {', '.join(target_files)}"]
 
     def _allowed_change_description(self, selection: ToolSelection, target_files: list[str]) -> str:
         if selection.tool_name == "file_writer":
             return f"Write requested content to {', '.join(target_files)}"
+        if selection.tool_name == "file_patch_writer":
+            operation = selection.input_metadata.operation_kind or selection.input_metadata.patch_mode or "local patch"
+            return f"Apply {operation} local edit to {', '.join(target_files)}"
         command = str(selection.input_metadata.command or "")
         return f"Run approved command with bounded side effects: {command[:160]}"
 
@@ -628,7 +691,7 @@ class ToolEventLoopRunner:
         round_index: int,
         last_output: ToolResultMetadata | None,
     ) -> FailureMetadata | None:
-        if source_selection.tool_name not in {"file_writer", "command_executor"}:
+        if source_selection.tool_name not in {"file_writer", "file_patch_writer", "command_executor"}:
             return None
         controller = getattr(self.runtime, "runtime_controller", None)
         state = getattr(controller, "state", None)
@@ -664,6 +727,7 @@ class ToolEventLoopRunner:
                 "mode": "automatic",
                 "cwd": self._runtime_context().get("cwd"),
                 "test_command": command,
+                "timeout": plan.attributes.get("timeout"),
             },
         )
         apply_project_context = getattr(self.runtime, "_apply_project_command_context", None)
@@ -739,6 +803,18 @@ class ToolEventLoopRunner:
                 error_message=str(getattr(failure, "error_message", failure)),
                 recoverable=False,
             )
+        failure = failure.model_copy(
+            update={
+                "details": {
+                    **(failure.details or {}),
+                    "tool_name": "command_executor",
+                    "call_id": call_id,
+                    "step_id": step_id,
+                    "command": command,
+                    "input_summary": self._input_summary(input_metadata),
+                }
+            }
+        )
         self._append_event(
             task_id,
             tool_call,
@@ -759,6 +835,7 @@ class ToolEventLoopRunner:
             return {
                 "project_path": environment.get("project_path"),
                 "cwd": environment.get("command_cwd"),
+                "python_command": environment.get("python_command"),
                 "run_command": environment.get("run_command"),
                 "test_command": environment.get("test_command"),
             }
@@ -833,13 +910,21 @@ class ToolEventLoopRunner:
         suggested_recovery: str = "",
         details: dict[str, Any] | None = None,
     ) -> ToolErrorMetadata:
+        suggested = suggested_recovery or self._suggest_recovery(tool_name, message)
+        enriched_details = {
+            "tool_name": tool_name or "unknown",
+            "call_id": call_id,
+            "step_id": step_id,
+            "input_summary": self._input_summary(input_metadata),
+        }
+        enriched_details.update(details or {})
         failure = FailureMetadata(
             error_type=error_type,
             error_message=message,
             recoverable=True,
             retry_recommended=True,
-            recovery_strategy=suggested_recovery or self._suggest_recovery(tool_name, message),
-            details=details or {},
+            recovery_strategy=suggested,
+            details=enriched_details,
         )
         return ToolErrorMetadata(
             session_id=session_id,
@@ -850,7 +935,7 @@ class ToolEventLoopRunner:
             error_type=error_type,
             error_message=message,
             recoverable=True,
-            suggested_recovery=suggested_recovery or self._suggest_recovery(tool_name, message),
+            suggested_recovery=suggested,
             failure=failure,
             input_metadata=input_metadata,
             tool_context=tool_context,
@@ -874,9 +959,11 @@ class ToolEventLoopRunner:
                 "tool": tool_call.tool_name,
                 "error_type": tool_error.error_type,
                 "recoverable": tool_error.recoverable,
+                "suggested_recovery": tool_error.suggested_recovery,
             },
             success=False,
             error=tool_error.error_message,
+            level="WARNING" if tool_error.recoverable else "ERROR",
         )
         self._append_event(
             task_id,
@@ -943,6 +1030,7 @@ class ToolEventLoopRunner:
                 "result": output_result,
                 "success": success,
                 "error": error,
+                "suggested_recovery": self._suggest_recovery(tool_call.tool_name, error or "") if error else None,
             }
         )
 
@@ -981,6 +1069,7 @@ class ToolEventLoopRunner:
             },
             success=success,
             error=error_message,
+            level="INFO" if success else "ERROR",
         )
         return ToolEventLoopRunResult(
             success=success,
@@ -1028,6 +1117,11 @@ class ToolEventLoopRunner:
             "invalid input",
             "invalidinput",
             "validation",
+            "not a file",
+            "expected a file path",
+            "received a directory",
+            "generated placeholder",
+            "placeholder text",
         )
         return any(token in lowered for token in recoverable_tokens)
 
@@ -1039,11 +1133,98 @@ class ToolEventLoopRunner:
             return "Use command_executor mode automatic, interactive, or dry_run. Aliases execute/run/exec are normalized to automatic."
         if tool_name == "multi_file_reader":
             return "Provide file_paths as a list of files, or directory_path with an optional pattern/max_files."
+        if tool_name == "file_reader" and ("not a file" in lowered or "directory" in lowered):
+            return "Use multi_file_reader with directory_path to inspect directories, or provide a concrete file path to file_reader."
+        if tool_name == "file_writer" and ("placeholder" in lowered or "generated" in lowered):
+            return "Regenerate real content or route code_generator output into file_writer.content before writing."
         if "unknown tool" in lowered:
             return "Select a registered tool from the available tools list."
         if "missing required" in lowered or "requires" in lowered:
             return "Provide all required input_metadata fields for the selected tool."
         return "Revise the tool call and arguments according to the tool contract."
+
+    def _generated_placeholder_reason(self, content: str) -> str | None:
+        placeholder_patterns = (
+            (r"\bPLACEHOLDER\b", "PLACEHOLDER token"),
+            (r"will be replaced", "will be replaced marker"),
+            (r"\bREPLACE_ME\b", "REPLACE_ME token"),
+            (r"\bTO_BE_FILLED\b", "TO_BE_FILLED token"),
+            (r"FILLED_BY_CODEGENERATION", "filled-by-codegeneration marker"),
+            (r"\bTODO_GENERATED\b", "TODO_GENERATED token"),
+            (r"\bCODE_GENERATOR_OUTPUT\b", "CODE_GENERATOR_OUTPUT token"),
+            (r"\{\{\s*[^}]*output[^}]*\}\}", "template output placeholder"),
+            (r"占位", "Chinese placeholder marker"),
+            (r"待填充|后填充|输出填充|由.*填充", "Chinese fill-later marker"),
+            (r"前一步输出", "previous-step-output marker"),
+            (r"code_generation生成", "code_generation fill marker"),
+        )
+        for pattern, reason in placeholder_patterns:
+            if re.search(pattern, content, flags=re.IGNORECASE):
+                return reason
+        return None
+
+    def _enrich_execution_failure(
+        self,
+        failure: FailureMetadata,
+        *,
+        tool_call: ToolCallMetadata,
+        input_metadata: ToolInputMetadata,
+        suggested_recovery: str,
+    ) -> FailureMetadata:
+        details = dict(getattr(failure, "details", {}) or {})
+        details.update(
+            {
+                "tool_name": tool_call.tool_name,
+                "call_id": tool_call.call_id,
+                "step_id": tool_call.step_id,
+                "error_type": failure.error_type,
+                "error_message": failure.error_message,
+                "input_summary": self._input_summary(input_metadata),
+                "suggested_recovery": suggested_recovery,
+            }
+        )
+        message = failure.error_message
+        error_type = failure.error_type
+        if tool_call.tool_name == "file_reader" and "not a file" in message.lower():
+            error_type = "FileReaderDirectoryPath"
+            message = f"file_reader expected a file path but received a directory: {input_metadata.file_path}"
+            details["received_path"] = str(input_metadata.file_path)
+            details["suggested_tool"] = "multi_file_reader"
+            details["suggested_input"] = {"directory_path": str(input_metadata.file_path), "pattern": "*"}
+        return failure.model_copy(
+            update={
+                "error_type": error_type,
+                "error_message": message,
+                "recoverable": bool(failure.recoverable) or self._is_recoverable_error(tool_call.tool_name, message),
+                "retry_recommended": bool(failure.retry_recommended)
+                or self._is_recoverable_error(tool_call.tool_name, message),
+                "recovery_strategy": failure.recovery_strategy or suggested_recovery,
+                "details": details,
+            }
+        )
+
+    def _input_summary(self, input_metadata: ToolInputMetadata) -> dict[str, Any]:
+        params = input_metadata.to_params()
+        summary: dict[str, Any] = {}
+        for key in (
+            "file_path",
+            "directory_path",
+            "file_paths",
+            "command",
+            "cwd",
+            "read_mode",
+            "pattern",
+            "mode",
+            "project_path",
+        ):
+            value = params.get(key)
+            if value not in (None, "", [], {}):
+                summary[key] = value
+        if params.get("content"):
+            summary["content_length"] = len(str(params["content"]))
+        if params.get("code"):
+            summary["code_length"] = len(str(params["code"]))
+        return summary
 
     def _contract_summary(self, tool_name: str) -> dict[str, Any]:
         registry = getattr(self.runtime, "tool_registry", None)

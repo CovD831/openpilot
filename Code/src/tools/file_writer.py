@@ -27,7 +27,7 @@ FILE_WRITER_DEFINITION = ToolDefinition(
         input_metadata_type="ToolInputMetadata",
         output_metadata_type="ToolResultMetadata",
         required_input_fields=['file_path', 'content'],
-        input_defaults={'encoding': 'utf-8', 'create_dirs': True, 'overwrite': True},
+        input_defaults={'encoding': 'utf-8', 'create_dirs': True, 'overwrite': True, 'operation_kind': 'create_file'},
     ),
     timeout_seconds=30,
     max_retries=2,
@@ -75,12 +75,18 @@ def file_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadat
     encoding = params.get("encoding", "utf-8")
     create_dirs = params.get("create_dirs", True)
     overwrite = params.get("overwrite", True)
+    operation_kind = str(params.get("operation_kind") or "create_file").lower()
 
     # Check if file exists
     file_existed = file_path.exists()
     if file_existed and not overwrite:
         raise FileExistsError(
             f"File exists and overwrite=False: {file_path}"
+        )
+    if file_existed and operation_kind not in {"file_replace", "full_file_replace", "replace_file"}:
+        raise FileExistsError(
+            "file_writer refuses to overwrite an existing file without "
+            f"operation_kind=file_replace: {file_path}"
         )
 
     # Create parent directories if needed

@@ -152,18 +152,19 @@ class AutonomousTaskExecutor:
                 retry_attempted=retry_attempted,
                 retry_history=retry_history,
             )
-        try:
-            ast.parse(improved_code)
-        except SyntaxError as exc:
-            reason = f"Generated improvement has syntax error on line {exc.lineno}: {exc.msg}"
-            return self._failure(
-                iteration,
-                actions,
-                reason,
-                "code_generator",
-                retry_attempted=retry_attempted,
-                retry_history=retry_history,
-            )
+        if code_result.tool_name != "code_editor":
+            try:
+                ast.parse(improved_code)
+            except SyntaxError as exc:
+                reason = f"Generated improvement has syntax error on line {exc.lineno}: {exc.msg}"
+                return self._failure(
+                    iteration,
+                    actions,
+                    reason,
+                    "code_generator",
+                    retry_attempted=retry_attempted,
+                    retry_history=retry_history,
+                )
 
         pre_write_snapshot = self._create_git_snapshot(
             project_path=project_path,
@@ -172,17 +173,34 @@ class AutonomousTaskExecutor:
             target_files=[str(target_file)],
             stage_key="execution",
         )
+        output_attrs = getattr(code_result.output, "attributes", {}) if code_result.output is not None else {}
+        use_patch_writer = code_result.tool_name == "code_editor" or output_attrs.get("operation_kind") == "modify_symbol"
+        writer_tool = "file_patch_writer" if use_patch_writer else "file_writer"
+        writer_payload = {
+            "file_path": str(target_file),
+            "encoding": "utf-8",
+            "create_dirs": True,
+            "overwrite": True,
+        }
+        if use_patch_writer:
+            writer_payload.update(
+                {
+                    "operation_kind": "modify_symbol",
+                    "replacement_text": improved_code,
+                    "symbol_name": output_attrs.get("symbol_name"),
+                    "symbol_type": output_attrs.get("symbol_type"),
+                    "line_start": output_attrs.get("line_start"),
+                    "line_end": output_attrs.get("line_end"),
+                    "patch": output_attrs.get("patch") if isinstance(output_attrs.get("patch"), dict) else None,
+                }
+            )
+        else:
+            writer_payload.update({"content": improved_code, "operation_kind": "file_replace"})
         write_result = self.runtime._execute_fast_tool(
             task=task,
-            step_id=f"iteration_{iteration}_file_writer",
-            tool_name="file_writer",
-            input_metadata=ToolInputMetadata.from_mapping("file_writer", {
-                "file_path": str(target_file),
-                "content": improved_code,
-                "encoding": "utf-8",
-                "create_dirs": True,
-                "overwrite": True,
-            }),
+            step_id=f"iteration_{iteration}_{writer_tool}",
+            tool_name=writer_tool,
+            input_metadata=ToolInputMetadata.from_mapping(writer_tool, writer_payload),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         self._log_agent(
@@ -518,6 +536,7 @@ class AutonomousTaskExecutor:
                     "encoding": "utf-8",
                     "create_dirs": True,
                     "overwrite": True,
+                    "operation_kind": "file_replace",
                 },
             ),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
@@ -826,6 +845,7 @@ class AutonomousTaskExecutor:
                 "encoding": "utf-8",
                 "create_dirs": True,
                 "overwrite": True,
+                "operation_kind": "file_replace",
             }),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
@@ -1305,28 +1325,77 @@ class AutonomousTaskExecutor:
     ) -> ToolExecutionEnvelopeMetadata:
         mode = mode or ("compact" if simplified else "full")
         step_prefix = "" if mode == "full" else f"{mode}_"
+        prompt_context = prompt_context or {}
+        current_code = str(prompt_context.get("current_code") or "")
+        symbol_name = self._infer_target_symbol(current_code, prompt_context)
+        tool_name = "code_editor" if symbol_name else "code_generator"
         input_metadata_payload = {
             "task_description": improvement_prompt,
             "language": "python",
             "context": f"Improve {target_file} ({mode} retry mode)",
         }
+        if symbol_name:
+            input_metadata_payload.update(
+                {
+                    "file_path": str(target_file),
+                    "operation_kind": "modify_symbol",
+                    "target_scope": "symbol",
+                    "symbol_name": symbol_name,
+                    "code": current_code,
+                }
+            )
+            prompt_context = {**prompt_context, "operation_kind": "modify_symbol", "symbol_name": symbol_name}
+        else:
+            input_metadata_payload["operation_kind"] = "file_replace"
         if prompt_context:
             input_metadata_payload["prompt_context"] = prompt_context
         result = self.runtime._execute_fast_tool(
             task=task,
-            step_id=f"iteration_{iteration}_{step_prefix}code_generator",
-            tool_name="code_generator",
-            input_metadata=ToolInputMetadata.from_mapping("code_generator", input_metadata_payload),
+            step_id=f"iteration_{iteration}_{step_prefix}{tool_name}",
+            tool_name=tool_name,
+            input_metadata=ToolInputMetadata.from_mapping(tool_name, input_metadata_payload),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         self._log_agent(
             "code_generation_completed",
-            {"iteration": iteration, "mode": mode, "target_file": str(target_file)},
+            {"iteration": iteration, "mode": mode, "target_file": str(target_file), "tool": tool_name},
             {"success": result.success, "status": result.status},
             success=result.success,
             error=result.error_message,
         )
         return result
+
+    def _infer_target_symbol(self, current_code: str, prompt_context: dict[str, Any]) -> str | None:
+        if not current_code.strip():
+            return None
+        explicit = prompt_context.get("symbol_name")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip()
+        try:
+            tree = ast.parse(current_code)
+        except SyntaxError:
+            return None
+        symbols = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        if not symbols:
+            return None
+        haystack = " ".join(
+            str(item)
+            for item in (
+                prompt_context.get("tool_task"),
+                prompt_context.get("iteration_goal"),
+                prompt_context.get("agent_instruction"),
+                prompt_context.get("acceptance_criteria"),
+                prompt_context.get("improvement_report_summary"),
+            )
+        ).lower()
+        for symbol in symbols:
+            if symbol.lower() in haystack:
+                return symbol
+        return None
 
     def is_timeout_tool_result(self, result: ToolExecutionEnvelopeMetadata) -> bool:
         if result.success:

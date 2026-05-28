@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from autonomous_iteration.models import IterationResult
+from metadata import ValidationIssueMetadata
 from ui.iteration_dashboard import IterationDashboardAdapter
 from rich.console import Console
 from ui.enhanced_ui import EnhancedUI
@@ -243,6 +244,51 @@ def test_modification_evaluation_started_marks_evaluator_running() -> None:
     assert autopilot.enhanced_ui.current_states[-1]["status"] == "running"
 
 
+def test_modification_evaluation_failure_displays_blocking_issue_details() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+    issue = ValidationIssueMetadata(
+        category="runtime_error",
+        message="Smoke test exited with code 1: cannot import name NOTE_FILE",
+        recommended_action="Align main.py imports with assistant.py.",
+        target_files=["/tmp/project/main.py"],
+    )
+    evaluation = type(
+        "Eval",
+        (),
+        {
+            "validation_passed": False,
+            "summary": "Project validation failed with 1 blocking issue(s).",
+            "validation_errors": [issue.message],
+            "validation_issues": [issue],
+            "recommended_actions": [issue.recommended_action],
+        },
+    )()
+    result = IterationResult(
+        iteration=1,
+        validation_passed=False,
+        completed_successful_iteration=False,
+        success=True,
+        changed_files=["main.py"],
+        failure_reason="Smoke test exited with code 1: cannot import name NOTE_FILE | target=main.py",
+    )
+
+    adapter.handle_iteration_progress("iteration_started", {"iteration": 1, "actions": ["Fix runtime error"]})
+    adapter.handle_iteration_progress(
+        "modification_evaluation",
+        {"iteration": 1, "evaluation": evaluation, "result": result},
+    )
+
+    tasks = autopilot.enhanced_ui.task_graph_state["tasks"]
+    evaluation_node = next(child for child in tasks[0]["children"] if child["id"] == "iteration_1_evaluation")
+    validation_child = evaluation_node["children"][0]
+    details = autopilot.enhanced_ui.current_states[-1]["details"]
+
+    assert "cannot import name NOTE_FILE" in validation_child["description"]
+    assert "Target files: /tmp/project/main.py" in details
+    assert "Recommended action: Align main.py imports with assistant.py." in details
+
+
 def test_iteration_started_completes_missing_pre_execution_stages() -> None:
     autopilot = FakeAutopilot()
     adapter = IterationDashboardAdapter(autopilot)
@@ -283,6 +329,25 @@ def test_iteration_completed_closes_current_iteration_after_mind_system() -> Non
     assert autopilot.enhanced_ui.task_graph_state["current_task_id"] is None
     assert tasks[0]["id"] == "iteration_1"
     assert tasks[0]["status"] == "completed"
+
+
+def test_iteration_completed_failure_prefers_specific_failure_reason() -> None:
+    autopilot = FakeAutopilot()
+    adapter = IterationDashboardAdapter(autopilot)
+    result = IterationResult(
+        iteration=1,
+        validation_passed=False,
+        completed_successful_iteration=False,
+        success=True,
+        changed_files=["main.py"],
+        failure_reason="Smoke test exited with code 1: cannot import name NOTE_FILE | target=main.py",
+    )
+
+    adapter.handle_iteration_progress("iteration_started", {"iteration": 1, "actions": ["Fix runtime error"]})
+    adapter.handle_iteration_progress("iteration_completed", {"iteration": 1, "result": result})
+
+    assert "cannot import name NOTE_FILE" in autopilot.enhanced_ui.current_states[-1]["details"]
+    assert "without satisfying" not in autopilot.enhanced_ui.current_states[-1]["details"]
 
 
 def test_repair_completed_closes_iteration_without_failure() -> None:

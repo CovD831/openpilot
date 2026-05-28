@@ -516,6 +516,7 @@ def _write_changes(changes: dict[Path, str]) -> list[str]:
                     "encoding": "utf-8",
                     "create_dirs": False,
                     "overwrite": True,
+                    "operation_kind": "file_replace",
                 },
             )
         )

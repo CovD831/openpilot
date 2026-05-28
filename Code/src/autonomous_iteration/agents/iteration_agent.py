@@ -477,6 +477,7 @@ class AutonomousIterationAgent:
                     "evaluation": current,
                     "result": iteration_result,
                     "tasks": tasks,
+                    **self._evaluation_failure_details(current),
                 },
             )
 
@@ -521,6 +522,7 @@ class AutonomousIterationAgent:
                     improvement_report,
                     completed_improvements,
                     default_reason="Modification did not satisfy validation or change requirements.",
+                    evaluation=current,
                 )
                 iterations.append(iteration_result)
 
@@ -975,7 +977,13 @@ class AutonomousIterationAgent:
         failure_notes = []
         informational_notes = []
         if not evaluation.validation_passed:
-            failure_notes.append("Hard validation did not pass after modification.")
+            failure_details = self._evaluation_failure_details(evaluation)
+            failure_notes.append(
+                failure_details.get("validation_issue_summary")
+                or "Hard validation did not pass after modification."
+            )
+            iteration_result.failure_stage = "Modification Evaluator"
+            iteration_result.failed_tool = "project_evaluator"
         if not iteration_result.changed_files and not (is_repair and evaluation.validation_passed):
             failure_notes.append("No changed files were reported by the task executor.")
         product_note = self._diagnosis_failure_note(improvement_report or {}, iteration_result, tasks)
@@ -989,9 +997,68 @@ class AutonomousIterationAgent:
         if failure_notes and not iteration_result.failure_reason:
             iteration_result.failure_reason = "; ".join(failure_notes)
             iteration_result.failure_stage = "Modification Evaluator"
+            if not evaluation.validation_passed:
+                iteration_result.failed_tool = "project_evaluator"
         if is_repair:
             return False
         return bool(evaluation.validation_passed and not is_repair and iteration_result.changed_files and not product_note)
+
+    def _evaluation_failure_details(self, evaluation: EvaluationResult) -> dict[str, Any]:
+        if evaluation.validation_passed:
+            return {}
+        issues = self._validation_issue_payloads(evaluation)
+        target_files = list(
+            dict.fromkeys(
+                str(path)
+                for issue in issues
+                for path in issue.get("target_files", [])
+                if str(path)
+            )
+        )
+        return {
+            "validation_issue_summary": self._validation_issue_summary(evaluation),
+            "validation_errors": list(evaluation.validation_errors),
+            "validation_issues": issues,
+            "target_files": target_files,
+            "recommended_actions": list(evaluation.recommended_actions),
+        }
+
+    def _validation_issue_payloads(self, evaluation: EvaluationResult) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        for issue in evaluation.validation_issues:
+            payload = issue.to_json_dict() if hasattr(issue, "to_json_dict") else issue.model_dump(mode="json")
+            payloads.append(
+                {
+                    "category": payload.get("category"),
+                    "severity": payload.get("severity"),
+                    "message": payload.get("message"),
+                    "recommended_action": payload.get("recommended_action"),
+                    "target_files": payload.get("target_files") or [],
+                    "issue_fingerprint": payload.get("issue_fingerprint"),
+                    "recommended_repair_kind": payload.get("recommended_repair_kind"),
+                }
+            )
+        return payloads
+
+    def _validation_issue_summary(self, evaluation: EvaluationResult) -> str:
+        message = ""
+        target_files: list[str] = []
+        action = ""
+        if evaluation.validation_issues:
+            issue = evaluation.validation_issues[0]
+            message = issue.message
+            target_files = issue.target_files
+            action = issue.recommended_action
+        elif evaluation.validation_errors:
+            message = evaluation.validation_errors[0]
+        else:
+            message = evaluation.summary
+        details = [message]
+        if target_files:
+            details.append("target=" + ", ".join(Path(path).name for path in target_files[:3]))
+        if action:
+            details.append("action=" + action)
+        return " | ".join(part for part in details if part)
 
     def _diagnosis_failure_note(
         self,
@@ -1143,6 +1210,7 @@ class AutonomousIterationAgent:
         improvement_report: dict[str, Any] | None,
         completed_improvements: int,
         default_reason: str | None = None,
+        evaluation: EvaluationResult | None = None,
     ) -> dict[str, Any]:
         selected_goal = (improvement_report or {}).get("selected_goal") or {}
         designed_tasks = (improvement_report or {}).get("designed_tasks") or []
@@ -1160,7 +1228,7 @@ class AutonomousIterationAgent:
         iteration_result.failure_stage = iteration_result.failure_stage or stage
         iteration_result.failed_tool = failed_tool
         iteration_result.failure_reason = reason
-        return {
+        context = {
             "failure_stage": iteration_result.failure_stage,
             "failed_iteration": iteration,
             "failed_tool": failed_tool,
@@ -1173,6 +1241,9 @@ class AutonomousIterationAgent:
             "completed_improvements": completed_improvements,
             "required_improvements": self.required_successful_improvements,
         }
+        if evaluation is not None and not evaluation.validation_passed:
+            context.update(self._evaluation_failure_details(evaluation))
+        return context
 
     def _budget_exhausted_context(self, attempts_used: int, completed_improvements: int) -> dict[str, Any]:
         reason = (

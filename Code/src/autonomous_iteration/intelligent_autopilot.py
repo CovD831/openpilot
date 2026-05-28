@@ -250,18 +250,38 @@ class IntelligentAutopilot:
     def _register_contextual_tools(self) -> None:
         """Register tool wrappers that can reuse this autopilot's runtime context."""
         from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
+        from tools.code_editor import CODE_EDITOR_DEFINITION, code_editor_executor
+        from tools.code_unit_generator import CODE_UNIT_GENERATOR_DEFINITION, code_unit_generator_executor
 
-        def execute_code_generator(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+        def _with_llm_client(input_metadata: ToolInputMetadata, tool_name: str) -> ToolInputMetadata:
             if not isinstance(input_metadata, ToolInputMetadata):
-                raise TypeError("contextual code_generator requires ToolInputMetadata")
+                raise TypeError(f"contextual {tool_name} requires ToolInputMetadata")
             runtime_handles = dict(input_metadata.runtime_handles)
             runtime_handles["_llm_client"] = self.llm_client
-            contextual_metadata = input_metadata.model_copy(update={"runtime_handles": runtime_handles})
-            return code_generator_executor(contextual_metadata)
+            return input_metadata.model_copy(update={"runtime_handles": runtime_handles})
+
+        def execute_code_generator(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+            return code_generator_executor(_with_llm_client(input_metadata, "code_generator"))
+
+        def execute_code_unit_generator(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+            return code_unit_generator_executor(_with_llm_client(input_metadata, "code_unit_generator"))
+
+        def execute_code_editor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
+            return code_editor_executor(_with_llm_client(input_metadata, "code_editor"))
 
         self.tool_registry.register(
             CODE_GENERATOR_DEFINITION,
             execute_code_generator,
+            allow_override=True,
+        )
+        self.tool_registry.register(
+            CODE_UNIT_GENERATOR_DEFINITION,
+            execute_code_unit_generator,
+            allow_override=True,
+        )
+        self.tool_registry.register(
+            CODE_EDITOR_DEFINITION,
+            execute_code_editor,
             allow_override=True,
         )
 
@@ -2168,6 +2188,7 @@ class IntelligentAutopilot:
                     )
                 else:
                     task.mark_failed(result.error or "Unknown error")
+                    task.result = result.result_metadata
                     self.enhanced_ui.set_task_graph_state(
                         tasks=self._dashboard_task_items(tasks),
                         current_task_id=task.id,
@@ -2209,6 +2230,7 @@ class IntelligentAutopilot:
                     else:
                         task.status = TaskStatus.FAILED
                         task.error = result.error
+                        task.result = result.result_metadata
 
             except Exception as exc:
                 error_msg = f"Task execution exception: {str(exc)}"
@@ -2328,6 +2350,7 @@ class IntelligentAutopilot:
                     status_color = "green"
                 else:
                     task.mark_failed(result.error or "Unknown error")
+                    task.result = result.result_metadata
                     self.stats["tasks_failed"] += 1
                     status_icon = "✗"
                     status_color = "red"

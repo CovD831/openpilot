@@ -44,6 +44,17 @@ class ToolInputMetadata(MetadataBase):
     max_files: int | None = None
     create_dirs: bool | None = None
     overwrite: bool | None = None
+    operation_kind: str | None = None
+    target_scope: str | None = None
+    symbol_name: str | None = None
+    symbol_type: str | None = None
+    insertion_hint: str | None = None
+    patch_mode: str | None = None
+    generated_unit: str | None = None
+    replacement_text: str | None = None
+    patch: dict[str, JsonValue] | None = None
+    line_start: int | None = None
+    line_end: int | None = None
 
     # LLM/code/search/command fields
     task_description: str | None = None
@@ -271,6 +282,27 @@ def artifact_to_tool_input(tool_name: str, artifact: Any) -> ToolInputMetadata:
         artifact = artifact.result
     if isinstance(artifact, CodeArtifactMetadata):
         code = artifact.code or artifact.content
+        attrs = artifact.attributes if isinstance(artifact.attributes, dict) else {}
+        if tool_name == "file_patch_writer":
+            if attrs.get("patch") or attrs.get("replacement_text"):
+                return ToolInputMetadata(
+                    tool_name=tool_name,
+                    patch=attrs.get("patch") if isinstance(attrs.get("patch"), dict) else None,
+                    replacement_text=str(attrs.get("replacement_text") or code),
+                    operation_kind=str(attrs.get("operation_kind") or "modify_symbol"),
+                    symbol_name=str(attrs.get("symbol_name") or "") or None,
+                    symbol_type=str(attrs.get("symbol_type") or "") or None,
+                    line_start=attrs.get("line_start") if isinstance(attrs.get("line_start"), int) else None,
+                    line_end=attrs.get("line_end") if isinstance(attrs.get("line_end"), int) else None,
+                )
+            return ToolInputMetadata(
+                tool_name=tool_name,
+                generated_unit=code,
+                operation_kind=str(attrs.get("operation_kind") or "add_symbol"),
+                symbol_name=str(attrs.get("symbol_name") or "") or None,
+                symbol_type=str(attrs.get("symbol_type") or "") or None,
+                insertion_hint=str(attrs.get("insertion_hint") or "") or None,
+            )
         if tool_name in {"code_executor", "code_reviewer"}:
             return ToolInputMetadata(tool_name=tool_name, code=code, language=artifact.language)
         return ToolInputMetadata(tool_name=tool_name, content=code)

@@ -77,6 +77,78 @@ def test_tool_io_resolves_chained_metadata_for_writer_and_executor() -> None:
     assert executor_metadata.language == "python"
 
 
+def test_tool_io_replaces_placeholder_content_with_chained_code() -> None:
+    helper = ExecutionToolIO()
+    generated = ToolResultMetadata(
+        tool_name="code_generator",
+        status=ResultStatus.SUCCESS,
+        result=CodeArtifactMetadata(code="print('real code')", language="python"),
+    )
+
+    writer_metadata = helper.resolve_chained_metadata(
+        "file_writer",
+        ToolInputMetadata.from_mapping(
+            "file_writer",
+            {
+                "file_path": "assistant.py",
+                "content": "PLACEHOLDER - will be replaced with actual generated code",
+            },
+        ),
+        last_output=None,
+        last_code_output=generated,
+    )
+
+    assert writer_metadata.content == "print('real code')"
+
+
+def test_tool_io_replaces_chinese_placeholder_content_with_chained_code() -> None:
+    helper = ExecutionToolIO()
+    generated = ToolResultMetadata(
+        tool_name="code_generator",
+        status=ResultStatus.SUCCESS,
+        result=CodeArtifactMetadata(code="print('real code')", language="python"),
+    )
+
+    writer_metadata = helper.resolve_chained_metadata(
+        "file_writer",
+        ToolInputMetadata.from_mapping(
+            "file_writer",
+            {
+                "file_path": "assistant.py",
+                "content": "# 代码将由code_generation生成后填充，此处占位",
+            },
+        ),
+        last_output=None,
+        last_code_output=generated,
+    )
+
+    assert writer_metadata.content == "print('real code')"
+
+
+def test_tool_io_replaces_to_be_filled_content_with_chained_code() -> None:
+    helper = ExecutionToolIO()
+    generated = ToolResultMetadata(
+        tool_name="code_generator",
+        status=ResultStatus.SUCCESS,
+        result=CodeArtifactMetadata(code="print('real code')", language="python"),
+    )
+
+    writer_metadata = helper.resolve_chained_metadata(
+        "file_writer",
+        ToolInputMetadata.from_mapping(
+            "file_writer",
+            {
+                "file_path": "assistant.py",
+                "content": "TO_BE_FILLED_BY_CODEGENERATION",
+            },
+        ),
+        last_output=None,
+        last_code_output=generated,
+    )
+
+    assert writer_metadata.content == "print('real code')"
+
+
 def test_tool_io_resolves_tool_selection_dependency_outputs() -> None:
     helper = ExecutionToolIO()
     selection = ToolSelection(
@@ -100,6 +172,36 @@ def test_tool_io_resolves_tool_selection_dependency_outputs() -> None:
 
     assert resolved.input_metadata.file_path == "app.py"
     assert resolved.input_metadata.content == "print('from step')"
+
+
+def test_tool_io_routes_code_unit_to_patch_writer_not_file_writer() -> None:
+    helper = ExecutionToolIO()
+    generated = ToolResultMetadata(
+        tool_name="code_unit_generator",
+        status=ResultStatus.SUCCESS,
+        result=CodeArtifactMetadata(
+            code="def added():\n    return 2",
+            language="python",
+            attributes={"operation_kind": "add_symbol", "symbol_name": "added"},
+        ),
+    )
+
+    patch_metadata = helper.resolve_chained_metadata(
+        "file_patch_writer",
+        ToolInputMetadata.from_mapping("file_patch_writer", {"file_path": "app.py"}),
+        last_output=generated,
+        last_code_output=generated,
+    )
+    writer_metadata = helper.resolve_chained_metadata(
+        "file_writer",
+        ToolInputMetadata.from_mapping("file_writer", {"file_path": "app.py"}),
+        last_output=generated,
+        last_code_output=generated,
+    )
+
+    assert patch_metadata.generated_unit == "def added():\n    return 2"
+    assert patch_metadata.operation_kind == "add_symbol"
+    assert writer_metadata.content is None
 
 
 def test_intelligent_autopilot_tool_io_proxy_matches_helper(tmp_path) -> None:

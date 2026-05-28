@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from types import SimpleNamespace
 
 from autonomous_iteration.agents.iteration_agent import AutonomousIterationAgent
 from autonomous_iteration.agents import project_evaluator as project_evaluator_module
 from autonomous_iteration.agents.project_evaluator import ProjectEvaluatorAgent
-from autonomous_iteration.models import IterationResult
+from autonomous_iteration.models import EvaluationResult, IterationResult
+from core.openpilot_log import OpenPilotLogger
+from metadata import ValidationIssueMetadata
 from tools.terminal_smoke import TerminalSmokeResult
 
 
@@ -543,3 +546,68 @@ def test_modification_evaluator_failure_defaults_to_project_evaluator_tool() -> 
 
     assert context["failed_tool"] == "project_evaluator"
     assert iteration_result.failed_tool == "project_evaluator"
+
+
+def test_project_evaluator_logs_blocking_issue_details_at_error_level(tmp_path) -> None:
+    app, readme = _write_project(tmp_path, "raise RuntimeError('boom')\n")
+    log_file = tmp_path / "evaluator.jsonl"
+    logger = OpenPilotLogger(log_file)
+
+    result = ProjectEvaluatorAgent(
+        smoke_timeout_seconds=1,
+        logger=logger,
+        session_id_getter=lambda: "session",
+    ).evaluate_project(
+        goal="build assistant",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    entries = [json.loads(line) for line in log_file.read_text(encoding="utf-8").splitlines()]
+    validation_entry = next(entry for entry in entries if entry["event_type"] == "project_validation_completed")
+    summary = validation_entry["payload"]["output_summary"]
+
+    assert result.validation_passed is False
+    assert validation_entry["level"] == "ERROR"
+    assert "RuntimeError" in summary["validation_errors"][0]
+    assert "RuntimeError" in summary["validation_issues"][0]["message"]
+    assert summary["target_files"]
+    assert summary["recommended_actions"]
+
+
+def test_modification_evaluator_failure_reason_uses_validation_issue_details() -> None:
+    agent = AutonomousIterationAgent(ProjectEvaluatorAgent())
+    iteration_result = IterationResult(
+        iteration=1,
+        validation_passed=False,
+        completed_successful_iteration=False,
+        success=True,
+        changed_files=["main.py"],
+    )
+    evaluation = EvaluationResult(
+        validation_passed=False,
+        runnable=False,
+        has_blocking_bugs=True,
+        summary="Project validation failed with 1 blocking issue(s).",
+        validation_errors=["Smoke test exited with code 1"],
+        validation_issues=[
+            ValidationIssueMetadata(
+                category="runtime_error",
+                message="Smoke test exited with code 1: cannot import name NOTE_FILE",
+                recommended_action="Align main.py imports with assistant.py.",
+                target_files=["/tmp/project/main.py"],
+            )
+        ],
+        recommended_actions=["Align main.py imports with assistant.py."],
+    )
+
+    success = agent._evaluate_modification(evaluation, iteration_result, [], False)
+
+    assert success is False
+    assert iteration_result.failure_stage == "Modification Evaluator"
+    assert iteration_result.failed_tool == "project_evaluator"
+    assert "cannot import name NOTE_FILE" in (iteration_result.failure_reason or "")
+    assert "target=main.py" in (iteration_result.failure_reason or "")
+    assert "Hard validation did not pass" not in (iteration_result.failure_reason or "")

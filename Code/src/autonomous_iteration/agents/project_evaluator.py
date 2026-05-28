@@ -81,6 +81,15 @@ class ProjectEvaluatorAgent:
                 "warnings": len(result.warnings),
             },
             success=result.validation_passed,
+            level=self._validation_log_level(result),
+        )
+        self._log_agent(
+            "project_validation_completed",
+            input_summary={"goal": goal, "project_path": str(project_path), "iteration": iteration},
+            output_summary=self._validation_log_summary(result),
+            success=result.validation_passed,
+            error=None if result.validation_passed else self._validation_issue_summary(result),
+            level=self._validation_log_level(result),
         )
         return result
 
@@ -354,6 +363,71 @@ class ProjectEvaluatorAgent:
             recommended_actions=deduped_actions,
             next_iteration_goal=self._build_next_iteration_goal(goal, deduped_actions, deduped_errors),
         )
+
+    def _validation_log_level(self, result: EvaluationResult) -> str:
+        if result.validation_errors:
+            return "ERROR"
+        if result.warnings or any(issue.severity == "warning" for issue in result.validation_issues):
+            return "WARNING"
+        return "INFO"
+
+    def _validation_log_summary(self, result: EvaluationResult) -> dict[str, Any]:
+        issues = self._validation_issue_payloads(result)
+        return {
+            "summary": result.summary,
+            "validation_passed": result.validation_passed,
+            "blocking_issue_count": len(result.validation_errors),
+            "warning_count": len(result.warnings),
+            "validation_errors": result.validation_errors,
+            "validation_issues": issues,
+            "target_files": self._target_files_from_issue_payloads(issues),
+            "recommended_actions": result.recommended_actions,
+            "run_command": result.run_command,
+            "failure_summary": self._validation_issue_summary(result) if not result.validation_passed else "",
+        }
+
+    def _validation_issue_payloads(self, result: EvaluationResult) -> list[dict[str, Any]]:
+        payloads: list[dict[str, Any]] = []
+        for issue in result.validation_issues:
+            payload = issue.to_json_dict() if hasattr(issue, "to_json_dict") else issue.model_dump(mode="json")
+            payloads.append(
+                {
+                    "category": payload.get("category"),
+                    "severity": payload.get("severity"),
+                    "message": payload.get("message"),
+                    "recommended_action": payload.get("recommended_action"),
+                    "target_files": payload.get("target_files") or [],
+                    "issue_fingerprint": payload.get("issue_fingerprint"),
+                    "recommended_repair_kind": payload.get("recommended_repair_kind"),
+                }
+            )
+        return payloads
+
+    def _target_files_from_issue_payloads(self, issues: list[dict[str, Any]]) -> list[str]:
+        targets: list[str] = []
+        for issue in issues:
+            targets.extend(str(path) for path in issue.get("target_files") or [] if str(path))
+        return self._dedupe(targets)
+
+    def _validation_issue_summary(self, result: EvaluationResult) -> str:
+        message = ""
+        target_files: list[str] = []
+        action = ""
+        if result.validation_issues:
+            issue = result.validation_issues[0]
+            message = issue.message
+            target_files = issue.target_files
+            action = issue.recommended_action
+        elif result.validation_errors:
+            message = result.validation_errors[0]
+        else:
+            message = result.summary
+        details = [message]
+        if target_files:
+            details.append("target=" + ", ".join(Path(path).name for path in target_files[:3]))
+        if action:
+            details.append("action=" + action)
+        return " | ".join(part for part in details if part)
 
     def _issue(
         self,
@@ -1097,6 +1171,7 @@ class ProjectEvaluatorAgent:
         input_summary: Any | None = None,
         output_summary: Any | None = None,
         error: str | None = None,
+        level: str | None = None,
     ) -> None:
         if not self.logger or not hasattr(self.logger, "log_structured_event"):
             return
@@ -1111,4 +1186,5 @@ class ProjectEvaluatorAgent:
             input_summary=input_summary,
             output_summary=output_summary,
             error=error,
+            level=level,
         )

@@ -86,6 +86,91 @@ def test_tool_router_routes_information_gaps_and_blocks_on_budget() -> None:
     assert "budget exhausted" in state.completion_reason
 
 
+def test_tool_router_routes_directory_shaped_file_reads_to_multi_file_reader(tmp_path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    readme = project_dir / "README.md"
+    readme.write_text("hello", encoding="utf-8")
+    router = ToolRouter()
+
+    directory_state = RuntimeStateMetadata(goal="Inspect project")
+    directory_need = DecisionNeedMetadata(
+        need_type="file_read",
+        question="What files and directories exist in the project folder?",
+        target_path=str(project_dir),
+    )
+    directory_selection = router.route(directory_state, directory_need)[0]
+
+    assert directory_selection.tool_name == "multi_file_reader"
+    assert directory_selection.input_metadata.directory_path == str(project_dir)
+    assert directory_selection.input_metadata.pattern == "*"
+
+    file_state = RuntimeStateMetadata(goal="Inspect file")
+    file_need = DecisionNeedMetadata(
+        need_type="file_read",
+        question="What does README say?",
+        target_path=str(readme),
+    )
+    file_selection = router.route(file_state, file_need)[0]
+
+    assert file_selection.tool_name == "file_reader"
+    assert file_selection.input_metadata.file_path == str(readme)
+
+
+def test_tool_router_distinguishes_code_generation_and_symbol_edits() -> None:
+    router = ToolRouter()
+    state = RuntimeStateMetadata(goal="Patch code")
+
+    add_selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="code_unit_generate",
+            question="Add helper function",
+            target_path="app.py",
+            operation_kind="add_symbol",
+            symbol_name="format_name",
+            symbol_type="function",
+        ),
+    )[0]
+    modify_selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="code_symbol_modify",
+            question="Modify helper function",
+            target_path="app.py",
+            operation_kind="modify_symbol",
+            symbol_name="format_name",
+            symbol_type="function",
+        ),
+    )[0]
+    patch_selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="file_write",
+            question="Apply generated symbol edit",
+            target_path="app.py",
+            operation_kind="modify_symbol",
+            symbol_name="format_name",
+        ),
+    )[0]
+    create_selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="code_file_create",
+            question="Create new app file",
+            target_path="app.py",
+            operation_kind="create_file",
+        ),
+    )[0]
+
+    assert add_selection.tool_name == "code_unit_generator"
+    assert add_selection.input_metadata.operation_kind == "add_symbol"
+    assert modify_selection.tool_name == "code_editor"
+    assert modify_selection.input_metadata.symbol_name == "format_name"
+    assert patch_selection.tool_name == "file_patch_writer"
+    assert create_selection.tool_name == "code_generator"
+
+
 def test_runtime_guard_centralizes_risk_budget_and_confirmation_policy() -> None:
     guard = RuntimeGuard()
     state = RuntimeStateMetadata(goal="Risky work")

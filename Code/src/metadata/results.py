@@ -137,20 +137,20 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             truncated=bool(payload.get("truncated", False)),
             attributes=attr_without("content", "encoding", "files", "truncated"),
         )
-    if tool_name in {"file_writer", "readme_tool"}:
+    if tool_name in {"file_writer", "readme_tool", "file_patch_writer"}:
         return FileArtifactMetadata(
             file_path=str(payload.get("file_path") or input_file_path),
             bytes_written=payload.get("bytes_written"),
             created=payload.get("created"),
             attributes=attr_without("file_path", "bytes_written", "created"),
         )
-    if tool_name == "code_generator":
+    if tool_name in {"code_generator", "code_unit_generator", "code_editor"}:
         return CodeArtifactMetadata(
-            code=str(payload.get("code") or ""),
+            code=str(payload.get("code") or payload.get("generated_unit") or payload.get("replacement_text") or ""),
             language=str(payload.get("language") or "python"),
             imports=list(payload.get("imports") or []),
             functions=list(payload.get("functions") or []),
-            attributes=attr_without("code", "language", "imports", "functions"),
+            attributes=attr_without("code", "generated_unit", "replacement_text", "language", "imports", "functions"),
         )
     if tool_name in {"command_executor", "code_executor"}:
         return CommandArtifactMetadata(

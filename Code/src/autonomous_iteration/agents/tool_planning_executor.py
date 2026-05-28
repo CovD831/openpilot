@@ -7,6 +7,8 @@ import time
 from datetime import datetime
 from typing import Any
 
+from pydantic import ValidationError
+
 from autonomous_iteration.runtime_controller import ToolRouter
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.tool_event_loop import ToolEventLoopRunner
@@ -19,6 +21,59 @@ from metadata import (
     TextArtifactMetadata,
 )
 
+
+NEED_ATTRIBUTE_FIELDS = {
+    "code",
+    "content",
+    "text",
+    "language",
+    "cwd",
+    "env",
+    "timeout",
+    "mode",
+    "project_path",
+    "file_path",
+    "file_paths",
+    "directory_path",
+    "pattern",
+    "max_files",
+    "recursive",
+    "max_total_chars",
+    "read_mode",
+    "encoding",
+    "create_dirs",
+    "overwrite",
+    "run_command",
+    "test_command",
+    "task_description",
+    "operation_kind",
+    "target_scope",
+    "symbol_name",
+    "symbol_type",
+    "insertion_hint",
+    "patch_mode",
+    "generated_unit",
+    "replacement_text",
+    "patch",
+    "line_start",
+    "line_end",
+}
+
+DEFAULTABLE_DECISION_NEED_FIELDS = {
+    "phase",
+    "candidate_paths",
+    "attributes",
+    "cost_hint",
+    "risk_level",
+}
+
+
+class DecisionNeedValidationError(ValueError):
+    """Raised when an LLM decision need cannot be normalized into metadata."""
+
+    def __init__(self, message: str, details: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.details = details
 
 
 class ToolPlanningTaskExecutor:
@@ -37,6 +92,7 @@ class ToolPlanningTaskExecutor:
         )
 
         try:
+            self._active_task_id = task.id
             goal = context.parent_context.get("goal", "")
             tools_description = self.runtime._format_tools_for_llm(self.runtime.tool_registry.list_all())
             prompt = self._build_tool_plan_prompt(task.description, goal, tools_description)
@@ -46,6 +102,7 @@ class ToolPlanningTaskExecutor:
                 {"task_id": task.id, "task_description": task.description},
                 session_id=self._session_id(),
                 turn_id=1,
+                level="INFO",
             )
             self._log(
                 "llm_tool_planning_started",
@@ -67,7 +124,11 @@ class ToolPlanningTaskExecutor:
                 "final_output": last_output,
             }
             duration = (datetime.now() - start_time).total_seconds()
-            error_msg = loop_result.error_message or self._build_tool_error(tool_results)
+            tool_error_msg = self._build_tool_error(tool_results)
+            error_msg = tool_error_msg or loop_result.error_message
+            failure_details = {"tool_loop": loop_result.loop_metadata.to_json_dict()}
+            if loop_result.loop_metadata.final_error:
+                failure_details.update(loop_result.loop_metadata.final_error.details or {})
 
             result = TaskExecutionResult(
                 task_id=task.id,
@@ -81,7 +142,7 @@ class ToolPlanningTaskExecutor:
                         if loop_result.loop_metadata.final_error
                         else "ToolExecutionFailed",
                         error_message=error_msg or "Tool execution failed",
-                        details={"tool_loop": loop_result.loop_metadata.to_json_dict()},
+                        details=failure_details,
                     )
                     if not all_succeeded
                     else None,
@@ -109,6 +170,9 @@ class ToolPlanningTaskExecutor:
 
         except Exception as exc:
             duration = (datetime.now() - start_time).total_seconds()
+            failure_details = getattr(exc, "details", {}) if isinstance(getattr(exc, "details", {}), dict) else {}
+            failure_details.setdefault("task_id", task.id)
+            failure_details.setdefault("failed_tool", "tool_planning_executor")
             result = TaskExecutionResult(
                 task_id=task.id,
                 status=TaskStatus.FAILED,
@@ -117,7 +181,11 @@ class ToolPlanningTaskExecutor:
                 result_metadata=TaskResultMetadata(
                     task_id=task.id,
                     status=ResultStatus.FAIL,
-                    failure=FailureMetadata(error_type=type(exc).__name__, error_message=str(exc)),
+                    failure=FailureMetadata(
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                        details=failure_details,
+                    ),
                     duration=duration,
                 ),
                 attributes={
@@ -132,9 +200,11 @@ class ToolPlanningTaskExecutor:
                     "description": task.description,
                     "error": str(exc),
                     "duration": duration,
+                    "details": failure_details,
                 },
                 session_id=self._session_id(),
                 turn_id=1,
+                level="ERROR",
             )
             self._log(
                 "task_executor_failed",
@@ -161,9 +231,15 @@ Output ONLY valid JSON in this format:
 {{
   "decision_needs": [
     {{
-      "need_type": "file_read | project_structure | web_search | command_check | file_write | code_generation | code_execution | readme_generation",
+      "need_type": "file_read | project_structure | web_search | command_check | file_write | code_file_create | directory_generate | code_unit_generate | code_symbol_modify | code_patch | code_generation | code_execution | readme_generation",
       "question": "what decision this information will unlock",
       "target_path": "optional path",
+      "operation_kind": "create_file | file_replace | add_symbol | modify_symbol | code_patch | directory_generate",
+      "target_scope": "file | symbol | line_range | directory",
+      "symbol_name": "optional function/class/method name",
+      "symbol_type": "function | class | method | module",
+      "insertion_hint": "end_of_file | before_symbol | after_symbol",
+      "patch_mode": "replace_range | replace_symbol | insert",
       "candidate_paths": ["optional paths"],
       "query": "optional search query",
       "command": "optional command",
@@ -174,7 +250,11 @@ Output ONLY valid JSON in this format:
 }}
 
 Important:
-- For code generation tasks, emit a code_generation need, then a file_write need to save the generated output
+- Always distinguish create_file, add_symbol, modify_symbol, and code_patch before selecting needs.
+- For new code files or generated project files, emit code_file_create or directory_generate, then file_write with operation_kind create_file.
+- For adding a function/class to an existing file, emit file_read, then code_unit_generate with operation_kind add_symbol, then file_write with operation_kind add_symbol so ToolRouter uses file_patch_writer.
+- For modifying an existing function/class, emit file_read, then code_symbol_modify or code_patch with operation_kind modify_symbol, then file_write with operation_kind modify_symbol so ToolRouter uses file_patch_writer.
+- Do not plan code_generator + file_writer for edits to existing functions/classes.
 - code_generator only supports executable code languages: python, shell, bash. Never use language "text"
 - For design, outline, planning, or prose-only tasks, either return planning metadata through an appropriate text/documentation tool or write Markdown/text with file_writer/readme_tool
 - For completed project/code deliveries, emit a readme_generation need after file_write to create README.md with run instructions
@@ -196,6 +276,16 @@ Important:
             raise ValueError(f"Failed to parse LLM response as JSON: {exc}") from exc
         tool_requests = self._route_decision_needs(plan_data)
         if not tool_requests:
+            self._log(
+                "decision_need_empty_plan",
+                input_summary={
+                    "task_id": getattr(self, "_active_task_id", "unknown"),
+                    "decision_need_count": len(plan_data.get("decision_needs", [])) if isinstance(plan_data, dict) else 0,
+                },
+                success=False,
+                error="LLM generated empty decision_needs plan",
+                level="ERROR",
+            )
             raise ValueError("LLM generated empty decision_needs plan")
         return tool_requests
 
@@ -214,10 +304,26 @@ Important:
                 controller.state = state
 
         tool_requests: list[dict[str, Any]] = []
-        for raw_need in raw_needs:
+        for index, raw_need in enumerate(raw_needs):
             if not isinstance(raw_need, dict):
                 continue
-            need = DecisionNeedMetadata.model_validate(raw_need)
+            normalized_need, normalized_fields = self._normalize_raw_decision_need(raw_need)
+            try:
+                need = DecisionNeedMetadata.model_validate(normalized_need)
+            except ValidationError as exc:
+                raise self._decision_need_validation_failure(raw_need, normalized_need, index, exc) from exc
+            if normalized_fields:
+                self._log(
+                    "decision_need_normalized",
+                    input_summary={
+                        "task_id": getattr(self, "_active_task_id", "unknown"),
+                        "need_index": index,
+                        "need_type": need.need_type,
+                    },
+                    output_summary={"normalized_fields": normalized_fields},
+                    success=True,
+                    level="DEBUG",
+                )
             selections = router.route(state, need)
             for selection in selections:
                 tool_requests.append(
@@ -225,9 +331,83 @@ Important:
                         "tool_name": selection.tool_name,
                         "reason": need.question,
                         "input_metadata": selection.input_metadata.to_params(),
+                        "timeout_override": selection.timeout_override,
                     }
                 )
         return tool_requests
+
+    def _normalize_raw_decision_need(self, raw_need: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        normalized = dict(raw_need)
+        normalized_fields: list[str] = []
+        for key in list(normalized):
+            if normalized[key] is None and key in DEFAULTABLE_DECISION_NEED_FIELDS:
+                normalized.pop(key)
+                normalized_fields.append(f"{key}:null_to_default")
+
+        attributes = normalized.get("attributes")
+        if not isinstance(attributes, dict):
+            attributes = {}
+        else:
+            attributes = dict(attributes)
+
+        allowed_fields = set(DecisionNeedMetadata.model_fields)
+        moved_fields: list[str] = []
+        for key in list(normalized):
+            if key in allowed_fields:
+                continue
+            if key in NEED_ATTRIBUTE_FIELDS:
+                attributes.setdefault(key, normalized.pop(key))
+                moved_fields.append(key)
+        if moved_fields or attributes:
+            normalized["attributes"] = attributes
+        normalized_fields.extend(f"{key}:moved_to_attributes" for key in moved_fields)
+        return normalized, normalized_fields
+
+    def _decision_need_validation_failure(
+        self,
+        raw_need: dict[str, Any],
+        normalized_need: dict[str, Any],
+        index: int,
+        exc: ValidationError,
+    ) -> DecisionNeedValidationError:
+        invalid_fields = [
+            ".".join(str(part) for part in error.get("loc", ()))
+            for error in exc.errors()
+            if error.get("loc")
+        ]
+        raw_summary = self._safe_need_summary(raw_need)
+        details = {
+            "task_id": getattr(self, "_active_task_id", "unknown"),
+            "need_index": index,
+            "invalid_fields": invalid_fields,
+            "raw_need_summary": raw_summary,
+            "normalized_keys": sorted(str(key) for key in normalized_need),
+            "failed_tool": "tool_planning_executor",
+            "failure_stage": "Tool Planning",
+        }
+        self._log(
+            "decision_need_schema_error",
+            input_summary={"task_id": details["task_id"], "need_index": index, "raw_need": raw_summary},
+            output_summary={"invalid_fields": invalid_fields},
+            success=False,
+            error=str(exc),
+            level="ERROR",
+        )
+        return DecisionNeedValidationError(
+            f"Decision need schema validation failed at index {index}: {str(exc)}",
+            details,
+        )
+
+    def _safe_need_summary(self, raw_need: dict[str, Any]) -> dict[str, Any]:
+        summary: dict[str, Any] = {}
+        for key, value in raw_need.items():
+            if isinstance(value, str) and len(value) > 200:
+                summary[key] = f"{value[:200]}..."
+            elif isinstance(value, (dict, list)):
+                summary[key] = f"<{type(value).__name__}:{len(value)}>"
+            else:
+                summary[key] = value
+        return summary
 
     def _show_tool_running(
         self,
@@ -300,6 +480,7 @@ Important:
             },
             session_id=self._session_id(),
             turn_id=1,
+            level="INFO",
         )
 
     def _log_tool_complete(self, task: Task, tool_name: str, exec_result: Any, log_output: dict[str, Any]) -> None:
@@ -315,6 +496,7 @@ Important:
             },
             session_id=self._session_id(),
             turn_id=1,
+            level="INFO" if exec_result.success else "ERROR",
         )
 
     def _summarize_metadata_output(self, output: Any) -> dict[str, Any]:
@@ -336,7 +518,18 @@ Important:
             return None
         error_parts = [f"{len(failed_tools)} tool(s) failed:"]
         for failed in failed_tools:
-            error_parts.append(f"\n  - {failed['tool']}: {failed['error']}")
+            input_metadata = failed.get("input_metadata") if isinstance(failed.get("input_metadata"), dict) else {}
+            failure_bits = [
+                f"tool={failed.get('tool') or 'unknown'}",
+                f"call={failed.get('call_id') or 'unknown'}",
+            ]
+            if input_metadata.get("file_path"):
+                failure_bits.append(f"file_path={input_metadata['file_path']}")
+            if input_metadata.get("directory_path"):
+                failure_bits.append(f"directory_path={input_metadata['directory_path']}")
+            if failed.get("suggested_recovery"):
+                failure_bits.append(f"recovery={failed['suggested_recovery']}")
+            error_parts.append(f"\n  - {'; '.join(failure_bits)}; error={failed.get('error')}")
         return "".join(error_parts)
 
     def _session_id(self) -> str:
@@ -351,6 +544,7 @@ Important:
         input_summary: Any | None = None,
         output_summary: Any | None = None,
         error: str | None = None,
+        level: str | None = None,
     ) -> None:
         logger = getattr(self.runtime, "logger", None)
         if not logger or not hasattr(logger, "log_structured_event"):
@@ -367,4 +561,5 @@ Important:
             input_summary=input_summary,
             output_summary=output_summary,
             error=error,
+            level=level,
         )

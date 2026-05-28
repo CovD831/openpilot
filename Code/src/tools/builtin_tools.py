@@ -5,8 +5,11 @@ from __future__ import annotations
 from tools.file_reader import FILE_READER_DEFINITION, file_reader_executor
 from tools.multi_file_reader import MULTI_FILE_READER_DEFINITION, multi_file_reader_executor
 from tools.file_writer import FILE_WRITER_DEFINITION, file_writer_executor
+from tools.file_patch_writer import FILE_PATCH_WRITER_DEFINITION, file_patch_writer_executor
 from tools.llm_summarizer import LLM_SUMMARIZER_DEFINITION, llm_summarizer_executor
 from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
+from tools.code_unit_generator import CODE_UNIT_GENERATOR_DEFINITION, code_unit_generator_executor
+from tools.code_editor import CODE_EDITOR_DEFINITION, code_editor_executor
 from tools.code_reviewer import CODE_REVIEWER_DEFINITION, code_reviewer_executor
 from tools.code_executor import CODE_EXECUTOR_DEFINITION, code_executor_executor
 from tools.readme_tool import README_TOOL_DEFINITION, readme_tool_executor
@@ -29,12 +32,18 @@ __all__ = [
     # File Writer
     "FILE_WRITER_DEFINITION",
     "file_writer_executor",
+    "FILE_PATCH_WRITER_DEFINITION",
+    "file_patch_writer_executor",
     # LLM Summarizer
     "LLM_SUMMARIZER_DEFINITION",
     "llm_summarizer_executor",
     # Code Generator
     "CODE_GENERATOR_DEFINITION",
     "code_generator_executor",
+    "CODE_UNIT_GENERATOR_DEFINITION",
+    "code_unit_generator_executor",
+    "CODE_EDITOR_DEFINITION",
+    "code_editor_executor",
     # Code Reviewer
     "CODE_REVIEWER_DEFINITION",
     "code_reviewer_executor",
@@ -73,8 +82,11 @@ def register_builtin_tools(registry) -> None:
     registry.register(FILE_READER_DEFINITION, file_reader_executor)
     registry.register(MULTI_FILE_READER_DEFINITION, multi_file_reader_executor)
     registry.register(FILE_WRITER_DEFINITION, file_writer_executor)
+    registry.register(FILE_PATCH_WRITER_DEFINITION, file_patch_writer_executor)
     registry.register(LLM_SUMMARIZER_DEFINITION, llm_summarizer_executor)
     registry.register(CODE_GENERATOR_DEFINITION, code_generator_executor)
+    registry.register(CODE_UNIT_GENERATOR_DEFINITION, code_unit_generator_executor)
+    registry.register(CODE_EDITOR_DEFINITION, code_editor_executor)
     registry.register(CODE_REVIEWER_DEFINITION, code_reviewer_executor)
     registry.register(CODE_EXECUTOR_DEFINITION, code_executor_executor)
     registry.register(README_TOOL_DEFINITION, readme_tool_executor)

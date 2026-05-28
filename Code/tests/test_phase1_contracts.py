@@ -212,13 +212,16 @@ def test_builtin_tools_register_expected_contracts() -> None:
     names = {tool.name for tool in registry.list_all()}
     removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 15
+    assert len(names) == 18
     assert {
         "bug_fix_tool",
         "command_executor",
         "embedder",
         "file_reader",
+        "file_patch_writer",
         "file_writer",
+        "code_editor",
+        "code_unit_generator",
         "multi_file_reader",
         "task_classifier",
         "task_file_resolver",
@@ -2703,7 +2706,41 @@ def test_logger_writes_legacy_and_structured_jsonl(tmp_path) -> None:
         "legacy_event",
         "structured_event",
     ]
+    assert events[0]["level"] == "INFO"
+    assert events[1]["level"] == "INFO"
+    assert events[1]["payload"]["level"] == "INFO"
     assert events[0]["payload"] == {"message": "ok"}
     assert events[1]["payload"]["source_type"] == "tool"
     assert events[1]["payload"]["source_name"] == "file_reader"
     assert events[1]["payload"]["annotations"] == {"contract": "phase1"}
+
+
+def test_logger_infers_warning_and_error_levels(tmp_path) -> None:
+    log_file = tmp_path / "openpilot.jsonl"
+    logger = OpenPilotLogger(log_file)
+
+    logger.log_structured_event(
+        source_type="agent",
+        source_name="tool_loop",
+        phase="task_execution",
+        event_type="tool_loop_recoverable_error",
+        session_id="session-1",
+        turn_id=1,
+        success=False,
+        error="missing input",
+    )
+    logger.log_event(
+        "task_failed",
+        {"success": False, "error": "boom"},
+        session_id="session-1",
+        turn_id=1,
+    )
+
+    events = [
+        json.loads(line)
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert events[0]["level"] == "WARNING"
+    assert events[0]["payload"]["level"] == "WARNING"
+    assert events[1]["level"] == "ERROR"

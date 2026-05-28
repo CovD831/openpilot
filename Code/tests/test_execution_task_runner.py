@@ -5,6 +5,7 @@ from rich.console import Console
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskPriority, TaskStatus
 from core.openpilot_log import OpenPilotLogger
+from metadata import FailureMetadata, ResultStatus, TaskResultMetadata
 
 
 class FakeTaskDecomposer:
@@ -53,11 +54,25 @@ class FakeRuntime:
         self.stats = {"tasks_completed": 0, "tasks_failed": 0}
         self.executed: list[str] = []
         self.raise_for: set[str] = set()
+        self.fail_for: set[str] = set()
 
     def _execute_task(self, task: Task, context: TaskExecutionContext) -> TaskExecutionResult:
         self.executed.append(task.id)
         if task.id in self.raise_for:
             raise RuntimeError("boom")
+        if task.id in self.fail_for:
+            failure = FailureMetadata(
+                error_type="DecisionNeedValidationError",
+                error_message="Decision need schema validation failed",
+                details={"failed_tool": "tool_planning_executor", "failure_stage": "Tool Planning"},
+            )
+            return TaskExecutionResult(
+                task_id=task.id,
+                status=TaskStatus.FAILED,
+                error=failure.error_message,
+                result_metadata=TaskResultMetadata(task_id=task.id, status=ResultStatus.FAIL, failure=failure),
+                duration=0.1,
+            )
         return TaskExecutionResult(
             task_id=task.id,
             status=TaskStatus.COMPLETED,
@@ -107,6 +122,18 @@ def test_runtime_enhanced_task_execution_converts_task_exception_to_failed_resul
     assert "Task execution exception" in results[0].error
     assert tasks[0].status == TaskStatus.FAILED
     assert runtime.enhanced_ui.current_updates[-1]["status"] == "completed"
+
+
+def test_runtime_enhanced_task_execution_preserves_failed_result_metadata(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path, enhanced=True)
+    runtime.fail_for = {"a"}
+    tasks = _tasks()
+
+    results = IntelligentAutopilot._execute_tasks(runtime, tasks, "goal")
+
+    assert results[0].status == TaskStatus.FAILED
+    assert tasks[0].status == TaskStatus.FAILED
+    assert tasks[0].result.failure.details["failed_tool"] == "tool_planning_executor"
 
 
 def test_runtime_dashboard_items_marks_running_task(tmp_path) -> None:

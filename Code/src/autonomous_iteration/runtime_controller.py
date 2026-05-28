@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import time
 import uuid
+import shlex
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from autonomous_iteration.task_models import TaskStatus
@@ -22,7 +24,7 @@ from metadata import (
 from tools.tool_selection import SelectionReason, ToolSelection
 
 
-WRITE_TOOLS = {"file_writer"}
+WRITE_TOOLS = {"file_writer", "file_patch_writer"}
 READ_TOOLS = {"file_reader", "multi_file_reader"}
 EXECUTION_TOOLS = {"command_executor", "code_executor"}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "forbidden": 3}
@@ -185,6 +187,8 @@ class ToolRouter:
     def _tool_for_need(self, need: DecisionNeedMetadata) -> str | None:
         need_type = need.need_type.lower().replace("-", "_")
         if need_type in {"file_read", "read_file", "inspect_file"}:
+            if self._looks_like_directory_need(need):
+                return "multi_file_reader"
             return "file_reader"
         if need_type in {"project_structure", "directory_read", "read_directory", "multi_file_read"}:
             return "multi_file_reader"
@@ -192,9 +196,22 @@ class ToolRouter:
             return "web_searcher"
         if need_type in {"command_check", "smoke_test", "test", "verify_command"}:
             return "command_executor"
+        operation_kind = str(need.operation_kind or need.attributes.get("operation_kind") or "").lower()
         if need_type in {"file_write", "write_file"}:
+            if operation_kind in {"add_symbol", "modify_symbol", "code_patch", "code_unit_generate", "code_symbol_modify"}:
+                return "file_patch_writer"
             return "file_writer"
+        if need_type in {"code_file_create", "directory_generate"}:
+            return "code_generator"
+        if need_type in {"code_unit_generate", "generate_code_unit", "add_symbol"}:
+            return "code_unit_generator"
+        if need_type in {"code_symbol_modify", "code_patch", "modify_symbol"}:
+            return "code_editor"
         if need_type in {"code_generation", "generate_code", "code_generator"}:
+            if operation_kind in {"add_symbol", "code_unit_generate"}:
+                return "code_unit_generator"
+            if operation_kind in {"modify_symbol", "code_patch", "code_symbol_modify"}:
+                return "code_editor"
             return "code_generator"
         if need_type in {"code_execution", "execute_code", "run_code"}:
             return "code_executor"
@@ -208,6 +225,8 @@ class ToolRouter:
             file_path = need.target_path or attrs.get("file_path")
             if not file_path:
                 return None
+            if self._path_is_existing_directory(file_path):
+                return None
             return ToolInputMetadata.from_mapping(tool_name, {"file_path": file_path, **attrs})
         if tool_name == "multi_file_reader":
             payload: dict[str, Any] = dict(attrs)
@@ -215,6 +234,8 @@ class ToolRouter:
                 payload["file_paths"] = need.candidate_paths
             elif need.target_path:
                 payload["directory_path"] = need.target_path
+            if payload.get("directory_path") and not payload.get("pattern"):
+                payload["pattern"] = "*"
             if not payload.get("file_paths") and not payload.get("directory_path"):
                 return None
             return ToolInputMetadata.from_mapping(tool_name, payload)
@@ -231,9 +252,24 @@ class ToolRouter:
             content = attrs.get("content")
             if not file_path:
                 return None
-            payload = {"file_path": file_path, **attrs}
+            payload = {"file_path": file_path, "operation_kind": need.operation_kind, **attrs}
             if content is not None:
                 payload["content"] = content
+            return ToolInputMetadata.from_mapping(tool_name, payload)
+        if tool_name == "file_patch_writer":
+            file_path = need.target_path or attrs.get("file_path")
+            if not file_path:
+                return None
+            payload = {
+                "file_path": file_path,
+                "operation_kind": need.operation_kind or attrs.get("operation_kind") or "modify_symbol",
+                "target_scope": need.target_scope or attrs.get("target_scope"),
+                "symbol_name": need.symbol_name or attrs.get("symbol_name"),
+                "symbol_type": need.symbol_type or attrs.get("symbol_type"),
+                "insertion_hint": need.insertion_hint or attrs.get("insertion_hint"),
+                "patch_mode": need.patch_mode or attrs.get("patch_mode"),
+                **attrs,
+            }
             return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "code_generator":
             task_description = attrs.get("task_description") or need.question
@@ -242,6 +278,39 @@ class ToolRouter:
                 {
                     "task_description": task_description,
                     "language": attrs.get("language", "python"),
+                    "operation_kind": need.operation_kind or attrs.get("operation_kind") or "file_create",
+                    **attrs,
+                },
+            )
+        if tool_name == "code_unit_generator":
+            task_description = attrs.get("task_description") or need.question
+            return ToolInputMetadata.from_mapping(
+                tool_name,
+                {
+                    "task_description": task_description,
+                    "language": attrs.get("language", "python"),
+                    "file_path": need.target_path or attrs.get("file_path"),
+                    "operation_kind": need.operation_kind or attrs.get("operation_kind") or "add_symbol",
+                    "target_scope": need.target_scope or attrs.get("target_scope") or "symbol",
+                    "symbol_name": need.symbol_name or attrs.get("symbol_name"),
+                    "symbol_type": need.symbol_type or attrs.get("symbol_type"),
+                    "insertion_hint": need.insertion_hint or attrs.get("insertion_hint"),
+                    **attrs,
+                },
+            )
+        if tool_name == "code_editor":
+            task_description = attrs.get("task_description") or need.question
+            return ToolInputMetadata.from_mapping(
+                tool_name,
+                {
+                    "task_description": task_description,
+                    "language": attrs.get("language", "python"),
+                    "file_path": need.target_path or attrs.get("file_path"),
+                    "operation_kind": need.operation_kind or attrs.get("operation_kind") or "modify_symbol",
+                    "target_scope": need.target_scope or attrs.get("target_scope") or "symbol",
+                    "symbol_name": need.symbol_name or attrs.get("symbol_name"),
+                    "symbol_type": need.symbol_type or attrs.get("symbol_type"),
+                    "patch_mode": need.patch_mode or attrs.get("patch_mode"),
                     **attrs,
                 },
             )
@@ -270,6 +339,29 @@ class ToolRouter:
     def _risk_value(self, risk_level: str | None) -> int:
         return RISK_ORDER.get(str(risk_level or "medium").lower(), 1)
 
+    def _looks_like_directory_need(self, need: DecisionNeedMetadata) -> bool:
+        target_path = need.target_path or need.attributes.get("file_path") or need.attributes.get("directory_path")
+        if target_path and self._path_is_existing_directory(target_path):
+            return True
+        question = f"{need.question} {need.decision_to_unlock or ''}".lower()
+        directory_tokens = (
+            "files and directories",
+            "directories exist",
+            "what files exist",
+            "list directory",
+            "directory listing",
+            "project folder",
+            "project structure",
+            "folder contents",
+        )
+        return any(token in question for token in directory_tokens)
+
+    def _path_is_existing_directory(self, path_value: Any) -> bool:
+        try:
+            return Path(str(path_value)).expanduser().is_dir()
+        except OSError:
+            return False
+
     def _decision_reason(self, tool_name: str, need: DecisionNeedMetadata) -> str:
         unlock = f" to unlock {need.decision_to_unlock}" if need.decision_to_unlock else ""
         return f"{tool_name} can answer '{need.question}'{unlock} during {need.phase.value}."
@@ -283,7 +375,11 @@ class ToolRouter:
         if need_type in {"command_check", "smoke_test", "test", "verify_command"}:
             return ["static inspection", "runtime verifier"]
         if need_type in {"file_write", "write_file"}:
-            return ["edit plan", "ask user"]
+            return ["file_patch_writer", "edit plan", "ask user"]
+        if need_type in {"code_unit_generate", "generate_code_unit", "add_symbol"}:
+            return ["code_generator"]
+        if need_type in {"code_symbol_modify", "code_patch", "modify_symbol"}:
+            return ["code_unit_generator", "code_generator"]
         return []
 
 
@@ -541,23 +637,33 @@ class RuntimeVerifier:
 
     def plan(self, state: RuntimeStateMetadata, context: dict[str, Any] | None = None) -> VerificationPlanMetadata:
         context = context or {}
-        command = (
-            context.get("test_command")
-            or context.get("run_command")
-            or self._pytest_command(context)
-            or "python -m compileall ."
-        )
+        timeout = None
+        command = context.get("test_command")
+        if not command:
+            python_target = self._python_entry_file(state)
+            if python_target:
+                python_command = str(context.get("python_command") or "python")
+                command = f"{shlex.quote(python_command)} {shlex.quote(python_target)} --help"
+                timeout = 5
+        command = command or context.get("run_command") or self._pytest_command(context) or "python -m compileall ."
         return VerificationPlanMetadata(
             reason="Write operation requires verification.",
             commands=[command],
             target_files=list(state.modified_files),
             fallback_checks=["static check"] if command != "python -m compileall ." else [],
+            attributes={"timeout": timeout} if timeout else {},
         )
 
     def _pytest_command(self, context: dict[str, Any]) -> str | None:
         project_path = str(context.get("project_path") or context.get("cwd") or "")
         if project_path:
             return "pytest"
+        return None
+
+    def _python_entry_file(self, state: RuntimeStateMetadata) -> str | None:
+        for file_path in reversed(state.modified_files):
+            if str(file_path).endswith(".py"):
+                return str(file_path)
         return None
 
 
@@ -783,7 +889,7 @@ class _RuntimeSessionExecutor:
                 stage_statuses["Result Assembly"] = "failed"
                 runtime.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
             runtime._stop_tracking_if_owned()
-            self._set_enhanced_completion_state(success, readme_result, improvement_result, iteration_error_msg)
+            self._set_enhanced_completion_state(success, readme_result, improvement_result, iteration_error_msg, execution_failure)
 
             result = self._build_result(
                 goal=goal,
@@ -1029,6 +1135,7 @@ class _RuntimeSessionExecutor:
         readme_result: Any,
         improvement_result: dict[str, Any] | None,
         iteration_error_msg: str | None,
+        execution_failure: dict[str, Any] | None = None,
     ) -> None:
         runtime = self.runtime
         if success:
@@ -1060,6 +1167,14 @@ class _RuntimeSessionExecutor:
                     f"Iteration warning: {iteration_error_msg}\n"
                     f"Completed: {runtime.stats['tasks_completed']}, Failed: {runtime.stats['tasks_failed']}"
                 )
+            elif execution_failure:
+                failure_details = (
+                    f"{execution_failure.get('failure_reason') or 'Goal execution failed'}\n\n"
+                    f"Stage: {execution_failure.get('failure_stage') or 'unknown'}\n"
+                    f"Tool: {execution_failure.get('failed_tool') or 'unknown'}"
+                )
+                if execution_failure.get("failed_call_id"):
+                    failure_details += f"\nCall: {execution_failure['failed_call_id']}"
             runtime.enhanced_ui.set_current_task_state(
                 title="Failed",
                 details=failure_details,
@@ -1071,20 +1186,21 @@ class _RuntimeSessionExecutor:
         if not failed_tasks:
             return None
         task = failed_tasks[0]
-        task_result_metadata = getattr(task, "result_metadata", None)
-        if task_result_metadata is None:
-            task_result_metadata = getattr(task, "result", None)
+        task_result_metadata = getattr(task, "result_metadata", None) or getattr(task, "result", None)
         failure = getattr(task_result_metadata, "failure", None)
         details = getattr(failure, "details", {}) or {}
         tool_loop = details.get("tool_loop") if isinstance(details, dict) else None
         final_error = tool_loop.get("final_error") if isinstance(tool_loop, dict) else None
         tool_name = None
         call_id = None
+        if isinstance(details, dict):
+            tool_name = details.get("tool_name") or details.get("failed_tool")
+            call_id = details.get("call_id")
         if isinstance(final_error, dict):
             final_details = final_error.get("details")
             if isinstance(final_details, dict):
-                tool_name = final_details.get("tool_name")
-                call_id = final_details.get("call_id")
+                tool_name = tool_name or final_details.get("tool_name")
+                call_id = call_id or final_details.get("call_id")
         if not tool_name and isinstance(tool_loop, dict):
             events = tool_loop.get("events") or []
             for event in reversed(events):
@@ -1093,7 +1209,8 @@ class _RuntimeSessionExecutor:
                     call_id = event.get("call_id")
                     break
         return {
-            "failure_stage": "Task Executor",
+            "task_id": getattr(task, "id", None),
+            "failure_stage": (details.get("failure_stage") if isinstance(details, dict) else None) or "Task Executor",
             "failed_tool": tool_name or "tool_event_loop",
             "failed_call_id": call_id,
             "failure_reason": getattr(failure, "error_message", None) or getattr(task, "error", None),
@@ -1156,6 +1273,20 @@ class _RuntimeSessionExecutor:
         }
         if include_final_result:
             result["final_result"] = final_result
+        if not success and result.get("failure_reason"):
+            self._log(
+                "session_failure_context",
+                output_summary={
+                    "task_id": (execution_failure or {}).get("task_id"),
+                    "failure_stage": result.get("failure_stage"),
+                    "failed_tool": result.get("failed_tool"),
+                    "failed_call_id": result.get("failed_call_id"),
+                    "failure_reason": result.get("failure_reason"),
+                },
+                success=False,
+                error=result.get("failure_reason"),
+                level="ERROR",
+            )
         return result
 
     def _log(
@@ -1166,6 +1297,7 @@ class _RuntimeSessionExecutor:
         input_summary: Any | None = None,
         output_summary: Any | None = None,
         error: str | None = None,
+        level: str | None = None,
     ) -> None:
         logger = getattr(self.runtime, "logger", None)
         if not logger:
@@ -1181,6 +1313,7 @@ class _RuntimeSessionExecutor:
             input_summary=input_summary,
             output_summary=output_summary,
             error=error,
+            level=level,
         )
 
 

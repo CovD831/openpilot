@@ -5,12 +5,17 @@ from types import SimpleNamespace
 
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.openpilot_log import OpenPilotLogger
+from core.tool_event_loop import ToolEventLoopRunner
 from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskExecutor
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from autonomous_iteration.runtime_controller import EditGuard, FileSelector, RuntimeVerifier, StateUpdater, ToolRouter
 from autonomous_iteration.tool_io import ExecutionToolIO
 from metadata import AgentPhase, CodeArtifactMetadata, FileArtifactMetadata, ResultStatus, RuntimeStateMetadata, TaskResultMetadata, TextArtifactMetadata, ToolResultMetadata
+from tools.file_reader import FILE_READER_DEFINITION
 from tools.multi_file_reader import MULTI_FILE_READER_DEFINITION
+from tools.code_editor import CODE_EDITOR_DEFINITION
+from tools.code_unit_generator import CODE_UNIT_GENERATOR_DEFINITION
+from tools.file_patch_writer import FILE_PATCH_WRITER_DEFINITION
 
 
 class FakeLLM:
@@ -32,12 +37,30 @@ class FakeLLM:
 
 class FakeToolRegistry:
     def get(self, tool_name):
+        if tool_name == "file_reader":
+            return FILE_READER_DEFINITION
         if tool_name == "multi_file_reader":
             return MULTI_FILE_READER_DEFINITION
+        if tool_name == "code_unit_generator":
+            return CODE_UNIT_GENERATOR_DEFINITION
+        if tool_name == "code_editor":
+            return CODE_EDITOR_DEFINITION
+        if tool_name == "file_patch_writer":
+            return FILE_PATCH_WRITER_DEFINITION
         return None
 
     def get_executor(self, tool_name):
-        if tool_name in {"code_generator", "file_writer", "command_executor", "multi_file_reader"}:
+        if tool_name in {
+            "code_generator",
+            "code_unit_generator",
+            "code_editor",
+            "file_writer",
+            "file_patch_writer",
+            "command_executor",
+            "code_executor",
+            "file_reader",
+            "multi_file_reader",
+        }:
             return lambda *_args, **_kwargs: None
         return None
 
@@ -74,6 +97,59 @@ class FakeToolExecutor:
                 error=None,
                 execution_time_ms=5,
             )
+        if selection.tool_name == "code_unit_generator":
+            return SimpleNamespace(
+                success=True,
+                output_metadata=ToolResultMetadata(
+                    tool_name="code_unit_generator",
+                    status=ResultStatus.SUCCESS,
+                    result=CodeArtifactMetadata(
+                        code="def added():\n    return 2",
+                        language="python",
+                        attributes={"operation_kind": "add_symbol", "symbol_name": "added"},
+                    ),
+                ),
+                error=None,
+                execution_time_ms=10,
+            )
+        if selection.tool_name == "code_editor":
+            return SimpleNamespace(
+                success=True,
+                output_metadata=ToolResultMetadata(
+                    tool_name="code_editor",
+                    status=ResultStatus.SUCCESS,
+                    result=CodeArtifactMetadata(
+                        code="def change():\n    return 2",
+                        language="python",
+                        attributes={
+                            "operation_kind": "modify_symbol",
+                            "symbol_name": "change",
+                            "line_start": 1,
+                            "line_end": 2,
+                            "patch": {
+                                "operation_kind": "modify_symbol",
+                                "replacement_text": "def change():\n    return 2",
+                                "line_start": 1,
+                                "line_end": 2,
+                            },
+                        },
+                    ),
+                ),
+                error=None,
+                execution_time_ms=10,
+            )
+        if selection.tool_name == "file_patch_writer":
+            payload = selection.input_metadata.to_params()
+            return SimpleNamespace(
+                success=True,
+                output_metadata=ToolResultMetadata(
+                    tool_name="file_patch_writer",
+                    status=ResultStatus.SUCCESS,
+                    result=FileArtifactMetadata(file_path=payload["file_path"], attributes={"changed_ranges": [{"line_start": 1, "line_end": 2}]}),
+                ),
+                error=None,
+                execution_time_ms=5,
+            )
         if selection.tool_name == "command_executor":
             payload = selection.input_metadata.to_params()
             return SimpleNamespace(
@@ -82,6 +158,18 @@ class FakeToolExecutor:
                     tool_name="command_executor",
                     status=ResultStatus.SUCCESS,
                     result=TextArtifactMetadata(content="command ok", attributes=payload),
+                ),
+                error=None,
+                execution_time_ms=5,
+            )
+        if selection.tool_name == "code_executor":
+            payload = selection.input_metadata.to_params()
+            return SimpleNamespace(
+                success=True,
+                output_metadata=ToolResultMetadata(
+                    tool_name="code_executor",
+                    status=ResultStatus.SUCCESS,
+                    result=TextArtifactMetadata(content="code ok", attributes=payload),
                 ),
                 error=None,
                 execution_time_ms=5,
@@ -97,6 +185,21 @@ class FakeToolExecutor:
                         file_path=str(payload.get("directory_path") or ""),
                         files=list(payload.get("file_paths") or []),
                         content="combined",
+                    ),
+                ),
+                error=None,
+                execution_time_ms=5,
+            )
+        if selection.tool_name == "file_reader":
+            payload = selection.input_metadata.to_params()
+            return SimpleNamespace(
+                success=True,
+                output_metadata=ToolResultMetadata(
+                    tool_name="file_reader",
+                    status=ResultStatus.SUCCESS,
+                    result=FileArtifactMetadata(
+                        file_path=str(payload.get("file_path") or ""),
+                        content="file content",
                     ),
                 ),
                 error=None,
@@ -233,6 +336,44 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
     ]
     assert any(payload.get("source_type") == "agent" for payload in payloads)
     assert any(payload.get("source_name") == "autonomous_iteration.agents.tool_planning_executor" for payload in payloads)
+
+
+def test_tool_planning_executor_chains_code_unit_to_patch_writer(tmp_path) -> None:
+    task = Task(id="task", description="Add helper to app")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "code_unit_generate",
+                    "question": "generate helper function",
+                    "target_path": "app.py",
+                    "operation_kind": "add_symbol",
+                    "symbol_name": "added",
+                    "symbol_type": "function",
+                    "attributes": {"task_description": "add helper"},
+                },
+                {
+                    "need_type": "file_write",
+                    "question": "insert helper function",
+                    "target_path": "app.py",
+                    "operation_kind": "add_symbol",
+                },
+            ]
+        },
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "code_unit_generator",
+        "file_patch_writer",
+    ]
+    patch_input = runtime.tool_executor.selections[1].input_metadata.to_params()
+    assert patch_input["generated_unit"] == "def added():\n    return 2"
+    assert patch_input["operation_kind"] == "add_symbol"
 
 
 def test_tool_event_loop_recovers_from_text_language_code_generator(tmp_path) -> None:
@@ -437,6 +578,128 @@ def test_tool_planning_executor_routes_decision_needs_through_tool_router(tmp_pa
     assert state.tool_history[0]["tool_name"] == "command_executor"
 
 
+def test_tool_planning_executor_normalizes_top_level_code_need_fields(tmp_path) -> None:
+    task = Task(id="task", description="Validate generated assistant")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "code_execution",
+                    "question": "run generated smoke test",
+                    "code": "print('assistant ok')",
+                    "language": "python",
+                    "timeout": 5,
+                }
+            ]
+        },
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert runtime.tool_executor.selections[0].tool_name == "code_executor"
+    assert runtime.tool_executor.selections[0].input_metadata.code == "print('assistant ok')"
+    assert runtime.tool_executor.selections[0].timeout_override == 5
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(entry["event_type"] == "decision_need_normalized" and entry["level"] == "DEBUG" for entry in entries)
+
+
+def test_tool_planning_executor_normalizes_top_level_file_write_content(tmp_path) -> None:
+    task = Task(id="task", description="Write generated file")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "file_write",
+                    "question": "write generated file",
+                    "target_path": "assistant.py",
+                    "content": "print('assistant ok')",
+                    "overwrite": True,
+                }
+            ]
+        },
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert runtime.tool_executor.selections[0].tool_name == "file_writer"
+    assert runtime.tool_executor.selections[0].input_metadata.content == "print('assistant ok')"
+    assert runtime.tool_executor.selections[0].input_metadata.overwrite is True
+
+
+def test_tool_planning_executor_normalizes_null_candidate_paths(tmp_path) -> None:
+    task = Task(id="task", description="Generate assistant")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "code_generation",
+                    "question": "Generate the Python assistant code",
+                    "target_path": None,
+                    "candidate_paths": None,
+                    "query": None,
+                    "command": None,
+                    "risk_level": "low",
+                    "attributes": {"language": "python", "task_description": "print hello"},
+                }
+            ]
+        },
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert runtime.tool_executor.selections[0].tool_name == "code_generator"
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(
+        entry["event_type"] == "decision_need_normalized"
+        and "candidate_paths:null_to_default" in entry["payload"]["output_summary"]["normalized_fields"]
+        for entry in entries
+    )
+
+
+def test_tool_planning_executor_schema_error_is_structured_and_logged(tmp_path) -> None:
+    task = Task(id="task", description="Validate generated assistant")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "code_execution",
+                    "question": "run generated smoke test",
+                    "surprise": "not a tool field",
+                }
+            ]
+        },
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.FAILED
+    assert result.result_metadata.failure.error_type == "DecisionNeedValidationError"
+    assert result.result_metadata.failure.details["failed_tool"] == "tool_planning_executor"
+    assert "surprise" in result.result_metadata.failure.details["invalid_fields"]
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(entry["event_type"] == "decision_need_schema_error" and entry["level"] == "ERROR" for entry in entries)
+
+
 def test_tool_planning_executor_rejects_old_tool_calls_protocol(tmp_path) -> None:
     task = Task(id="task", description="Use available tools")
     runtime = FakeRuntime(
@@ -556,6 +819,110 @@ def test_tool_event_loop_execution_value_error_can_recover(tmp_path) -> None:
     assert runtime.tool_executor.selections[-1].tool_name == "file_writer"
 
 
+def test_directory_discovery_plan_does_not_send_directory_to_file_reader(tmp_path) -> None:
+    task = Task(id="task", description="Document and test project")
+    (tmp_path / "main.py").write_text("print('ok')", encoding="utf-8")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "command_check",
+                    "question": "What files and directories exist in the project folder?",
+                    "command": f"ls -la {tmp_path}",
+                    "attributes": {"mode": "automatic"},
+                },
+                {
+                    "need_type": "file_read",
+                    "question": "If there are existing Python files, read them to understand the current assistant code.",
+                    "target_path": str(tmp_path),
+                },
+            ]
+        },
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "command_executor",
+        "multi_file_reader",
+    ]
+    assert runtime.tool_executor.selections[1].input_metadata.directory_path == str(tmp_path)
+    assert runtime.tool_executor.selections[1].input_metadata.pattern == "*"
+
+
+def test_tool_event_loop_reports_file_reader_directory_contract_error(tmp_path) -> None:
+    task = Task(id="task", description="Read a project directory incorrectly")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    executor._parse_decision_needs = lambda _response: [  # type: ignore[method-assign]
+        {
+            "tool_name": "file_reader",
+            "reason": "read directory",
+            "input_metadata": {"file_path": str(tmp_path)},
+        }
+    ]
+
+    result = ToolEventLoopRunner(executor, max_steps=1).run(task, "prompt")
+
+    assert result.success is False
+    assert result.tool_results[0]["tool"] == "file_reader"
+    assert result.tool_results[0]["call_id"] == "task:r1:c1"
+    assert "expected a file path" in result.tool_results[0]["error"]
+    assert "multi_file_reader" in result.tool_results[0]["suggested_recovery"]
+    assert result.loop_metadata.final_error is not None
+    assert result.loop_metadata.final_error.details["tool_name"] == "file_reader"
+    assert result.loop_metadata.final_error.details["call_id"] == "task:r1:c1"
+
+
+def test_tool_event_loop_rejects_generated_placeholder_file_content(tmp_path) -> None:
+    task = Task(id="task", description="Write placeholder")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    executor._parse_decision_needs = lambda _response: [  # type: ignore[method-assign]
+        {
+            "tool_name": "file_writer",
+            "reason": "write placeholder",
+            "input_metadata": {
+                "file_path": str(tmp_path / "assistant.py"),
+                "content": "PLACEHOLDER - will be replaced with actual generated code",
+            },
+        }
+    ]
+
+    result = ToolEventLoopRunner(executor, max_steps=1).run(task, "prompt")
+
+    assert result.success is False
+    assert result.tool_results[0]["tool"] == "file_writer"
+    assert "generated placeholder" in result.tool_results[0]["error"]
+    assert "Regenerate real content" in result.tool_results[0]["suggested_recovery"]
+    assert result.loop_metadata.recoverable_errors[0].error_type == "GeneratedPlaceholderContent"
+
+
+def test_tool_event_loop_rejects_chinese_placeholder_file_content(tmp_path) -> None:
+    task = Task(id="task", description="Write placeholder")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    executor._parse_decision_needs = lambda _response: [  # type: ignore[method-assign]
+        {
+            "tool_name": "file_writer",
+            "reason": "write placeholder",
+            "input_metadata": {
+                "file_path": str(tmp_path / "assistant.py"),
+                "content": "# 代码将由code_generation生成后填充，此处占位",
+            },
+        }
+    ]
+
+    result = ToolEventLoopRunner(executor, max_steps=1).run(task, "prompt")
+
+    assert result.success is False
+    assert result.tool_results[0]["tool"] == "file_writer"
+    assert "generated placeholder" in result.tool_results[0]["error"]
+
+
 def test_tool_event_loop_auto_verifies_file_writer_when_runtime_state_is_active(tmp_path) -> None:
     task = Task(id="task", description="Generate and write app")
     runtime = FakeRuntime(
@@ -585,7 +952,8 @@ def test_tool_event_loop_auto_verifies_file_writer_when_runtime_state_is_active(
 
     assert result.status == TaskStatus.COMPLETED
     assert [selection.tool_name for selection in runtime.tool_executor.selections] == ["file_writer", "command_executor"]
-    assert runtime.tool_executor.selections[1].input_metadata.command == "pytest"
+    assert "app.py --help" in runtime.tool_executor.selections[1].input_metadata.command
+    assert runtime.tool_executor.selections[1].input_metadata.timeout == 5
     attrs = result.result_metadata.result.attributes
     assert attrs["tool_results"][-1]["tool"] == "command_executor"
     assert state.verification_status == "passed"

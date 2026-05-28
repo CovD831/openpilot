@@ -236,6 +236,52 @@ def test_command_registry_hides_removed_agent_and_autopilot_commands() -> None:
     assert "task classifier" in help_text.lower()
 
 
+def test_enhanced_cli_failure_details_prefer_specific_failure_context() -> None:
+    from ui import enhanced_cli
+
+    details = enhanced_cli._format_failure_details(
+        {
+            "error": "Autopilot reported failure",
+            "failure_reason": "Tool file_reader failed: Not a file: /tmp/project",
+            "failure_stage": "Task Executor",
+            "failed_tool": "file_reader",
+            "failed_call_id": "task:r1:c2",
+        }
+    )
+
+    assert details.startswith("Tool file_reader failed")
+    assert "Stage: Task Executor" in details
+    assert "Tool: file_reader" in details
+    assert "Call: task:r1:c2" in details
+
+
+def test_enhanced_cli_failure_details_extract_from_task_result_metadata() -> None:
+    from types import SimpleNamespace
+
+    from ui import enhanced_cli
+
+    failure = SimpleNamespace(
+        error_message="Decision need schema validation failed: candidate_paths must be a list",
+        details={
+            "failure_stage": "Tool Planning",
+            "failed_tool": "tool_planning_executor",
+        },
+    )
+    task_metadata = SimpleNamespace(failure=failure)
+    task_result = SimpleNamespace(error="Autopilot reported failure", result_metadata=task_metadata)
+
+    details = enhanced_cli._format_failure_details(
+        {
+            "error": "Autopilot reported failure",
+            "results": [task_result],
+        }
+    )
+
+    assert details.startswith("Decision need schema validation failed")
+    assert "Stage: Tool Planning" in details
+    assert "Tool: tool_planning_executor" in details
+
+
 def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> None:
     from ui import enhanced_cli
 

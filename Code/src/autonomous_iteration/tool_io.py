@@ -75,10 +75,18 @@ class ExecutionToolIO:
     ) -> ToolInputMetadata:
         params = input_metadata.to_params()
         preferred_output = last_code_output or last_output
+        if (
+            tool_name == "file_writer"
+            and isinstance(preferred_output, ToolResultMetadata)
+            and preferred_output.tool_name != "code_generator"
+        ):
+            return input_metadata
         routed = artifact_to_tool_input(tool_name, preferred_output)
         routed_params = routed.to_params()
         for key, value in routed_params.items():
-            params.setdefault(key, value)
+            current = params.get(key)
+            if current in (None, "", [], {}) or self._is_generated_placeholder(current):
+                params[key] = value
         resolved = ToolInputMetadata.from_mapping(tool_name, params)
         self._log_function(
             "resolve_chained_metadata",
@@ -86,6 +94,31 @@ class ExecutionToolIO:
             {"output_keys": list(resolved.to_params())},
         )
         return resolved
+
+    def _is_generated_placeholder(self, value: Any) -> bool:
+        if not isinstance(value, str):
+            return False
+        lowered = value.lower()
+        return any(
+            marker in lowered
+            for marker in (
+                "placeholder",
+                "will be replaced",
+                "replace_me",
+                "to_be_filled",
+                "filled_by_codegeneration",
+                "todo_generated",
+                "code_generator_output",
+                "{{code_generation.output}}",
+                "{{ code_generation.output }}",
+                "占位",
+                "待填充",
+                "后填充",
+                "输出填充",
+                "前一步输出",
+                "code_generation生成",
+            )
+        )
 
     def extract_generated_content(self, output: Any) -> str | None:
         if output is None:
