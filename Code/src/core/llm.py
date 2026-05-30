@@ -206,9 +206,16 @@ class LLMClient:
                     # JSON parsing failed
                     invalid_type = parse_diagnostics.get("invalid_parsed_json_type")
                     preview = " ".join(content.split())[:300]
-                    last_error = InvalidLLMResponseError(
-                        f"LLM returned invalid JSON (attempt {attempt + 1}/{max_retries}; "
-                        f"parsed_type={invalid_type or 'None'}; preview={preview!r})"
+                    last_error = self._invalid_json_error(
+                        content=content,
+                        attempt=attempt + 1,
+                        max_retries=max_retries,
+                        invalid_type=invalid_type,
+                        preview=preview,
+                        response=response,
+                        choice=choice,
+                        content_diagnostics=content_diagnostics,
+                        parse_diagnostics=parse_diagnostics,
                     )
                     if attempt < max_retries - 1:
                         self._emit_stream_event(
@@ -267,6 +274,49 @@ class LLMClient:
         raise InvalidLLMResponseError(
             f"LLM returned invalid JSON after {max_retries} attempts."
         )
+
+    def _invalid_json_error(
+        self,
+        *,
+        content: str,
+        attempt: int,
+        max_retries: int,
+        invalid_type: str | None,
+        preview: str,
+        response: Any,
+        choice: Any,
+        content_diagnostics: dict[str, Any],
+        parse_diagnostics: dict[str, Any],
+    ) -> InvalidLLMResponseError:
+        error = InvalidLLMResponseError(
+            f"LLM returned invalid JSON (attempt {attempt}/{max_retries}; "
+            f"parsed_type={invalid_type or 'None'}; preview={preview!r})",
+            response_text=content,
+        )
+        collapsed = " ".join(content.split())
+        provider_details = self._response_metadata(
+            response=response,
+            choice=choice,
+            content=content,
+            content_diagnostics=content_diagnostics,
+            json_repair_attempt=attempt,
+        )
+        error.context.update(
+            {
+                "response_length": len(content),
+                "response_preview_start": collapsed[:500],
+                "response_preview_end": collapsed[-500:] if len(collapsed) > 500 else collapsed,
+                "finish_reason": getattr(choice, "finish_reason", None),
+                "json_repair_attempt": attempt,
+                "json_repair_attempts": attempt,
+                "max_retries": max_retries,
+                "invalid_parsed_json_type": invalid_type,
+                "transport_retry_history": provider_details.get("transport_retry_history", []),
+                "content_diagnostics": content_diagnostics,
+                **parse_diagnostics,
+            }
+        )
+        return error
 
     def _emit_stream_event(
         self,

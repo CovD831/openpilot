@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from core.command_approval import CommandApprovalGate
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.tool_contracts import PermissionLevel, ToolCapability, ToolDefinition, ToolFailureMode
 from metadata import (
@@ -100,12 +101,20 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
             f"{warning_check_context.reason}. {warning_check_context.recommended_fix}"
         )
     ask_user_to_continue = params.get("_ask_user_to_continue")
+    command_approval_callback = params.get("_command_approval_callback")
 
     allowed_files = _resolve_allowed_files(input_metadata.file_paths, cwd)
     use_terminal_smoke = _should_use_terminal_smoke(allowed_files)
     attempts: list[BugFixAttemptMetadata] = []
 
-    initial_command = _run_command(command, cwd, timeout, env, terminal_smoke=use_terminal_smoke)
+    initial_command = _run_command(
+        command,
+        cwd,
+        timeout,
+        env,
+        terminal_smoke=use_terminal_smoke,
+        command_approval_callback=command_approval_callback,
+    )
     attempts.append(_attempt(iteration=0, command_result=initial_command, modified_files=[], rationale="initial validation"))
     initial_warning_check = _check_command_warnings(
         command_result=initial_command,
@@ -186,7 +195,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                 )
 
             modified_files = _write_changes(changes)
-            last_command_result = _run_command(command, cwd, timeout, env, terminal_smoke=use_terminal_smoke)
+            last_command_result = _run_command(
+                command,
+                cwd,
+                timeout,
+                env,
+                terminal_smoke=use_terminal_smoke,
+                command_approval_callback=command_approval_callback,
+            )
             latest_warning_check = _check_command_warnings(
                 command_result=last_command_result,
                 command=command,
@@ -298,8 +314,10 @@ def _run_command(
     env: dict[str, str] | None = None,
     *,
     terminal_smoke: bool = False,
+    command_approval_callback=None,
 ) -> CommandArtifactMetadata:
     if terminal_smoke:
+        CommandApprovalGate().approve(command, cwd=cwd, approval_callback=command_approval_callback)
         smoke = run_terminal_command(
             command,
             cwd=cwd or None,
@@ -322,6 +340,7 @@ def _run_command(
                 "timeout": timeout,
                 "cwd": cwd or None,
                 "env": env,
+                "_command_approval_callback": command_approval_callback,
             },
         )
     )

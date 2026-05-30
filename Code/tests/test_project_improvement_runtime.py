@@ -58,7 +58,14 @@ class FakeIterationAgent:
 
 
 class FakeAutopilot:
-    def __init__(self, tmp_path: Path, environment_success: bool = True) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        environment_success: bool = True,
+        *,
+        environment_failures_before_success: int = 0,
+        environment_error: str = "env failed",
+    ) -> None:
         self.enable_iterative_improvement = True
         self.required_successful_improvements = 1
         self.max_iteration_attempts = 2
@@ -69,13 +76,20 @@ class FakeAutopilot:
         self.memory_store = None
         self.progress_events: list[str] = []
         self.environment_success = environment_success
+        self.environment_failures_before_success = environment_failures_before_success
+        self.environment_error = environment_error
+        self.environment_calls = 0
 
     def _resolve_project_improvement_iterations(self, goal, project_path) -> bool:
         return True
 
     def _sync_project_environment(self, **kwargs):
+        self.environment_calls += 1
+        if self.environment_failures_before_success > 0:
+            self.environment_failures_before_success -= 1
+            return _tool_envelope("project_environment_tool", {"success": False, "error": self.environment_error}, kwargs.get("input_metadata"))
         if not self.environment_success:
-            return _tool_envelope("project_environment_tool", {"success": False, "error": "env failed"}, kwargs.get("input_metadata"))
+            return _tool_envelope("project_environment_tool", {"success": False, "error": self.environment_error}, kwargs.get("input_metadata"))
         return _tool_envelope("project_environment_tool", {"success": True, "result": {"run_command": "python app.py"}}, kwargs.get("input_metadata"))
 
     def _handle_iteration_progress(self, event, payload) -> None:
@@ -149,6 +163,33 @@ def test_project_improvement_runtime_environment_failure(tmp_path) -> None:
     assert result["failure_stage"] == "Environment Setup"
     assert result["failed_tool"] == "project_environment_tool"
     assert result["validation"].validation_errors == ["env failed"]
+
+
+def test_project_improvement_runtime_repairs_invalid_requirements_then_retries(tmp_path) -> None:
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("rich\n\"\"\"\nrequests>=2\n", encoding="utf-8")
+    error = (
+        "[notice] A new release of pip is available: 25.3 -> 26.1.1\n"
+        f"ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of dependency specifier\n"
+        "    \"\"\"\n"
+        f"    ^ (from line 2 of {requirements})\n"
+    )
+    autopilot = FakeAutopilot(
+        tmp_path,
+        environment_failures_before_success=1,
+        environment_error=error,
+    )
+    runtime = ProjectImprovementRuntime(autopilot)
+
+    result = runtime.run(
+        goal="Improve project",
+        project_path=tmp_path,
+        written_files=[str(tmp_path / "app.py")],
+    )
+
+    assert result["success"] is True
+    assert autopilot.environment_calls == 2
+    assert requirements.read_text(encoding="utf-8") == "rich\nrequests>=2\n"
 
 
 def test_project_improvement_runtime_success_callbacks_and_shape(tmp_path) -> None:

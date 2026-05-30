@@ -33,3 +33,33 @@ class BugFixResultMetadata(MetadataBase):
     final_command_result: SerializeAsAny[CommandArtifactMetadata] | None = None
     requires_user_decision: bool = False
     user_terminated: bool = False
+
+
+class EnvironmentFailureMetadata(MetadataBase):
+    """Structured diagnosis for project environment setup failures."""
+
+    kind: Literal[MetadataKind.ENVIRONMENT_FAILURE] = MetadataKind.ENVIRONMENT_FAILURE
+    raw_stderr: str = ""
+    raw_stdout: str = ""
+    root_cause: str = ""
+    error_type: str = ""
+    affected_file: str = ""
+    line_number: int | None = None
+    pip_notices: list[str] = Field(default_factory=list)
+    suggested_command: str = ""
+    requires_confirmation: bool = False
+
+
+class EnvironmentFixResultMetadata(MetadataBase):
+    """Result of an environment repair attempt."""
+
+    kind: Literal[MetadataKind.ENVIRONMENT_FIX_RESULT] = MetadataKind.ENVIRONMENT_FIX_RESULT
+    project_path: str = ""
+    environment_failure: EnvironmentFailureMetadata
+    applied: bool = False
+    changed_files: list[str] = Field(default_factory=list)
+    repair_actions: list[str] = Field(default_factory=list)
+    suggested_command: str = ""
+    command_executed: bool = False
+    requires_confirmation: bool = False
+    user_declined: bool = False

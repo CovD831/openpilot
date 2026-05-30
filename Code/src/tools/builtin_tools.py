@@ -18,6 +18,7 @@ from tools.embedder import EMBEDDER_DEFINITION, embedder_executor
 from tools.web_searcher import WEB_SEARCHER_DEFINITION, web_searcher_executor
 from tools.task_classifier import TASK_CLASSIFIER_DEFINITION, task_classifier_executor
 from tools.bug_fix_tool import BUG_FIX_TOOL_DEFINITION, bug_fix_tool_executor
+from tools.environment_fix_tool import ENVIRONMENT_FIX_TOOL_DEFINITION, environment_fix_tool_executor
 from tools.warning_check_tool import WARNING_CHECK_TOOL_DEFINITION, warning_check_tool_executor
 from autonomous_iteration.tool.task_file_resolver import TASK_FILE_RESOLVER_DEFINITION, task_file_resolver_executor
 
@@ -63,6 +64,8 @@ __all__ = [
     "task_classifier_executor",
     "BUG_FIX_TOOL_DEFINITION",
     "bug_fix_tool_executor",
+    "ENVIRONMENT_FIX_TOOL_DEFINITION",
+    "environment_fix_tool_executor",
     "WARNING_CHECK_TOOL_DEFINITION",
     "warning_check_tool_executor",
     "TASK_FILE_RESOLVER_DEFINITION",
@@ -95,5 +98,6 @@ def register_builtin_tools(registry) -> None:
     registry.register(WEB_SEARCHER_DEFINITION, web_searcher_executor)
     registry.register(TASK_CLASSIFIER_DEFINITION, task_classifier_executor)
     registry.register(BUG_FIX_TOOL_DEFINITION, bug_fix_tool_executor)
+    registry.register(ENVIRONMENT_FIX_TOOL_DEFINITION, environment_fix_tool_executor)
     registry.register(WARNING_CHECK_TOOL_DEFINITION, warning_check_tool_executor)
     registry.register(TASK_FILE_RESOLVER_DEFINITION, task_file_resolver_executor)

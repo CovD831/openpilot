@@ -212,11 +212,12 @@ def test_builtin_tools_register_expected_contracts() -> None:
     names = {tool.name for tool in registry.list_all()}
     removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 18
+    assert len(names) == 19
     assert {
         "bug_fix_tool",
         "command_executor",
         "embedder",
+        "environment_fix_tool",
         "file_reader",
         "file_patch_writer",
         "file_writer",
@@ -595,6 +596,11 @@ def test_llm_json_mode_invalid_after_retries_raises_clean_error(monkeypatch) -> 
 
     assert "LLM returned invalid JSON" in str(exc.value)
     assert "validation errors for LLMResponse" not in str(exc.value)
+    assert exc.value.context["response_text"] == "<not-json>"
+    assert exc.value.context["response_length"] == len("<not-json>")
+    assert exc.value.context["response_preview_start"] == "<not-json>"
+    assert exc.value.context["json_repair_attempts"] == 1
+    assert "transport_retry_history" in exc.value.context
 
 
 def test_llm_extracts_text_from_content_parts(monkeypatch) -> None:

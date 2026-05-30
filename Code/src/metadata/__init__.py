@@ -28,7 +28,12 @@ from metadata.base import (
     ensure_metadata,
     metadata_summary,
 )
-from metadata.bugfix import BugFixAttemptMetadata, BugFixResultMetadata
+from metadata.bugfix import (
+    BugFixAttemptMetadata,
+    BugFixResultMetadata,
+    EnvironmentFailureMetadata,
+    EnvironmentFixResultMetadata,
+)
 from metadata.data import CollectedDataMetadata, PresentationMetadata, ProcessedDataMetadata
 from metadata.project import (
     AutonomyDecisionMetadata,
@@ -98,6 +103,8 @@ __all__ = [
     "DependencyStrategyMetadata",
     "DecisionNeedMetadata",
     "EmbeddingArtifactMetadata",
+    "EnvironmentFailureMetadata",
+    "EnvironmentFixResultMetadata",
     "EnvironmentSyncMetadata",
     "EditPlanMetadata",
     "ExecutionContextMetadata",

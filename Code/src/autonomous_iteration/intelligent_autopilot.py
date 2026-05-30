@@ -859,6 +859,7 @@ class IntelligentAutopilot:
         """Inject the project-local cwd and venv environment into command-like tools."""
         if tool_name not in {"command_executor", "bug_fix_tool", "warning_check_tool"}:
             return input_metadata
+        input_metadata = self._attach_command_approval_callback(tool_name, input_metadata)
         environment = self._environment_for_tool_input(input_metadata)
         if not environment:
             return input_metadata
@@ -878,6 +879,34 @@ class IntelligentAutopilot:
         if not updates:
             return input_metadata
         return input_metadata.model_copy(update=updates)
+
+    def _attach_command_approval_callback(self, tool_name: str, input_metadata: ToolInputMetadata) -> ToolInputMetadata:
+        if tool_name not in {"command_executor", "bug_fix_tool"}:
+            return input_metadata
+        handles = dict(input_metadata.runtime_handles or {})
+        handles.setdefault("_command_approval_callback", self._confirm_command_execution)
+        return input_metadata.model_copy(update={"runtime_handles": handles})
+
+    def _confirm_command_execution(self, decision) -> bool:
+        reasons = "; ".join(getattr(decision, "reasons", []) or ["Command requires confirmation."])
+        command = getattr(decision, "command", "")
+        cwd = getattr(decision, "cwd", "")
+        description = f"Command:\n{command}\n\nWorking directory: {cwd or '(current)'}\n\nReason: {reasons}"
+        if self.enhanced_ui:
+            self.enhanced_ui.set_current_task_state(
+                title="Command Approval Required",
+                details=description,
+                status="running",
+            )
+        from ui.question_ui import QuestionUI
+
+        return QuestionUI(self.console).ask_confirm(
+            "command_approval",
+            "Run this command?",
+            title="Command Approval Required",
+            description=description,
+            default=False,
+        )
 
     def _environment_for_tool_input(self, input_metadata: ToolInputMetadata) -> dict[str, Any]:
         candidates = []
@@ -1378,6 +1407,38 @@ class IntelligentAutopilot:
             ),
             parent_task_id=parent_task_id,
         )
+
+    def _execute_environment_fix_agent_tool(
+        self,
+        *,
+        task: Task,
+        step_id: str,
+        input_metadata: ToolInputMetadata,
+        parent_task_id: str | None = None,
+    ) -> ToolExecutionEnvelopeMetadata:
+        """Run the project environment repair tool without public registry selection."""
+        from tools.environment_fix_tool import environment_fix_tool_executor
+
+        handles = dict(input_metadata.runtime_handles or {})
+        handles.setdefault("_command_approval_callback", self._confirm_command_execution)
+        input_metadata = input_metadata.model_copy(update={"runtime_handles": handles})
+        result = self._execute_module_owned_tool(
+            task=task,
+            step_id=step_id,
+            tool_name="environment_fix_tool",
+            input_metadata=input_metadata,
+            executor=environment_fix_tool_executor,
+            parent_task_id=parent_task_id,
+        )
+        if result.output_metadata and result.output_metadata.status != ResultStatus.SUCCESS:
+            return result.model_copy(
+                update={
+                    "status": result.output_metadata.status,
+                    "success": False,
+                    "failure": result.output_metadata.failure,
+                }
+            )
+        return result
 
     def _execute_module_owned_tool(
         self,
@@ -2083,6 +2144,102 @@ class IntelligentAutopilot:
             )
         return items
 
+    def _implicit_dependencies_for_task(self, task: Task, execution_order: list[str], zero_based_index: int) -> list[str]:
+        """Infer simple sequential dependencies from task wording."""
+        dependencies = list(task.dependencies or [])
+        description = task.description.lower()
+        previous_markers = (
+            "based on subtask",
+            "requirements from subtask",
+            "from subtask",
+            "previous task",
+            "prior task",
+            "上一步",
+            "上一",
+            "前序",
+            "前一步",
+            "子任务 0",
+            "子任务0",
+        )
+        if zero_based_index > 0 and any(marker in description for marker in previous_markers):
+            previous_id = execution_order[zero_based_index - 1]
+            if previous_id not in dependencies:
+                dependencies.append(previous_id)
+        return dependencies
+
+    def _blocking_dependency(
+        self,
+        task: Task,
+        tasks: list[Task],
+        results: list[TaskExecutionResult],
+        execution_order: list[str],
+        zero_based_index: int,
+    ) -> tuple[str, str] | None:
+        dependencies = self._implicit_dependencies_for_task(task, execution_order, zero_based_index)
+        if not dependencies:
+            return None
+        task_by_id = {candidate.id: candidate for candidate in tasks}
+        result_by_id = {result.task_id: result for result in results}
+        for dependency_id in dependencies:
+            dependency_task = task_by_id.get(dependency_id)
+            dependency_result = result_by_id.get(dependency_id)
+            dependency_status = getattr(dependency_task, "status", None)
+            result_status = getattr(dependency_result, "status", None)
+            if dependency_status in {TaskStatus.FAILED, TaskStatus.BLOCKED} or result_status == TaskStatus.FAILED:
+                reason = (
+                    getattr(dependency_result, "error", None)
+                    or getattr(dependency_task, "error", None)
+                    or "dependency did not complete successfully"
+                )
+                return dependency_id, str(reason)
+        return None
+
+    def _blocked_task_result(self, task: Task, blocking_task_id: str, root_cause: str) -> TaskExecutionResult:
+        message = f"Blocked because task {blocking_task_id} failed: {root_cause}"
+        task.mark_blocked()
+        task.error = message
+        metadata = TaskResultMetadata(
+            task_id=task.id,
+            status=ResultStatus.FAIL,
+            failure=FailureMetadata(
+                error_type="TaskBlocked",
+                error_message=message,
+                details={
+                    "task_id": task.id,
+                    "task_description": task.description,
+                    "blocked_by_task_id": blocking_task_id,
+                    "root_cause": root_cause,
+                    "failure_stage": "Task Dependency",
+                    "suggested_recovery": "Fix the failed dependency task before retrying this task.",
+                },
+            ),
+        )
+        task.result = metadata
+        return TaskExecutionResult(
+            task_id=task.id,
+            status=TaskStatus.FAILED,
+            result_metadata=metadata,
+            error=message,
+            duration=0.0,
+            attributes={"blocked": True, "blocked_by_task_id": blocking_task_id},
+        )
+
+    def _execution_history_payload(self, tasks: list[Task], results: list[TaskExecutionResult]) -> list[dict[str, Any]]:
+        task_by_id = {task.id: task for task in tasks}
+        history: list[dict[str, Any]] = []
+        for result in results:
+            task = task_by_id.get(result.task_id)
+            history.append(
+                {
+                    "task_id": result.task_id,
+                    "description": task.description if task else None,
+                    "status": result.status.value if hasattr(result.status, "value") else str(result.status),
+                    "error": result.error,
+                    "result_summary": str(result.result_metadata)[:1000] if result.result_metadata else None,
+                }
+            )
+        return history
+
     def _execute_tasks_enhanced_ui(self, tasks: list[Task], execution_order: list[str], goal: str) -> list[TaskExecutionResult]:
         """Execute tasks with enhanced UI updates."""
         results = []
@@ -2109,6 +2266,35 @@ class IntelligentAutopilot:
                 self.logger.log_event(
                     "task_not_found",
                     {"task_id": task_id, "index": index},
+                    session_id=self.session_id or "unknown",
+                    turn_id=1,
+                )
+                continue
+
+            blocking = self._blocking_dependency(task, tasks, results, execution_order, index - 1)
+            if blocking:
+                blocked_by, root_cause = blocking
+                result = self._blocked_task_result(task, blocked_by, root_cause)
+                results.append(result)
+                self.enhanced_ui.set_task_graph_state(
+                    tasks=self._dashboard_task_items(tasks),
+                    current_task_id=task.id,
+                )
+                self.enhanced_ui.set_current_task_state(
+                    title=f"Task {index}/{len(tasks)}",
+                    details=result.error or "Task blocked",
+                    status="failed",
+                )
+                self.enhanced_ui.log_activity("error", f"✗ Task {index} blocked: {result.error}")
+                self.logger.log_event(
+                    "task_execution_blocked",
+                    {
+                        "task_id": task.id,
+                        "task_index": index,
+                        "description": task.description,
+                        "blocked_by_task_id": blocked_by,
+                        "root_cause": root_cause,
+                    },
                     session_id=self.session_id or "unknown",
                     turn_id=1,
                 )
@@ -2148,8 +2334,8 @@ class IntelligentAutopilot:
             task_context = TaskExecutionContext(
                 task=task,
                 parent_context={"goal": goal, "session_id": self.session_id},
-                shared_state={},
-                execution_history=[],
+                shared_state={"previous_task_results": self._execution_history_payload(tasks, results)},
+                execution_history=self._execution_history_payload(tasks, results),
             )
 
             try:
@@ -2319,6 +2505,31 @@ class IntelligentAutopilot:
                 if not task:
                     continue
 
+                blocking = self._blocking_dependency(task, tasks, results, execution_order, index - 1)
+                if blocking:
+                    blocked_by, root_cause = blocking
+                    result = self._blocked_task_result(task, blocked_by, root_cause)
+                    results.append(result)
+                    self.stats["tasks_failed"] += 1
+                    self.logger.log_event(
+                        "task_execution_blocked",
+                        {
+                            "task_id": task.id,
+                            "task_index": index,
+                            "description": task.description,
+                            "blocked_by_task_id": blocked_by,
+                            "root_cause": root_cause,
+                        },
+                        session_id=self.session_id or "unknown",
+                        turn_id=1,
+                    )
+                    self.console.print(
+                        f"  [red]✗[/red] Task {index}: {task.description[:60]} (blocked)"
+                    )
+                    self.console.print(f"    [red]Error: {result.error}[/red]")
+                    progress.advance(task_progress)
+                    continue
+
                 progress.update(
                     task_progress,
                     description=f"[{index}/{len(tasks)}] {task.description[:50]}...",
@@ -2327,8 +2538,8 @@ class IntelligentAutopilot:
                 task_context = TaskExecutionContext(
                     task=task,
                     parent_context={"goal": goal, "session_id": self.session_id},
-                    shared_state={},
-                    execution_history=[],
+                    shared_state={"previous_task_results": self._execution_history_payload(tasks, results)},
+                    execution_history=self._execution_history_payload(tasks, results),
                 )
 
                 try:

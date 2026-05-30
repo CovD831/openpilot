@@ -65,6 +65,17 @@ DEFAULTABLE_DECISION_NEED_FIELDS = {
     "attributes",
     "cost_hint",
     "risk_level",
+    "target_path",
+    "operation_kind",
+    "target_scope",
+    "symbol_name",
+    "symbol_type",
+    "insertion_hint",
+    "patch_mode",
+    "query",
+    "command",
+    "decision_to_unlock",
+    "expected_state_change",
 }
 
 
@@ -95,7 +106,7 @@ class ToolPlanningTaskExecutor:
             self._active_task_id = task.id
             goal = context.parent_context.get("goal", "")
             tools_description = self.runtime._format_tools_for_llm(self.runtime.tool_registry.list_all())
-            prompt = self._build_tool_plan_prompt(task.description, goal, tools_description)
+            prompt = self._build_tool_plan_prompt(task.description, goal, tools_description, context)
 
             self.runtime.logger.log_event(
                 "llm_tool_planning",
@@ -171,8 +182,13 @@ class ToolPlanningTaskExecutor:
         except Exception as exc:
             duration = (datetime.now() - start_time).total_seconds()
             failure_details = getattr(exc, "details", {}) if isinstance(getattr(exc, "details", {}), dict) else {}
+            exc_context = getattr(exc, "context", None)
+            if isinstance(exc_context, dict):
+                failure_details.update({key: value for key, value in exc_context.items() if value is not None})
             failure_details.setdefault("task_id", task.id)
+            failure_details.setdefault("task_description", task.description)
             failure_details.setdefault("failed_tool", "tool_planning_executor")
+            failure_details.setdefault("failure_stage", "Tool Planning")
             result = TaskExecutionResult(
                 task_id=task.id,
                 status=TaskStatus.FAILED,
@@ -215,11 +231,20 @@ class ToolPlanningTaskExecutor:
             )
             return result
 
-    def _build_tool_plan_prompt(self, task_description: str, goal: str, tools_description: str) -> str:
+    def _build_tool_plan_prompt(
+        self,
+        task_description: str,
+        goal: str,
+        tools_description: str,
+        context: TaskExecutionContext | None = None,
+    ) -> str:
+        history = self._execution_history_summary(context)
         return f"""You are an AI assistant that selects and sequences tools to accomplish tasks.
 
 Task: {task_description}
 Overall Goal: {goal}
+Previous Task Results:
+{history}
 
 Available Tools:
 {tools_description}
@@ -231,25 +256,29 @@ Output ONLY valid JSON in this format:
 {{
   "decision_needs": [
     {{
-      "need_type": "file_read | project_structure | web_search | command_check | file_write | code_file_create | directory_generate | code_unit_generate | code_symbol_modify | code_patch | code_generation | code_execution | readme_generation",
-      "question": "what decision this information will unlock",
-      "target_path": "optional path",
-      "operation_kind": "create_file | file_replace | add_symbol | modify_symbol | code_patch | directory_generate",
-      "target_scope": "file | symbol | line_range | directory",
-      "symbol_name": "optional function/class/method name",
-      "symbol_type": "function | class | method | module",
-      "insertion_hint": "end_of_file | before_symbol | after_symbol",
-      "patch_mode": "replace_range | replace_symbol | insert",
-      "candidate_paths": ["optional paths"],
-      "query": "optional search query",
-      "command": "optional command",
-      "risk_level": "low | medium | high | forbidden",
-      "attributes": {{"optional": "tool-specific inputs"}}
+      "need_type": "code_file_create",
+      "question": "create the main project file",
+      "target_path": "/absolute/path/to/file.py",
+      "operation_kind": "create_file",
+      "attributes": {{"language": "python"}}
     }}
   ]
 }}
 
+Allowed need_type values:
+file_read, project_structure, web_search, command_check, file_write, code_file_create,
+directory_generate, code_unit_generate, code_symbol_modify, code_patch, code_generation,
+code_execution, readme_generation.
+
+Optional fields may include: target_path, operation_kind, target_scope, symbol_name,
+symbol_type, insertion_hint, patch_mode, candidate_paths, query, command, risk_level,
+attributes. Omit unknown or unavailable optional fields. Do not emit null.
+
 Important:
+- Previous task outputs are provided above in Previous Task Results. Use that shared history directly.
+- Never invent or read intermediate files such as subtask_0.md, subtask_1.md, requirements.md, or plan.md unless they appear in previous tool outputs or the user explicitly requested them.
+- If previous task results are absent or failed, infer sensible defaults from the original goal instead of reading a made-up plan file.
+- For project creation, use directory_generate/code_file_create/file_write directly and create the needed files in the target directory.
 - Always distinguish create_file, add_symbol, modify_symbol, and code_patch before selecting needs.
 - For new code files or generated project files, emit code_file_create or directory_generate, then file_write with operation_kind create_file.
 - For adding a function/class to an existing file, emit file_read, then code_unit_generate with operation_kind add_symbol, then file_write with operation_kind add_symbol so ToolRouter uses file_patch_writer.
@@ -264,6 +293,28 @@ Important:
 - For command_executor, input_metadata.mode must be one of: dry_run, interactive, automatic
 - For project commands, use mode "automatic" and do not use source/activate/cd/export; OpenPilot injects the target cwd and virtual environment from metadata
 """
+
+    def _execution_history_summary(self, context: TaskExecutionContext | None) -> str:
+        if context is None:
+            return "No previous task results."
+        history = context.execution_history or context.shared_state.get("previous_task_results") or []
+        if not history:
+            return "No previous task results."
+        compact: list[dict[str, Any]] = []
+        for item in history[-5:]:
+            if not isinstance(item, dict):
+                compact.append({"summary": str(item)[:500]})
+                continue
+            compact.append(
+                {
+                    "task_id": item.get("task_id"),
+                    "description": item.get("description"),
+                    "status": item.get("status"),
+                    "error": item.get("error"),
+                    "result_summary": str(item.get("result_summary") or "")[:500],
+                }
+            )
+        return json.dumps(compact, ensure_ascii=False, indent=2)
 
     def _parse_decision_needs(self, llm_response: Any) -> list[dict[str, Any]]:
         try:

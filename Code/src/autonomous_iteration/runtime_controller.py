@@ -1168,13 +1168,33 @@ class _RuntimeSessionExecutor:
                     f"Completed: {runtime.stats['tasks_completed']}, Failed: {runtime.stats['tasks_failed']}"
                 )
             elif execution_failure:
-                failure_details = (
-                    f"{execution_failure.get('failure_reason') or 'Goal execution failed'}\n\n"
-                    f"Stage: {execution_failure.get('failure_stage') or 'unknown'}\n"
-                    f"Tool: {execution_failure.get('failed_tool') or 'unknown'}"
+                lines = [
+                    execution_failure.get("failure_reason") or "Goal execution failed",
+                    "",
+                ]
+                if execution_failure.get("task_description"):
+                    lines.append(f"Task: {execution_failure['task_description']}")
+                if execution_failure.get("task_id"):
+                    lines.append(f"Task ID: {execution_failure['task_id']}")
+                lines.extend(
+                    [
+                        f"Stage: {execution_failure.get('failure_stage') or 'unknown'}",
+                        f"Tool: {execution_failure.get('failed_tool') or 'unknown'}",
+                    ]
                 )
                 if execution_failure.get("failed_call_id"):
-                    failure_details += f"\nCall: {execution_failure['failed_call_id']}"
+                    lines.append(f"Call: {execution_failure['failed_call_id']}")
+                if execution_failure.get("failed_step_id"):
+                    lines.append(f"Step: {execution_failure['failed_step_id']}")
+                if execution_failure.get("file_path"):
+                    lines.append(f"File: {execution_failure['file_path']}")
+                if execution_failure.get("error_type"):
+                    lines.append(f"Error Type: {execution_failure['error_type']}")
+                if execution_failure.get("suggested_recovery"):
+                    lines.append(f"Recovery: {execution_failure['suggested_recovery']}")
+                if execution_failure.get("response_preview"):
+                    lines.append(f"Response Preview: {str(execution_failure['response_preview'])[:1000]}")
+                failure_details = "\n".join(lines)
             runtime.enhanced_ui.set_current_task_state(
                 title="Failed",
                 details=failure_details,
@@ -1182,7 +1202,11 @@ class _RuntimeSessionExecutor:
             )
 
     def _execution_failure_context(self, subtasks: list[Any]) -> dict[str, Any] | None:
-        failed_tasks = [task for task in subtasks if getattr(task, "status", None) == TaskStatus.FAILED]
+        failed_tasks = [
+            task
+            for task in subtasks
+            if getattr(task, "status", None) in {TaskStatus.FAILED, TaskStatus.BLOCKED}
+        ]
         if not failed_tasks:
             return None
         task = failed_tasks[0]
@@ -1191,29 +1215,72 @@ class _RuntimeSessionExecutor:
         details = getattr(failure, "details", {}) or {}
         tool_loop = details.get("tool_loop") if isinstance(details, dict) else None
         final_error = tool_loop.get("final_error") if isinstance(tool_loop, dict) else None
+        final_details = final_error.get("details") if isinstance(final_error, dict) and isinstance(final_error.get("details"), dict) else {}
+        input_summary = details.get("input_summary") if isinstance(details, dict) and isinstance(details.get("input_summary"), dict) else {}
+        final_input = final_details.get("input_summary") if isinstance(final_details.get("input_summary"), dict) else {}
         tool_name = None
         call_id = None
+        step_id = None
         if isinstance(details, dict):
             tool_name = details.get("tool_name") or details.get("failed_tool")
             call_id = details.get("call_id")
+            step_id = details.get("step_id")
         if isinstance(final_error, dict):
-            final_details = final_error.get("details")
-            if isinstance(final_details, dict):
-                tool_name = tool_name or final_details.get("tool_name")
-                call_id = call_id or final_details.get("call_id")
+            tool_name = tool_name or final_details.get("tool_name")
+            call_id = call_id or final_details.get("call_id")
+            step_id = step_id or final_details.get("step_id")
         if not tool_name and isinstance(tool_loop, dict):
             events = tool_loop.get("events") or []
             for event in reversed(events):
                 if isinstance(event, dict) and event.get("event_type") == "error":
                     tool_name = event.get("tool_name")
                     call_id = event.get("call_id")
+                    step_id = event.get("step_id")
                     break
+        error_type = None
+        response_preview = None
+        suggested_recovery = None
+        file_path = None
+        if isinstance(details, dict):
+            error_type = (
+                details.get("error_type")
+                or details.get("failure_error_type")
+                or final_details.get("error_type")
+                or (final_error.get("error_type") if isinstance(final_error, dict) else None)
+            )
+            suggested_recovery = (
+                details.get("suggested_recovery")
+                or final_details.get("suggested_recovery")
+                or details.get("recovery_strategy")
+                or final_details.get("recovery_strategy")
+            )
+            response_preview = (
+                details.get("response_preview")
+                or details.get("response_preview_start")
+                or final_details.get("response_preview")
+                or final_details.get("response_preview_start")
+                or details.get("response_text")
+                or final_details.get("response_text")
+            )
+            file_path = (
+                details.get("file_path")
+                or final_details.get("file_path")
+                or input_summary.get("file_path")
+                or final_input.get("file_path")
+                or final_details.get("received_path")
+            )
         return {
             "task_id": getattr(task, "id", None),
+            "task_description": getattr(task, "description", None),
             "failure_stage": (details.get("failure_stage") if isinstance(details, dict) else None) or "Task Executor",
             "failed_tool": tool_name or "tool_event_loop",
             "failed_call_id": call_id,
+            "failed_step_id": step_id,
             "failure_reason": getattr(failure, "error_message", None) or getattr(task, "error", None),
+            "file_path": file_path,
+            "error_type": error_type,
+            "suggested_recovery": suggested_recovery,
+            "response_preview": response_preview,
         }
 
     def _build_result(
@@ -1261,6 +1328,13 @@ class _RuntimeSessionExecutor:
                 else (execution_failure or {}).get("failed_tool")
             ),
             "failed_call_id": (execution_failure or {}).get("failed_call_id"),
+            "failed_step_id": (execution_failure or {}).get("failed_step_id"),
+            "task_id": (execution_failure or {}).get("task_id"),
+            "task_description": (execution_failure or {}).get("task_description"),
+            "file_path": (execution_failure or {}).get("file_path"),
+            "error_type": (execution_failure or {}).get("error_type"),
+            "suggested_recovery": (execution_failure or {}).get("suggested_recovery"),
+            "response_preview": (execution_failure or {}).get("response_preview"),
             "failure_reason": (
                 improvement_result.get("failure_reason")
                 if improvement_result
@@ -1281,6 +1355,10 @@ class _RuntimeSessionExecutor:
                     "failure_stage": result.get("failure_stage"),
                     "failed_tool": result.get("failed_tool"),
                     "failed_call_id": result.get("failed_call_id"),
+                    "failed_step_id": result.get("failed_step_id"),
+                    "file_path": result.get("file_path"),
+                    "error_type": result.get("error_type"),
+                    "suggested_recovery": result.get("suggested_recovery"),
                     "failure_reason": result.get("failure_reason"),
                 },
                 success=False,

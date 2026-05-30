@@ -877,6 +877,29 @@ def test_tool_event_loop_reports_file_reader_directory_contract_error(tmp_path) 
     assert result.loop_metadata.final_error.details["call_id"] == "task:r1:c1"
 
 
+def test_tool_event_loop_reports_invented_intermediate_file_with_recovery(tmp_path) -> None:
+    task = Task(id="task", description="Read hallucinated subtask plan")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    invented_path = tmp_path / "results" / "openpilot" / "subtask_0.md"
+    executor._parse_decision_needs = lambda _response: [  # type: ignore[method-assign]
+        {
+            "tool_name": "file_reader",
+            "reason": "read invented plan",
+            "input_metadata": {"file_path": str(invented_path)},
+        }
+    ]
+
+    result = ToolEventLoopRunner(executor, max_steps=1).run(task, "prompt")
+
+    assert result.success is False
+    assert result.tool_results[0]["tool"] == "file_reader"
+    assert "File not found" in result.tool_results[0]["error"]
+    assert "shared execution history" in result.tool_results[0]["suggested_recovery"]
+    assert result.loop_metadata.final_error is not None
+    assert result.loop_metadata.final_error.details["error_type"] == "InventedIntermediateFile"
+
+
 def test_tool_event_loop_rejects_generated_placeholder_file_content(tmp_path) -> None:
     task = Task(id="task", description="Write placeholder")
     runtime = FakeRuntime(tmp_path, {"decision_needs": []})
@@ -1023,6 +1046,32 @@ def test_tool_planning_executor_bad_json_returns_failed_result(tmp_path) -> None
 
     assert result.status == TaskStatus.FAILED
     assert "Failed to parse LLM response as JSON" in result.error
+
+
+def test_tool_planning_prompt_uses_history_and_forbids_invented_subtask_files(tmp_path) -> None:
+    task = Task(id="task", description="Create project based on subtask 0 requirements")
+    executor = ToolPlanningTaskExecutor(FakeRuntime(tmp_path, {"decision_needs": []}))
+    context = TaskExecutionContext(
+        task=task,
+        parent_context={"goal": "build app"},
+        shared_state={},
+        execution_history=[
+            {
+                "task_id": "previous",
+                "description": "Clarify requirements",
+                "status": "completed",
+                "result_summary": "Use a small Python CLI app.",
+            }
+        ],
+    )
+
+    prompt = executor._build_tool_plan_prompt(task.description, "build app", "No tools", context)
+
+    assert "Previous Task Results" in prompt
+    assert "Use a small Python CLI app" in prompt
+    assert "Never invent or read intermediate files such as subtask_0.md" in prompt
+    assert "Do not emit null" in prompt
+    assert '"symbol_name": "optional' not in prompt
 
 
 def test_intelligent_autopilot_execute_task_proxy_uses_tool_planning_agent(tmp_path) -> None:

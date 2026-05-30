@@ -43,6 +43,10 @@ class FakeRuntime:
     _execute_tasks_enhanced_ui = IntelligentAutopilot._execute_tasks_enhanced_ui
     _execute_tasks_standard = IntelligentAutopilot._execute_tasks_standard
     _log_task_execution_event = IntelligentAutopilot._log_task_execution_event
+    _implicit_dependencies_for_task = IntelligentAutopilot._implicit_dependencies_for_task
+    _blocking_dependency = IntelligentAutopilot._blocking_dependency
+    _blocked_task_result = IntelligentAutopilot._blocked_task_result
+    _execution_history_payload = IntelligentAutopilot._execution_history_payload
 
     def __init__(self, tmp_path, *, enhanced: bool = False, fail_order: bool = False) -> None:
         self.console = Console(record=True, width=100)
@@ -134,6 +138,26 @@ def test_runtime_enhanced_task_execution_preserves_failed_result_metadata(tmp_pa
     assert results[0].status == TaskStatus.FAILED
     assert tasks[0].status == TaskStatus.FAILED
     assert tasks[0].result.failure.details["failed_tool"] == "tool_planning_executor"
+
+
+def test_runtime_blocks_dependency_after_failed_previous_task(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path, enhanced=True)
+    runtime.fail_for = {"a"}
+    tasks = [
+        Task(id="a", description="Clarify requirements", priority=TaskPriority.HIGH),
+        Task(
+            id="b",
+            description="Create project based on subtask 0 requirements",
+            priority=TaskPriority.MEDIUM,
+        ),
+    ]
+
+    results = IntelligentAutopilot._execute_tasks(runtime, tasks, "goal")
+
+    assert runtime.executed == ["a"]
+    assert [result.status for result in results] == [TaskStatus.FAILED, TaskStatus.FAILED]
+    assert tasks[1].status == TaskStatus.BLOCKED
+    assert "Blocked because task a failed" in results[1].error
 
 
 def test_runtime_dashboard_items_marks_running_task(tmp_path) -> None:

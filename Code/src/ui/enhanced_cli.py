@@ -45,16 +45,36 @@ def _format_failure_details(result: dict) -> str:
     failure_stage = context.get("failure_stage") or _result_value(result, "failure_stage")
     failed_tool = context.get("failed_tool") or _result_value(result, "failed_tool")
     failed_call_id = context.get("failed_call_id") or _result_value(result, "failed_call_id")
+    failed_step_id = context.get("failed_step_id") or _result_value(result, "failed_step_id")
     failed_iteration = _result_value(result, "failed_iteration")
+    context_lines = []
+    if context.get("task_description"):
+        context_lines.append(f"Task: {context['task_description']}")
+    if context.get("task_id"):
+        context_lines.append(f"Task ID: {context['task_id']}")
     if failure_stage or failed_tool:
-        context_lines = [
-            f"Stage: {failure_stage or 'unknown'}",
-            f"Tool: {failed_tool or 'unknown'}",
-        ]
+        context_lines.extend(
+            [
+                f"Stage: {failure_stage or 'unknown'}",
+                f"Tool: {failed_tool or 'unknown'}",
+            ]
+        )
         if failed_call_id:
             context_lines.append(f"Call: {failed_call_id}")
+        if failed_step_id:
+            context_lines.append(f"Step: {failed_step_id}")
         if failed_iteration:
             context_lines.append(f"Iteration: {failed_iteration}")
+    if context.get("file_path"):
+        context_lines.append(f"File: {context['file_path']}")
+    if context.get("error_type"):
+        context_lines.append(f"Error Type: {context['error_type']}")
+    if context.get("suggested_recovery"):
+        context_lines.append(f"Recovery: {context['suggested_recovery']}")
+    response_preview = context.get("response_preview") or context.get("response_text")
+    if response_preview:
+        context_lines.append(f"Response Preview: {str(response_preview)[:1000]}")
+    if context_lines:
         details = f"{details}\n" + "\n".join(context_lines)
     return str(details)
 
@@ -74,17 +94,34 @@ def _extract_failure_context(result) -> dict:
         if nested_context:
             return nested_context
     direct_reason = result.get("failure_reason")
+    if direct_reason and direct_reason != "Autopilot reported failure":
+        direct_context = {
+            "failure_reason": direct_reason,
+            "failure_stage": result.get("failure_stage"),
+            "failed_tool": result.get("failed_tool"),
+            "failed_call_id": result.get("failed_call_id"),
+            "failed_step_id": result.get("failed_step_id"),
+            "task_id": result.get("task_id"),
+            "task_description": result.get("task_description"),
+            "file_path": result.get("file_path"),
+            "error_type": result.get("error_type"),
+            "suggested_recovery": result.get("suggested_recovery"),
+            "response_preview": result.get("response_preview") or result.get("response_text"),
+        }
+        if any(value for key, value in direct_context.items() if key != "failure_reason"):
+            return direct_context
+    for task_result in result.get("results") or []:
+        context = _failure_context_from_task_result(task_result)
+        if context:
+            return context
     if direct_reason:
         return {
             "failure_reason": direct_reason,
             "failure_stage": result.get("failure_stage"),
             "failed_tool": result.get("failed_tool"),
             "failed_call_id": result.get("failed_call_id"),
+            "failed_step_id": result.get("failed_step_id"),
         }
-    for task_result in result.get("results") or []:
-        context = _failure_context_from_task_result(task_result)
-        if context:
-            return context
     decomposition = result.get("decomposition")
     for task in _result_value(decomposition, "subtasks") or []:
         context = _failure_context_from_task(task)
@@ -100,12 +137,15 @@ def _failure_context_from_task_result(task_result) -> dict:
     if not reason:
         return {}
     details = _result_value(failure, "details") or {}
-    return _failure_context_from_details(details, reason)
+    context = _failure_context_from_details(details, reason)
+    context.setdefault("task_id", _result_value(task_result, "task_id"))
+    context.setdefault("task_description", details.get("task_description") if isinstance(details, dict) else None)
+    return context
 
 
 def _failure_context_from_task(task) -> dict:
     status = str(_result_value(task, "status") or "").lower()
-    if "failed" not in status:
+    if "failed" not in status and "blocked" not in status:
         return {}
     metadata = _result_value(task, "result") or _result_value(task, "result_metadata")
     failure = _result_value(metadata, "failure")
@@ -115,6 +155,7 @@ def _failure_context_from_task(task) -> dict:
     details = _result_value(failure, "details") or {}
     context = _failure_context_from_details(details, reason)
     context.setdefault("task_id", _result_value(task, "id"))
+    context.setdefault("task_description", _result_value(task, "description"))
     return context
 
 
@@ -124,11 +165,46 @@ def _failure_context_from_details(details, reason: str) -> dict:
     tool_loop = details.get("tool_loop") if isinstance(details.get("tool_loop"), dict) else {}
     final_error = tool_loop.get("final_error") if isinstance(tool_loop, dict) else {}
     final_details = final_error.get("details") if isinstance(final_error, dict) and isinstance(final_error.get("details"), dict) else {}
+    input_summary = details.get("input_summary") if isinstance(details.get("input_summary"), dict) else {}
+    final_input = final_details.get("input_summary") if isinstance(final_details.get("input_summary"), dict) else {}
+    error_type = (
+        details.get("error_type")
+        or details.get("failure_error_type")
+        or final_details.get("error_type")
+        or (final_error.get("error_type") if isinstance(final_error, dict) else None)
+    )
+    response_preview = (
+        details.get("response_preview")
+        or details.get("response_preview_start")
+        or final_details.get("response_preview")
+        or final_details.get("response_preview_start")
+        or details.get("response_text")
+        or final_details.get("response_text")
+    )
     return {
         "failure_reason": reason,
         "failure_stage": details.get("failure_stage") or "Task Executor",
         "failed_tool": details.get("tool_name") or details.get("failed_tool") or final_details.get("tool_name"),
         "failed_call_id": details.get("call_id") or final_details.get("call_id"),
+        "failed_step_id": details.get("step_id") or final_details.get("step_id"),
+        "task_id": details.get("task_id") or final_details.get("task_id"),
+        "task_description": details.get("task_description") or final_details.get("task_description"),
+        "file_path": (
+            details.get("file_path")
+            or final_details.get("file_path")
+            or input_summary.get("file_path")
+            or final_input.get("file_path")
+            or final_details.get("received_path")
+        ),
+        "error_type": error_type,
+        "suggested_recovery": (
+            details.get("suggested_recovery")
+            or final_details.get("suggested_recovery")
+            or details.get("recovery_strategy")
+            or final_details.get("recovery_strategy")
+        ),
+        "response_preview": response_preview,
+        "response_text": details.get("response_text") or final_details.get("response_text"),
     }
 
 

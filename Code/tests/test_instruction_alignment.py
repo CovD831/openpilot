@@ -282,6 +282,41 @@ def test_enhanced_cli_failure_details_extract_from_task_result_metadata() -> Non
     assert "Tool: tool_planning_executor" in details
 
 
+def test_enhanced_cli_failure_details_show_diagnostics_for_tool_and_llm_errors() -> None:
+    from types import SimpleNamespace
+
+    from ui import enhanced_cli
+
+    failure = SimpleNamespace(
+        error_message="LLM returned invalid JSON (attempt 3/3)",
+        details={
+            "task_id": "task-1",
+            "task_description": "Clarify requirements",
+            "failure_stage": "Tool Planning",
+            "failed_tool": "tool_planning_executor",
+            "error_type": "InvalidLLMResponseError",
+            "response_preview_start": '{"decision_needs": [{"need_type": "project_structure"',
+            "suggested_recovery": "Return valid JSON only.",
+        },
+    )
+    task_metadata = SimpleNamespace(failure=failure)
+    task_result = SimpleNamespace(task_id="task-1", error="Autopilot reported failure", result_metadata=task_metadata)
+
+    details = enhanced_cli._format_failure_details(
+        {
+            "error": "Autopilot reported failure",
+            "results": [task_result],
+        }
+    )
+
+    assert details.startswith("LLM returned invalid JSON")
+    assert "Task: Clarify requirements" in details
+    assert "Task ID: task-1" in details
+    assert "Error Type: InvalidLLMResponseError" in details
+    assert "Recovery: Return valid JSON only." in details
+    assert "Response Preview:" in details
+
+
 def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> None:
     from ui import enhanced_cli
 

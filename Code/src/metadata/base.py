@@ -25,6 +25,8 @@ class MetadataKind(str, Enum):
     WARNING_CHECK_RESULT = "warning_check_result"
     BUG_FIX_ATTEMPT = "bug_fix_attempt"
     BUG_FIX_RESULT = "bug_fix_result"
+    ENVIRONMENT_FAILURE = "environment_failure"
+    ENVIRONMENT_FIX_RESULT = "environment_fix_result"
     TASK_ROUTE = "task_route"
     TOOL_INPUT = "tool_input"
     TOOL_SELECTION = "tool_selection"

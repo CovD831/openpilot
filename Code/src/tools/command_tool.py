@@ -12,6 +12,7 @@ from typing import Any
 
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 
+from core.command_approval import CommandApprovalGate
 from pydantic import BaseModel
 
 from core.tool_contracts import (
@@ -374,6 +375,11 @@ def command_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
     timeout = params.get("timeout", 30)
     cwd = params.get("cwd")
     env = params.get("env")
+    approval_decision = CommandApprovalGate().approve(
+        command,
+        cwd=str(cwd) if cwd else None,
+        approval_callback=params.get("_command_approval_callback"),
+    )
     tool = CommandTool(default_timeout=float(timeout))
     result = tool.execute(
         command=command,
@@ -383,6 +389,7 @@ def command_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
         env={str(key): str(value) for key, value in env.items()} if isinstance(env, dict) else None,
     )
     payload = result.model_dump()
+    payload["command_approval"] = approval_decision.to_json_dict()
     risk_assessment = payload.get("risk_assessment")
     if isinstance(risk_assessment, dict):
         risk_level = risk_assessment.get("risk_level")

@@ -35,6 +35,8 @@ class FakeRuntime:
         self.calls: list[dict] = []
         self.code_results = list(code_results or [])
         self.environment_success = True
+        self.environment_failures_before_success = 0
+        self.environment_error = "env failed"
         self.review_result = {"success": True, "result": {"approved": True}}
         self.review_results: list[dict] = []
         self.readme_result = {"success": True, "result": {"file_path": str(tmp_path / "README.md")}}
@@ -70,8 +72,11 @@ class FakeRuntime:
 
     def _sync_project_environment(self, **kwargs):
         self.calls.append({"tool": "project_environment_tool", **kwargs})
+        if self.environment_failures_before_success > 0:
+            self.environment_failures_before_success -= 1
+            return _tool_envelope("project_environment_tool", {"success": False, "error": self.environment_error}, kwargs.get("input_metadata"))
         if not self.environment_success:
-            return _tool_envelope("project_environment_tool", {"success": False, "error": "env failed"}, kwargs.get("input_metadata"))
+            return _tool_envelope("project_environment_tool", {"success": False, "error": self.environment_error}, kwargs.get("input_metadata"))
         return _tool_envelope(
             "project_environment_tool",
             {
@@ -489,6 +494,37 @@ def test_autonomous_task_executor_environment_failure_stage(tmp_path) -> None:
     assert result.failure_stage == "Environment Setup"
     assert result.failed_tool == "project_environment_tool"
     assert "env failed" in (result.failure_reason or "")
+
+
+def test_autonomous_task_executor_repairs_environment_before_failing(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    app.write_text("print('old')\n", encoding="utf-8")
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("rich\n\"\"\"\n", encoding="utf-8")
+    runtime = FakeRuntime(tmp_path)
+    runtime.environment_failures_before_success = 1
+    runtime.environment_error = (
+        f"ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of dependency specifier\n"
+        "    \"\"\"\n"
+        f"    ^ (from line 2 of {requirements})\n"
+    )
+
+    result = AutonomousTaskExecutor(runtime).execute_improvement(
+        goal="Improve project",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        run_command="",
+        readme_path=tmp_path / "README.md",
+        iteration=1,
+        evaluation=_evaluation(),
+        actions=["Improve app.py"],
+        improvement_report={},
+        is_repair=False,
+    )
+
+    assert result.success is True
+    assert requirements.read_text(encoding="utf-8") == "rich\n"
+    assert len([call for call in runtime.calls if call.get("tool") == "project_environment_tool"]) == 2
 
 
 def test_autonomous_task_executor_resolver_failure_for_missing_target(tmp_path) -> None:

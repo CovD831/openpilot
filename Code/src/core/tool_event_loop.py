@@ -447,6 +447,27 @@ class ToolEventLoopRunner:
                 )
         if tool_name == "file_reader" and input_metadata.file_path:
             file_path = Path(str(input_metadata.file_path)).expanduser()
+            if not file_path.exists() and self._looks_like_invented_intermediate_file(file_path):
+                recovery = "Use the original goal or shared execution history instead of reading invented intermediate files."
+                return self._protocol_error(
+                    session_id,
+                    task_id,
+                    step_id,
+                    call_id,
+                    tool_name,
+                    "InventedIntermediateFile",
+                    f"File not found: {input_metadata.file_path}",
+                    input_metadata,
+                    tool_call.tool_context,
+                    suggested_recovery=recovery,
+                    details={
+                        "tool_name": tool_name,
+                        "call_id": call_id,
+                        "step_id": step_id,
+                        "file_path": str(input_metadata.file_path),
+                        "suggested_recovery": recovery,
+                    },
+                )
             try:
                 is_directory = file_path.is_dir()
             except OSError:
@@ -1103,6 +1124,12 @@ class ToolEventLoopRunner:
     def _call_signature(self, tool_name: str, input_metadata: ToolInputMetadata) -> str:
         return json.dumps({"tool": tool_name, "input": input_metadata.to_json_dict()}, sort_keys=True, ensure_ascii=False)
 
+    def _looks_like_invented_intermediate_file(self, file_path: Path) -> bool:
+        name = file_path.name.lower()
+        if re.fullmatch(r"subtask_\d+\.md", name):
+            return True
+        return name in {"requirements.md", "plan.md"} and any(part.lower() == "results" for part in file_path.parts)
+
     def _is_recoverable_error(self, tool_name: str, message: str) -> bool:
         lowered = message.lower()
         recoverable_tokens = (
@@ -1118,6 +1145,7 @@ class ToolEventLoopRunner:
             "invalidinput",
             "validation",
             "not a file",
+            "file not found",
             "expected a file path",
             "received a directory",
             "generated placeholder",
@@ -1135,6 +1163,10 @@ class ToolEventLoopRunner:
             return "Provide file_paths as a list of files, or directory_path with an optional pattern/max_files."
         if tool_name == "file_reader" and ("not a file" in lowered or "directory" in lowered):
             return "Use multi_file_reader with directory_path to inspect directories, or provide a concrete file path to file_reader."
+        if tool_name == "file_reader" and "file not found" in lowered:
+            if "subtask_" in lowered or "requirements.md" in lowered or "plan.md" in lowered:
+                return "Use the original goal or shared execution history instead of reading invented intermediate files."
+            return "Check that file_path exists before calling file_reader, or use project_structure/multi_file_reader to discover files first."
         if tool_name == "file_writer" and ("placeholder" in lowered or "generated" in lowered):
             return "Regenerate real content or route code_generator output into file_writer.content before writing."
         if "unknown tool" in lowered:

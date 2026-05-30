@@ -17,7 +17,12 @@ from metadata.artifacts import (
     TextArtifactMetadata,
 )
 from metadata.base import JsonValue, MetadataBase, MetadataKind
-from metadata.bugfix import BugFixAttemptMetadata, BugFixResultMetadata
+from metadata.bugfix import (
+    BugFixAttemptMetadata,
+    BugFixResultMetadata,
+    EnvironmentFailureMetadata,
+    EnvironmentFixResultMetadata,
+)
 from metadata.project import (
     DependencyStrategyMetadata,
     EnvironmentSyncMetadata,
@@ -260,6 +265,34 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             reason=str(payload.get("reason") or ""),
             recommended_fix=str(payload.get("recommended_fix") or ""),
             annotations=attr_without("command", "cwd", "warnings", "ignored_warnings", "requires_fix", "reason", "recommended_fix"),
+        )
+    if tool_name == "environment_fix_tool":
+        failure = payload.get("environment_failure") or {}
+        if isinstance(failure, EnvironmentFailureMetadata):
+            environment_failure = failure
+        else:
+            environment_failure = EnvironmentFailureMetadata.model_validate(failure)
+        return EnvironmentFixResultMetadata(
+            project_path=str(payload.get("project_path") or getattr(input_metadata, "project_path", "") or ""),
+            environment_failure=environment_failure,
+            applied=bool(payload.get("applied", False)),
+            changed_files=[str(item) for item in payload.get("changed_files") or []],
+            repair_actions=[str(item) for item in payload.get("repair_actions") or []],
+            suggested_command=str(payload.get("suggested_command") or ""),
+            command_executed=bool(payload.get("command_executed", False)),
+            requires_confirmation=bool(payload.get("requires_confirmation", False)),
+            user_declined=bool(payload.get("user_declined", False)),
+            annotations=attr_without(
+                "project_path",
+                "environment_failure",
+                "applied",
+                "changed_files",
+                "repair_actions",
+                "suggested_command",
+                "command_executed",
+                "requires_confirmation",
+                "user_declined",
+            ),
         )
     if tool_name == "project_environment_tool":
         dependencies = [

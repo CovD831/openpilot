@@ -11,7 +11,16 @@ from typing import Any
 from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.task_models import Task, TaskPriority
 from memory.agents.git_manager_agent import GitManagerAgent, GitManagerError
-from metadata import GitSnapshotMetadata, TaskFileResolutionMetadata, TaskFileResolutionRequestMetadata, ToolExecutionEnvelopeMetadata, ToolInputMetadata
+from metadata import (
+    FailureMetadata,
+    GitSnapshotMetadata,
+    ResultStatus,
+    TaskFileResolutionMetadata,
+    TaskFileResolutionRequestMetadata,
+    ToolExecutionEnvelopeMetadata,
+    ToolInputMetadata,
+)
+from tools.environment_fix_tool import environment_fix_tool_executor
 
 
 class AutonomousTaskExecutor:
@@ -237,8 +246,37 @@ class AutonomousTaskExecutor:
             success=environment_result.success,
             error=environment_result.error_message,
         )
+        if not environment_result.success:
+            repair_result = self._attempt_environment_repair(
+                task=task,
+                project_path=project_path,
+                environment_result=environment_result,
+            )
+            repair_payload = repair_result.output if repair_result else None
+            if repair_result and repair_result.success and getattr(repair_payload, "applied", False):
+                environment_result = self.runtime._sync_project_environment(
+                    task=task,
+                    step_id=f"iteration_{iteration}_repaired_project_environment_tool",
+                    project_path=project_path,
+                    written_files=[str(target_file)],
+                    entry_files=[str(target_file)],
+                    run_command=run_command,
+                    parent_task_id=self.runtime._dashboard_stage_id("environment"),
+                )
+                environment_result = self._with_environment_repair_details(environment_result, repair_result)
+                self._log_agent(
+                    "environment_sync_retried_after_repair",
+                    {"iteration": iteration, "project_path": str(project_path)},
+                    {"success": environment_result.success},
+                    success=environment_result.success,
+                    error=environment_result.error_message,
+                )
+            else:
+                environment_result = self._with_environment_repair_details(environment_result, repair_result)
         if not environment_result.success or environment_result.output is None:
             reason = environment_result.error_message or "Project environment sync failed."
+            if environment_result.failure and isinstance(environment_result.failure.details, dict):
+                reason = str(environment_result.failure.details.get("root_cause") or reason)
             return IterationResult(
                 iteration=iteration,
                 validation_passed=False,
@@ -887,6 +925,67 @@ class AutonomousTaskExecutor:
             and getattr(issue, "category", "") in {"runtime_error", "runtime_warning"}
             for issue in issues
         )
+
+    def _attempt_environment_repair(
+        self,
+        *,
+        task: Task,
+        project_path: Path,
+        environment_result: ToolExecutionEnvelopeMetadata,
+    ) -> ToolExecutionEnvelopeMetadata | None:
+        error_message = environment_result.error_message or "Project environment sync failed."
+        input_metadata = ToolInputMetadata.from_mapping(
+            "environment_fix_tool",
+            {
+                "project_path": str(project_path),
+                "stderr": error_message,
+                "context": error_message,
+            },
+        )
+        execute_fix = getattr(self.runtime, "_execute_environment_fix_agent_tool", None)
+        if callable(execute_fix):
+            return execute_fix(
+                task=task,
+                step_id="iteration_environment_fix_tool",
+                input_metadata=input_metadata,
+                parent_task_id=self.runtime._dashboard_stage_id("environment"),
+            )
+        output_metadata = environment_fix_tool_executor(input_metadata)
+        success = output_metadata.status == ResultStatus.SUCCESS
+        return ToolExecutionEnvelopeMetadata(
+            tool_name="environment_fix_tool",
+            step_id="iteration_environment_fix_tool",
+            status=output_metadata.status,
+            success=success,
+            input_metadata=input_metadata,
+            output_metadata=output_metadata,
+            failure=None if success else output_metadata.failure,
+        )
+
+    def _with_environment_repair_details(
+        self,
+        result: ToolExecutionEnvelopeMetadata,
+        repair_result: ToolExecutionEnvelopeMetadata | None,
+    ) -> ToolExecutionEnvelopeMetadata:
+        if repair_result is None:
+            return result
+        repair_output = repair_result.output.to_json_dict() if repair_result.output else None
+        if result.success:
+            result.retry_history.append({"environment_repair": repair_output, "success": True})
+            return result
+        failure = result.failure or FailureMetadata(
+            error_type="EnvironmentSetupFailed",
+            error_message=result.error_message or "Project environment sync failed.",
+        )
+        details = dict(failure.details or {})
+        details["environment_repair"] = repair_output
+        if isinstance(repair_output, dict):
+            environment_failure = repair_output.get("environment_failure") or {}
+            if isinstance(environment_failure, dict):
+                details["root_cause"] = environment_failure.get("root_cause")
+                details["affected_file"] = environment_failure.get("affected_file")
+                details["pip_notices"] = environment_failure.get("pip_notices")
+        return result.model_copy(update={"failure": failure.model_copy(update={"details": details})})
 
     def _execute_bug_fix(
         self,

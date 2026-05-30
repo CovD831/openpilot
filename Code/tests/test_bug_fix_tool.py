@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from metadata import BugFixResultMetadata, ResultStatus, ToolInputMetadata
 from tools import bug_fix_tool as bug_fix_tool_module
 from tools.bug_fix_tool import bug_fix_tool_executor
@@ -352,6 +354,25 @@ def test_bug_fix_tool_stops_when_user_declines_more_iterations(tmp_path) -> None
     assert result.failure.error_type == "BugFixTerminatedByUser"
     assert result.result.user_terminated is True
     assert result.result.requires_user_decision is False
+
+
+def test_bug_fix_tool_uses_command_approval_gate_for_initial_command(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    app.write_text("print('ok')\n", encoding="utf-8")
+    approvals = []
+
+    with pytest.raises(PermissionError):
+        bug_fix_tool_executor(
+            _input(
+                "sudo --version",
+                tmp_path,
+                ["app.py"],
+                _llm_client=FakeBugFixLLM([]),
+                _command_approval_callback=lambda decision: approvals.append(decision.command) or False,
+            )
+        )
+
+    assert approvals == ["sudo --version"]
 
 
 def test_bug_fix_tool_is_registered_and_requires_command_and_files() -> None:
