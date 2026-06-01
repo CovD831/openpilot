@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from metadata.base import JsonValue, MetadataBase, MetadataKind
+from metadata.base import JsonValue, MetadataBase, MetadataKind, json_safe
 
 
 class AgentPhase(str, Enum):
@@ -33,12 +33,14 @@ class RuntimeBudgetMetadata(MetadataBase):
     max_tool_calls: int = 20
     max_file_reads: int = 30
     max_file_edits: int = 3
+    max_file_creates: int = 20
     max_verification_attempts: int = 3
     max_recovery_rounds: int = 3
     max_replan_rounds: int = 3
     tool_calls_used: int = 0
     file_reads_used: int = 0
     file_edits_used: int = 0
+    file_creates_used: int = 0
     verification_attempts_used: int = 0
     recovery_rounds_used: int = 0
     replan_rounds_used: int = 0
@@ -56,6 +58,10 @@ class RuntimeBudgetMetadata(MetadataBase):
         return max(0, self.max_file_edits - self.file_edits_used)
 
     @property
+    def file_creates_remaining(self) -> int:
+        return max(0, self.max_file_creates - self.file_creates_used)
+
+    @property
     def verification_attempts_remaining(self) -> int:
         return max(0, self.max_verification_attempts - self.verification_attempts_used)
 
@@ -67,19 +73,28 @@ class RuntimeBudgetMetadata(MetadataBase):
     def replan_rounds_remaining(self) -> int:
         return max(0, self.max_replan_rounds - self.replan_rounds_used)
 
-    def has_tool_budget(self, *, reads: int = 0, edits: int = 0) -> bool:
+    def has_tool_budget(self, *, reads: int = 0, edits: int = 0, creates: int = 0) -> bool:
         return (
             self.tool_calls_used < self.max_tool_calls
             and self.file_reads_used + reads <= self.max_file_reads
             and self.file_edits_used + edits <= self.max_file_edits
+            and self.file_creates_used + creates <= self.max_file_creates
         )
 
-    def consume_tool_call(self, *, file_read: bool = False, file_edit: bool = False) -> None:
+    def consume_tool_call(
+        self,
+        *,
+        file_read: bool = False,
+        file_edit: bool = False,
+        file_create: bool = False,
+    ) -> None:
         self.tool_calls_used += 1
         if file_read:
             self.file_reads_used += 1
         if file_edit:
             self.file_edits_used += 1
+        if file_create:
+            self.file_creates_used += 1
 
     def consume_verification_attempt(self) -> None:
         self.verification_attempts_used += 1
@@ -98,6 +113,8 @@ class RuntimeBudgetMetadata(MetadataBase):
             reasons.append("file read budget exhausted")
         if self.file_edits_used >= self.max_file_edits:
             reasons.append("file edit budget exhausted")
+        if self.file_creates_used >= self.max_file_creates:
+            reasons.append("file create budget exhausted")
         if self.verification_attempts_used >= self.max_verification_attempts:
             reasons.append("verification budget exhausted")
         if self.recovery_rounds_used >= self.max_recovery_rounds:
@@ -252,7 +269,8 @@ class RuntimeStateMetadata(MetadataBase):
             self.modified_files.append(file_path)
 
     def record_tool_event(self, event: dict[str, JsonValue]) -> None:
-        self.tool_history.append(event)
+        safe_event = json_safe(event)
+        self.tool_history.append(safe_event if isinstance(safe_event, dict) else {"event": safe_event})
 
     def record_tool_decision(self, decision: ToolDecisionMetadata) -> None:
         self.decision_history.append(decision)

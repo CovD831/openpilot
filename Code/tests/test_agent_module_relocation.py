@@ -20,6 +20,43 @@ class FakeLLM:
     pass
 
 
+class FakeDecompositionLLM:
+    def complete(self, _request):
+        return type(
+            "Response",
+            (),
+            {
+                "parsed_json": {
+                    "rationale": "demo",
+                    "subtasks": [
+                        {
+                            "description": "Plan the assistant features and outline file layout.",
+                            "priority": "high",
+                            "estimated_effort": 0.5,
+                            "dependencies": [],
+                            "tags": [],
+                        },
+                        {
+                            "description": "Implement the assistant script in '/tmp/assistant'.",
+                            "priority": "high",
+                            "estimated_effort": 2.0,
+                            "dependencies": [0],
+                            "tags": [],
+                        },
+                        {
+                            "description": "Validate the script by running basic tests.",
+                            "priority": "medium",
+                            "estimated_effort": 0.5,
+                            "dependencies": [1],
+                            "tags": [],
+                        },
+                    ],
+                },
+                "content": "",
+            },
+        )()
+
+
 class PassingEvaluator:
     llm_client = None
 
@@ -103,3 +140,53 @@ def test_module_owned_agents_emit_structured_agent_logs(tmp_path) -> None:
     assert "autonomous_iteration.agents.execution_task_decomposer" in agent_sources
     assert "autonomous_iteration.agents.project_evaluator" in agent_sources
     assert "autonomous_iteration.agents.iteration_agent" in agent_sources
+
+
+def test_simple_code_artifact_decomposition_skips_planning_only_subtasks() -> None:
+    decomposer = TaskDecomposer(FakeDecompositionLLM())
+
+    result = decomposer.decompose("帮我在'/tmp/assistant'中做一个个人数字助手")
+
+    descriptions = [task.description for task in result.subtasks]
+    assert descriptions == [
+        "Implement the assistant script in '/tmp/assistant'.",
+        "Validate the script by running basic tests.",
+    ]
+    assert result.subtasks[0].dependencies == []
+    assert result.subtasks[1].dependencies == [result.subtasks[0].id]
+
+
+def test_simple_code_artifact_compaction_skips_chinese_planning_only_subtasks() -> None:
+    decomposer = TaskDecomposer(FakeLLM())
+    subtasks = [
+        {
+            "description": "设计个人数字助手的功能并规划文件结构。",
+            "dependencies": [],
+        },
+        {
+            "description": "在指定目录中实现个人数字助手脚本。",
+            "dependencies": [0],
+        },
+        {
+            "description": "运行脚本并验证基本命令。",
+            "dependencies": [1],
+        },
+    ]
+
+    assert decomposer._is_simple_code_artifact("帮我在'/tmp/assistant'中做一个个人数字助手")
+    compact = decomposer._compact_simple_code_subtasks(subtasks)
+
+    assert [subtask["description"] for subtask in compact] == [
+        "在指定目录中实现个人数字助手脚本。",
+        "运行脚本并验证基本命令。",
+    ]
+    assert compact[0]["dependencies"] == []
+    assert compact[1]["dependencies"] == [0]
+
+
+def test_planning_subtask_does_not_treat_implementation_approach_as_execution() -> None:
+    decomposer = TaskDecomposer(FakeLLM())
+
+    assert decomposer._is_planning_subtask(
+        "Define requirements and design the assistant, then choose a suitable implementation approach."
+    )

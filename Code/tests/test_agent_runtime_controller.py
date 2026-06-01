@@ -33,6 +33,7 @@ def test_runtime_state_serializes_budget_and_phase() -> None:
     assert payload["budget"]["max_tool_calls"] == 20
     assert payload["budget"]["max_file_reads"] == 30
     assert payload["budget"]["max_file_edits"] == 3
+    assert payload["budget"]["max_file_creates"] == 20
     assert payload["budget"]["max_verification_attempts"] == 3
     assert payload["budget"]["max_recovery_rounds"] == 3
     assert payload["budget"]["max_replan_rounds"] == 3
@@ -68,16 +69,33 @@ def test_tool_router_routes_information_gaps_and_blocks_on_budget() -> None:
         question="Does it run?",
         command="pytest",
     )
+    code_execution_command_need = DecisionNeedMetadata(
+        need_type="code_execution",
+        question="Run the generated script",
+        command="python assistant.py",
+    )
+    bug_fix_need = DecisionNeedMetadata(
+        need_type="bug_fix_tool",
+        question="Fix failing smoke test",
+        command="python test_assistant.py",
+        attributes={"file_paths": ["assistant.py"], "max_iterations": 3},
+    )
 
     assert router.route(state, file_need)[0].tool_name == "file_reader"
     assert router.route(state, directory_need)[0].tool_name == "multi_file_reader"
     assert router.route(state, search_need)[0].tool_name == "web_searcher"
     assert router.route(state, command_need)[0].tool_name == "command_executor"
+    assert router.route(state, code_execution_command_need)[0].tool_name == "command_executor"
+    bug_fix_selection = router.route(state, bug_fix_need)[0]
+    assert bug_fix_selection.tool_name == "bug_fix_tool"
+    assert bug_fix_selection.input_metadata.max_iterations == 3
     assert [decision.selected_tool for decision in state.decision_history] == [
         "file_reader",
         "multi_file_reader",
         "web_searcher",
         "command_executor",
+        "command_executor",
+        "bug_fix_tool",
     ]
 
     state.budget.tool_calls_used = state.budget.max_tool_calls
@@ -115,6 +133,58 @@ def test_tool_router_routes_directory_shaped_file_reads_to_multi_file_reader(tmp
 
     assert file_selection.tool_name == "file_reader"
     assert file_selection.input_metadata.file_path == str(readme)
+
+
+def test_tool_router_routes_non_executable_file_creation_to_writer(tmp_path) -> None:
+    router = ToolRouter()
+    state = RuntimeStateMetadata(goal="Create project files")
+    config_path = tmp_path / "config.json"
+    readme_path = tmp_path / "README.md"
+
+    config_selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="code_file_create",
+            question="Create JSON configuration",
+            target_path=str(config_path),
+            attributes={"language": "json", "content": "{\"enabled\": true}\n"},
+        ),
+    )[0]
+    readme_selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="code_file_create",
+            question="Create README",
+            target_path=str(readme_path),
+            attributes={"language": "text"},
+        ),
+    )[0]
+
+    assert config_selection.tool_name == "file_writer"
+    assert config_selection.input_metadata.content == "{\"enabled\": true}\n"
+    assert readme_selection.tool_name == "readme_tool"
+    assert readme_selection.input_metadata.project_path == str(tmp_path)
+
+
+def test_tool_router_replaces_existing_files_for_idempotent_generation(tmp_path) -> None:
+    existing = tmp_path / "config.json"
+    existing.write_text("{}", encoding="utf-8")
+    router = ToolRouter()
+    state = RuntimeStateMetadata(goal="Regenerate project files")
+
+    selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="file_write",
+            question="Write config",
+            target_path=str(existing),
+            operation_kind="create_file",
+            attributes={"content": "{\"ok\": true}", "overwrite": True},
+        ),
+    )[0]
+
+    assert selection.tool_name == "file_writer"
+    assert selection.input_metadata.operation_kind == "file_replace"
 
 
 def test_tool_router_distinguishes_code_generation_and_symbol_edits() -> None:
@@ -274,6 +344,64 @@ def test_edit_guard_requires_evidence_selection_scope_and_verification() -> None
     assert decision.approved is True
 
 
+def test_file_creation_uses_a_separate_runtime_budget(tmp_path) -> None:
+    state = RuntimeStateMetadata(goal="Scaffold project")
+    state.budget.file_edits_used = state.budget.max_file_edits
+    router = ToolRouter()
+    new_file = tmp_path / "new_module.py"
+
+    selections = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="file_write",
+            question="Create module",
+            target_path=str(new_file),
+            operation_kind="create_file",
+            attributes={"content": "VALUE = 1\n"},
+        ),
+    )
+
+    assert len(selections) == 1
+    assert selections[0].input_metadata.operation_kind == "create_file"
+
+    new_file.write_text("VALUE = 0\n", encoding="utf-8")
+    selections = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="file_write",
+            question="Replace module",
+            target_path=str(new_file),
+            operation_kind="create_file",
+            attributes={"content": "VALUE = 2\n"},
+        ),
+    )
+
+    assert selections == []
+
+
+def test_edit_guard_limits_creates_independently_from_edits() -> None:
+    guard = EditGuard()
+    state = RuntimeStateMetadata(goal="Scaffold project")
+    state.budget.file_edits_used = state.budget.max_file_edits
+    state.select_file("new_module.py", "scaffold plan")
+    create_plan = EditPlanMetadata(
+        subgoal="Create module",
+        target_files=["new_module.py"],
+        evidence=["scaffold plan"],
+        allowed_changes=["Create requested module"],
+        forbidden_changes=["Do not modify existing files"],
+        verification=["python -m compileall ."],
+        attributes={"budget_kind": "file_create"},
+    )
+
+    assert guard.approve(state, create_plan).approved is True
+
+    state.budget.file_creates_used = state.budget.max_file_creates
+    decision = guard.approve(state, create_plan)
+    assert decision.approved is False
+    assert "create budget" in decision.reason.lower()
+
+
 def test_state_updater_absorbs_tool_results_and_forces_write_verification() -> None:
     state = RuntimeStateMetadata(goal="Write file", phase=AgentPhase.EXECUTE)
     router = ToolRouter()
@@ -302,7 +430,8 @@ def test_state_updater_absorbs_tool_results_and_forces_write_verification() -> N
     assert state.phase == AgentPhase.VERIFY
     assert state.verification_status == "required"
     assert "app.py" in state.modified_files
-    assert state.budget.file_edits_used == 1
+    assert state.budget.file_edits_used == 0
+    assert state.budget.file_creates_used == 1
     assert state.tool_history[0]["tool_name"] == "file_writer"
 
 

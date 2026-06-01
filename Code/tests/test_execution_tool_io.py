@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from autonomous_iteration.task_models import Task, TaskPriority
 from autonomous_iteration.tool_io import ExecutionToolIO
+from core.exceptions import LLMTimeoutError
 from core.tool_contracts import ToolDefinition
-from metadata import CodeArtifactMetadata, ResultStatus, ToolContractMetadata, ToolInputMetadata, ToolResultMetadata
+from metadata import CodeArtifactMetadata, FileArtifactMetadata, ResultStatus, ToolContractMetadata, ToolInputMetadata, ToolResultMetadata
+from tools.code_generator import CODE_GENERATION_LLM_TIMEOUT_SECONDS
 from tools.tool_selection import ToolSelection
 
 
@@ -29,6 +33,15 @@ class FakeUI:
 
     def set_current_task_state(self, **_kwargs) -> None:
         return None
+
+
+class TimeoutLLM:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def complete(self, request):
+        self.requests.append(request)
+        raise LLMTimeoutError("provider read timed out", timeout_seconds=request.timeout_seconds)
 
 
 def test_tool_io_sanitizes_large_payloads_without_private_params() -> None:
@@ -77,6 +90,25 @@ def test_tool_io_resolves_chained_metadata_for_writer_and_executor() -> None:
     assert executor_metadata.language == "python"
 
 
+def test_tool_io_does_not_chain_file_content_into_command_executor() -> None:
+    helper = ExecutionToolIO()
+    read_result = ToolResultMetadata(
+        tool_name="file_reader",
+        status=ResultStatus.SUCCESS,
+        result=FileArtifactMetadata(file_path="run.py", content="print('ok')\n"),
+    )
+    command = "chmod +x run.py"
+
+    resolved = helper.resolve_chained_metadata(
+        "command_executor",
+        ToolInputMetadata.from_mapping("command_executor", {"command": command, "mode": "automatic"}),
+        last_output=read_result,
+        last_code_output=None,
+    )
+
+    assert resolved.to_params() == {"command": command, "mode": "automatic"}
+
+
 def test_tool_io_replaces_placeholder_content_with_chained_code() -> None:
     helper = ExecutionToolIO()
     generated = ToolResultMetadata(
@@ -99,6 +131,25 @@ def test_tool_io_replaces_placeholder_content_with_chained_code() -> None:
     )
 
     assert writer_metadata.content == "print('real code')"
+
+
+def test_tool_io_preserves_substantive_content_with_config_placeholder() -> None:
+    helper = ExecutionToolIO()
+    generated = ToolResultMetadata(
+        tool_name="code_generator",
+        status=ResultStatus.SUCCESS,
+        result=CodeArtifactMetadata(code="print('real code')", language="python"),
+    )
+    content = "API_KEY = 'YOUR_API_KEY_PLACEHOLDER'\n"
+
+    writer_metadata = helper.resolve_chained_metadata(
+        "file_writer",
+        ToolInputMetadata.from_mapping("file_writer", {"file_path": "config.py", "content": content}),
+        last_output=None,
+        last_code_output=generated,
+    )
+
+    assert writer_metadata.content == content
 
 
 def test_tool_io_replaces_chinese_placeholder_content_with_chained_code() -> None:
@@ -242,6 +293,47 @@ def test_contextual_code_generator_executor_accepts_tool_input_metadata(tmp_path
     assert isinstance(result.result, CodeArtifactMetadata)
     assert "print('ok')" in result.result.code
     assert llm.requests
+
+
+def test_contextual_code_generator_preserves_llm_timeout_for_retry_classification(tmp_path) -> None:
+    llm = TimeoutLLM()
+    autopilot = IntelligentAutopilot(llm, log_file=tmp_path / "autopilot.jsonl")
+    executor = autopilot.tool_registry.get_executor("code_generator")
+
+    with pytest.raises(LLMTimeoutError, match="provider read timed out"):
+        executor(
+            ToolInputMetadata.from_mapping(
+                "code_generator",
+                {"task_description": "write hello world", "language": "python"},
+            )
+        )
+
+    assert llm.requests[0].timeout_seconds == CODE_GENERATION_LLM_TIMEOUT_SECONDS
+    assert llm.requests[0].transport_retries == 0
+
+
+def test_contextual_code_generator_explicit_local_fallback_bypasses_unavailable_llm(tmp_path) -> None:
+    llm = TimeoutLLM()
+    autopilot = IntelligentAutopilot(llm, log_file=tmp_path / "autopilot.jsonl")
+    executor = autopilot.tool_registry.get_executor("code_generator")
+
+    result = executor(
+        ToolInputMetadata.from_mapping(
+            "code_generator",
+            {
+                "task_description": "build a runnable scaffold",
+                "language": "python",
+                "prompt_context": {"local_fallback_after_provider_failure": True},
+            },
+        )
+    )
+
+    assert isinstance(result, ToolResultMetadata)
+    assert isinstance(result.result, CodeArtifactMetadata)
+    assert result.result.attributes["generation_mode"] == "local_fallback"
+    assert "deterministic local fallback scaffold" in result.result.attributes["warning"]
+    assert "def main" in result.result.code
+    assert llm.requests == []
 
 
 def test_fast_tool_code_generator_uses_metadata_without_mapping_error(tmp_path) -> None:

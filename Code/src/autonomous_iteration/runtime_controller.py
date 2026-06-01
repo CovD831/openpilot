@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from autonomous_iteration.task_models import TaskStatus
+from core.exceptions import InvalidLLMResponseError, LLMProviderError, LLMTimeoutError
 from metadata import (
     AgentPhase,
     DecisionNeedMetadata,
@@ -27,6 +28,19 @@ from tools.tool_selection import SelectionReason, ToolSelection
 WRITE_TOOLS = {"file_writer", "file_patch_writer"}
 READ_TOOLS = {"file_reader", "multi_file_reader"}
 EXECUTION_TOOLS = {"command_executor", "code_executor"}
+FILE_CREATE_OPERATIONS = {"create_file", "file_create", "directory_generate"}
+NON_EXECUTABLE_FILE_SUFFIXES = {
+    ".cfg",
+    ".conf",
+    ".ini",
+    ".json",
+    ".md",
+    ".rst",
+    ".toml",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "forbidden": 3}
 PHASE_SEQUENCE = [
     AgentPhase.UNDERSTAND_TASK,
@@ -46,6 +60,20 @@ def _phase_value(phase: AgentPhase | str) -> str:
 
 def _phase_is(phase: AgentPhase | str, expected: AgentPhase) -> bool:
     return _phase_value(phase) == expected.value
+
+
+def _is_new_file_create(tool_name: str, file_path: Any, operation_kind: Any) -> bool:
+    if tool_name != "file_writer":
+        return False
+    operation = str(operation_kind or "").lower()
+    if operation and operation not in FILE_CREATE_OPERATIONS:
+        return False
+    if not file_path:
+        return False
+    try:
+        return not Path(str(file_path)).expanduser().exists()
+    except OSError:
+        return False
 
 
 class RuntimeGuard:
@@ -75,8 +103,11 @@ class RuntimeGuard:
             )
 
         read_count = 1 if tool_name in READ_TOOLS else 0
-        edit_count = 1 if tool_name in WRITE_TOOLS else 0
-        if not state.budget.has_tool_budget(reads=read_count, edits=edit_count):
+        file_path = need.target_path or need.attributes.get("file_path")
+        operation_kind = need.operation_kind or need.attributes.get("operation_kind")
+        create_count = 1 if _is_new_file_create(tool_name, file_path, operation_kind) else 0
+        edit_count = 1 if tool_name in WRITE_TOOLS and not create_count else 0
+        if not state.budget.has_tool_budget(reads=read_count, edits=edit_count, creates=create_count):
             return GuardDecisionMetadata(
                 approved=False,
                 reason="; ".join(state.budget.exhausted_reasons()) or "runtime budget exhausted",
@@ -196,10 +227,17 @@ class ToolRouter:
             return "web_searcher"
         if need_type in {"command_check", "smoke_test", "test", "verify_command"}:
             return "command_executor"
+        if need_type in {"bug_fix", "bug_fix_tool", "fix_bug", "repair"}:
+            return "bug_fix_tool"
         operation_kind = str(need.operation_kind or need.attributes.get("operation_kind") or "").lower()
         if need_type in {"file_write", "write_file"}:
             if operation_kind in {"add_symbol", "modify_symbol", "code_patch", "code_unit_generate", "code_symbol_modify"}:
                 return "file_patch_writer"
+            return "file_writer"
+        if need_type == "code_file_create" and self._looks_like_non_executable_file_need(need):
+            target_path = need.target_path or need.attributes.get("file_path")
+            if target_path and Path(str(target_path)).name.lower().startswith("readme"):
+                return "readme_tool"
             return "file_writer"
         if need_type in {"code_file_create", "directory_generate"}:
             return "code_generator"
@@ -214,6 +252,8 @@ class ToolRouter:
                 return "code_editor"
             return "code_generator"
         if need_type in {"code_execution", "execute_code", "run_code"}:
+            if need.command or need.attributes.get("command"):
+                return "command_executor"
             return "code_executor"
         if need_type in {"readme_generation", "readme", "documentation"}:
             return "readme_tool"
@@ -247,12 +287,29 @@ class ToolRouter:
             if not command:
                 return None
             return ToolInputMetadata.from_mapping(tool_name, {"command": command, "mode": attrs.get("mode", "automatic"), **attrs})
+        if tool_name == "bug_fix_tool":
+            command = need.command or attrs.get("command")
+            file_paths = attrs.get("file_paths") or need.candidate_paths
+            if not command or not file_paths:
+                return None
+            payload = dict(attrs)
+            payload["command"] = command
+            payload["file_paths"] = file_paths
+            return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "file_writer":
             file_path = need.target_path or attrs.get("file_path")
             content = attrs.get("content")
             if not file_path:
                 return None
-            payload = {"file_path": file_path, "operation_kind": need.operation_kind, **attrs}
+            payload = dict(attrs)
+            payload["file_path"] = file_path
+            operation_kind = self._file_writer_operation_kind(
+                file_path,
+                need.operation_kind or attrs.get("operation_kind"),
+                attrs.get("overwrite", True),
+            )
+            if operation_kind:
+                payload["operation_kind"] = operation_kind
             if content is not None:
                 payload["content"] = content
             return ToolInputMetadata.from_mapping(tool_name, payload)
@@ -330,8 +387,25 @@ class ToolRouter:
             project_path = need.target_path or attrs.get("project_path")
             if not project_path:
                 return None
-            return ToolInputMetadata.from_mapping(tool_name, {"project_path": project_path, **attrs})
+            project_path = self._readme_project_path(project_path)
+            payload = dict(attrs)
+            payload["project_path"] = project_path
+            return ToolInputMetadata.from_mapping(tool_name, payload)
         return None
+
+    def _readme_project_path(self, project_path: Any) -> str:
+        path = Path(str(project_path)).expanduser()
+        if path.name.lower().startswith("readme") and path.suffix:
+            return str(path.parent)
+        return str(path)
+
+    def _file_writer_operation_kind(self, file_path: Any, operation_kind: Any, overwrite: Any) -> str | None:
+        operation = str(operation_kind).lower() if operation_kind else None
+        if overwrite is False:
+            return operation
+        if (operation is None or operation in {"create_file", "file_create", "directory_generate"}) and Path(str(file_path)).expanduser().exists():
+            return "file_replace"
+        return operation or "create_file"
 
     def _requires_confirmation(self, tool_name: str, need: DecisionNeedMetadata) -> bool:
         return self.guard.requires_confirmation(tool_name, need, self.registry)
@@ -361,6 +435,13 @@ class ToolRouter:
             return Path(str(path_value)).expanduser().is_dir()
         except OSError:
             return False
+
+    def _looks_like_non_executable_file_need(self, need: DecisionNeedMetadata) -> bool:
+        language = str(need.attributes.get("language") or "").lower()
+        if language and language not in {"bash", "python", "shell"}:
+            return True
+        target_path = need.target_path or need.attributes.get("file_path")
+        return bool(target_path and Path(str(target_path)).suffix.lower() in NON_EXECUTABLE_FILE_SUFFIXES)
 
     def _decision_reason(self, tool_name: str, need: DecisionNeedMetadata) -> str:
         unlock = f" to unlock {need.decision_to_unlock}" if need.decision_to_unlock else ""
@@ -410,7 +491,10 @@ class EditGuard:
 
     def approve(self, state: RuntimeStateMetadata, edit_plan: EditPlanMetadata) -> GuardDecisionMetadata:
         missing_evidence = self._missing_evidence(edit_plan)
-        over_budget = len(set(edit_plan.target_files)) + state.budget.file_edits_used > state.budget.max_file_edits
+        target_count = len(set(edit_plan.target_files))
+        budget_kind = str(edit_plan.attributes.get("budget_kind") or "file_edit")
+        over_edit_budget = budget_kind != "file_create" and target_count + state.budget.file_edits_used > state.budget.max_file_edits
+        over_create_budget = budget_kind == "file_create" and target_count + state.budget.file_creates_used > state.budget.max_file_creates
         unselected = [file_path for file_path in edit_plan.target_files if file_path not in state.selected_files]
         missing_verification = not edit_plan.verification
         high_risk_without_constraints = (
@@ -427,10 +511,14 @@ class EditGuard:
                 required_evidence=missing_evidence,
                 required_verification=edit_plan.verification,
             )
-        if over_budget:
+        if over_edit_budget or over_create_budget:
             return GuardDecisionMetadata(
                 approved=False,
-                reason="Edit plan exceeds the runtime file edit budget.",
+                reason=(
+                    "Edit plan exceeds the runtime file create budget."
+                    if over_create_budget
+                    else "Edit plan exceeds the runtime file edit budget."
+                ),
                 risk_level=edit_plan.risk_level,
                 blocked_files=edit_plan.target_files,
                 required_evidence=[],
@@ -500,10 +588,12 @@ class StateUpdater:
         input_params = selection.input_metadata.to_params()
         output_metadata = getattr(execution_result, "output_metadata", None)
         error = getattr(getattr(execution_result, "error", None), "error_message", None)
+        file_create = tool_name == "file_writer" and str(input_params.get("operation_kind") or "").lower() in FILE_CREATE_OPERATIONS
 
         state.budget.consume_tool_call(
             file_read=tool_name in READ_TOOLS,
-            file_edit=tool_name in WRITE_TOOLS,
+            file_edit=tool_name in WRITE_TOOLS and not file_create,
+            file_create=file_create,
         )
         state.record_tool_event(
             {
@@ -748,7 +838,7 @@ class _RuntimeSessionExecutor:
                 current_stage="Semantic Analysis",
             )
             with runtime.tracker.track_task("Semantic Analysis", {"goal": goal}):
-                semantic = runtime.semantic_analyzer.analyze_goal(goal)
+                semantic = self._analyze_goal(goal)
 
             stage_statuses["Semantic Analysis"] = "completed"
             runtime.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
@@ -926,7 +1016,7 @@ class _RuntimeSessionExecutor:
             runtime._show_start_panel(goal)
 
             runtime.console.print("[bold cyan]🧠 Analyzing goal...[/bold cyan]")
-            semantic = runtime.semantic_analyzer.analyze_goal(goal)
+            semantic = self._analyze_goal(goal)
             runtime.console.print(f"  • Task type: [cyan]{semantic.task_type.value}[/cyan]")
             runtime.console.print(
                 f"  • Risk level: [{'red' if semantic.risk_level.value == 'high' else 'yellow' if semantic.risk_level.value == 'medium' else 'green'}]{semantic.risk_level.value}[/]"
@@ -1035,6 +1125,30 @@ class _RuntimeSessionExecutor:
             )
             self._log("session_failed", success=False, error=str(exc))
             raise
+
+    def _analyze_goal(self, goal: str) -> Any:
+        runtime = self.runtime
+        analyzer = runtime.semantic_analyzer
+        try:
+            return analyzer.analyze_goal(goal)
+        except (InvalidLLMResponseError, LLMProviderError, LLMTimeoutError) as exc:
+            fallback = getattr(analyzer, "fallback_goal_analysis", None)
+            if not callable(fallback):
+                raise
+            semantic = fallback(goal, type(exc).__name__)
+            self._log(
+                "semantic_analysis_fallback",
+                success=True,
+                input_summary={"goal": goal, "reason": str(exc)},
+                output_summary={"task_type": semantic.task_type.value},
+                level="WARNING",
+            )
+            if runtime.enhanced_ui:
+                runtime.enhanced_ui.log_activity(
+                    "warning",
+                    f"Semantic analysis fallback: {type(exc).__name__}",
+                )
+            return semantic
 
     def _enrich_context(self, context: dict[str, Any], goal: str, semantic: Any, memories: Any) -> None:
         context["semantic_analysis"] = semantic.model_dump()
@@ -1463,13 +1577,30 @@ class AgentRuntimeController:
 
     def _runtime_result(self, state: RuntimeStateMetadata, session_result: dict[str, Any]) -> dict[str, Any]:
         report = self.reporter.report(state)
-        return {
+        result = {
             "success": bool(session_result.get("success")),
             "goal": state.goal,
             "agent_runtime_state": state.to_json_dict(),
             "runtime_report": report.to_json_dict(),
             "session_result": session_result,
         }
+        for key in (
+            "failure_reason",
+            "failure_stage",
+            "failed_tool",
+            "failed_call_id",
+            "failed_step_id",
+            "task_id",
+            "task_description",
+            "file_path",
+            "error_type",
+            "suggested_recovery",
+            "response_preview",
+        ):
+            value = session_result.get(key)
+            if value not in (None, "", [], {}):
+                result[key] = value
+        return result
 
     def handle_streamed_need(self, need: DecisionNeedMetadata) -> list[ToolSelection]:
         """Interrupt generation for one need and route it through the runtime state."""

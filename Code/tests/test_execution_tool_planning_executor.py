@@ -10,6 +10,7 @@ from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskE
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from autonomous_iteration.runtime_controller import EditGuard, FileSelector, RuntimeVerifier, StateUpdater, ToolRouter
 from autonomous_iteration.tool_io import ExecutionToolIO
+from core.exceptions import ErrorCategory, InvalidLLMResponseError, LLMProviderError
 from metadata import AgentPhase, CodeArtifactMetadata, FileArtifactMetadata, ResultStatus, RuntimeStateMetadata, TaskResultMetadata, TextArtifactMetadata, ToolResultMetadata
 from tools.file_reader import FILE_READER_DEFINITION
 from tools.multi_file_reader import MULTI_FILE_READER_DEFINITION
@@ -33,6 +34,24 @@ class FakeLLM:
         if isinstance(payload, str):
             return SimpleNamespace(parsed_json=None, content=payload)
         return SimpleNamespace(parsed_json=payload, content=json.dumps(payload))
+
+
+class InvalidJSONLLM:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def complete(self, request):
+        self.requests.append(request)
+        raise InvalidLLMResponseError("LLM returned invalid JSON after repair attempts.")
+
+
+class TransportFailureLLM:
+    def __init__(self) -> None:
+        self.requests = []
+
+    def complete(self, request):
+        self.requests.append(request)
+        raise LLMProviderError("incomplete chunked read", category=ErrorCategory.NETWORK, retryable=True)
 
 
 class FakeToolRegistry:
@@ -230,6 +249,63 @@ class InvalidMultiFileReaderExecutor(FakeToolExecutor):
         return super().execute_single(selection, context)
 
 
+class TimeoutThenSuccessExecutor(FakeToolExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self._timed_out = False
+
+    def execute_single(self, selection, context=None):
+        if selection.tool_name == "code_generator" and not self._timed_out:
+            self._timed_out = True
+            self.selections.append(selection)
+            return SimpleNamespace(
+                success=False,
+                output_metadata=None,
+                error=SimpleNamespace(
+                    error_type="LLMTimeoutError",
+                    error_message="provider read operation timed out",
+                    recoverable=True,
+                    retry_recommended=True,
+                ),
+                execution_time_ms=1,
+            )
+        return super().execute_single(selection, context)
+
+
+class TimeoutUntilLocalFallbackExecutor(FakeToolExecutor):
+    def execute_single(self, selection, context=None):
+        if selection.tool_name == "code_generator":
+            self.selections.append(selection)
+            prompt_context = selection.input_metadata.prompt_context
+            if not prompt_context.get("local_fallback_after_provider_failure"):
+                return SimpleNamespace(
+                    success=False,
+                    output_metadata=None,
+                    error=SimpleNamespace(
+                        error_type="LLMTimeoutError",
+                        error_message="provider read operation timed out",
+                        recoverable=True,
+                        retry_recommended=True,
+                    ),
+                    execution_time_ms=1,
+                )
+            return SimpleNamespace(
+                success=True,
+                output_metadata=ToolResultMetadata(
+                    tool_name="code_generator",
+                    status=ResultStatus.SUCCESS,
+                    result=CodeArtifactMetadata(
+                        code="print('local fallback')",
+                        language="python",
+                        attributes={"generation_mode": "local_fallback"},
+                    ),
+                ),
+                error=None,
+                execution_time_ms=1,
+            )
+        return super().execute_single(selection, context)
+
+
 class FakeRuntime:
     def __init__(self, tmp_path, payload) -> None:
         self.session_id = "session"
@@ -329,13 +405,69 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
     assert result.result_metadata.result.attributes["all_tools_succeeded"] is True
     assert result.result_metadata.result.attributes["tool_results"][1]["input_metadata"]["content"] == "print('ok')"
     assert result.result_metadata.result.attributes["tool_results"][1]["tool_context"]["git_snapshot"]["commit_hash"] == "abc1234"
-    assert runtime.tool_executor.selections[1].input_metadata.to_params() == {"file_path": "app.py", "content": "print('ok')"}
+    assert runtime.tool_executor.selections[1].input_metadata.to_params() == {
+        "file_path": "app.py",
+        "content": "print('ok')",
+        "operation_kind": "create_file",
+    }
     payloads = [
         json.loads(line)["payload"]
         for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     assert any(payload.get("source_type") == "agent" for payload in payloads)
     assert any(payload.get("source_name") == "autonomous_iteration.agents.tool_planning_executor" for payload in payloads)
+
+
+def test_tool_planning_defaults_missing_question_and_normalizes_readme_path(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path, {})
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    tool_requests = executor._parse_decision_needs(
+        SimpleNamespace(
+            parsed_json={
+                "decision_needs": [
+                    {
+                        "need_type": "readme_generation",
+                        "target_path": str(tmp_path / "README.md"),
+                        "attributes": {"content": "# Usage\n"},
+                    }
+                ]
+            },
+            content="",
+        )
+    )
+
+    assert tool_requests[0]["tool_name"] == "readme_tool"
+    assert tool_requests[0]["reason"] == f"readme_generation: {tmp_path / 'README.md'}"
+    assert tool_requests[0]["input_metadata"]["project_path"] == str(tmp_path)
+
+
+def test_tool_planning_moves_tool_input_fields_for_bug_fix_need(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path, {})
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    tool_requests = executor._parse_decision_needs(
+        SimpleNamespace(
+            parsed_json={
+                "decision_needs": [
+                    {
+                        "need_type": "bug_fix_tool",
+                        "question": "Fix the failing assistant test.",
+                        "command": "python test_assistant.py",
+                        "file_paths": ["assistant.py", "test_assistant.py"],
+                        "timeout": 30,
+                        "max_iterations": 5,
+                    }
+                ]
+            },
+            content="",
+        )
+    )
+
+    assert tool_requests[0]["tool_name"] == "bug_fix_tool"
+    assert tool_requests[0]["input_metadata"]["file_paths"] == ["assistant.py", "test_assistant.py"]
+    assert tool_requests[0]["input_metadata"]["max_iterations"] == 5
+    assert tool_requests[0]["timeout_override"] == 30
 
 
 def test_tool_planning_executor_chains_code_unit_to_patch_writer(tmp_path) -> None:
@@ -407,6 +539,7 @@ def test_tool_event_loop_recovers_from_text_language_code_generator(tmp_path) ->
     result = executor.execute_task(task, _context(task))
 
     assert result.status == TaskStatus.COMPLETED
+    assert result.error is None
     attrs = result.result_metadata.result.attributes
     assert attrs["all_tools_succeeded"] is True
     assert len(runtime.llm_client.requests) == 2
@@ -416,6 +549,86 @@ def test_tool_event_loop_recovers_from_text_language_code_generator(tmp_path) ->
     loop = attrs["tool_loop"]
     assert loop["recoverable_errors"][0]["error_type"] == "UnsupportedLanguage"
     assert any(event["event_type"] == "error" for event in loop["events"])
+
+
+def test_tool_event_loop_retries_recoverable_code_generator_timeout(tmp_path) -> None:
+    task = Task(id="task", description="Generate app")
+    decision = {
+        "decision_needs": [
+            {
+                "need_type": "code_generation",
+                "question": "generate app",
+                "attributes": {"task_description": "make app", "language": "python"},
+            },
+            {
+                "need_type": "file_write",
+                "question": "write app",
+                "target_path": str(tmp_path / "app.py"),
+            },
+        ]
+    }
+    runtime = FakeRuntime(tmp_path, [decision, decision])
+    runtime.tool_executor = TimeoutThenSuccessExecutor()
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "code_generator",
+        "code_generator",
+        "file_writer",
+    ]
+    assert len(runtime.llm_client.requests) == 1
+    loop = result.result_metadata.result.attributes["tool_loop"]
+    assert loop["recoverable_errors"][0]["error_type"] == "LLMTimeoutError"
+    assert "bounded request" in loop["recoverable_errors"][0]["suggested_recovery"]
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(entry["event_type"] == "tool_loop_direct_retry_scheduled" for entry in entries)
+
+
+def test_tool_event_loop_uses_local_code_fallback_after_repeated_provider_timeout(tmp_path) -> None:
+    task = Task(id="task", description="Generate app")
+    decision = {
+        "decision_needs": [
+            {
+                "need_type": "code_generation",
+                "question": "generate app",
+                "attributes": {"task_description": "make app", "language": "python"},
+            },
+            {
+                "need_type": "file_write",
+                "question": "write app",
+                "target_path": str(tmp_path / "app.py"),
+            },
+        ]
+    }
+    runtime = FakeRuntime(tmp_path, decision)
+    runtime.tool_executor = TimeoutUntilLocalFallbackExecutor()
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "code_generator",
+        "code_generator",
+        "code_generator",
+        "file_writer",
+    ]
+    fallback_selection = runtime.tool_executor.selections[2]
+    assert fallback_selection.input_metadata.prompt_context["local_fallback_after_provider_failure"] is True
+    writer_selection = runtime.tool_executor.selections[3]
+    assert writer_selection.input_metadata.content == "print('local fallback')"
+    assert len(runtime.llm_client.requests) == 1
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(entry["event_type"] == "tool_loop_local_fallback_scheduled" for entry in entries)
 
 
 def test_tool_event_loop_emits_lifecycle_events_to_ui_hook(tmp_path) -> None:
@@ -946,6 +1159,28 @@ def test_tool_event_loop_rejects_chinese_placeholder_file_content(tmp_path) -> N
     assert "generated placeholder" in result.tool_results[0]["error"]
 
 
+def test_tool_event_loop_allows_config_placeholder_inside_substantive_code(tmp_path) -> None:
+    task = Task(id="task", description="Write generated app")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    content = "API_KEY = 'YOUR_API_KEY_PLACEHOLDER'\n\ndef main():\n    print('ok')\n"
+    executor._parse_decision_needs = lambda _response: [  # type: ignore[method-assign]
+        {
+            "tool_name": "file_writer",
+            "reason": "write implementation",
+            "input_metadata": {
+                "file_path": str(tmp_path / "assistant.py"),
+                "content": content,
+            },
+        }
+    ]
+
+    result = ToolEventLoopRunner(executor, max_steps=1).run(task, "prompt")
+
+    assert result.success is True
+    assert result.tool_results[0]["success"] is True
+
+
 def test_tool_event_loop_auto_verifies_file_writer_when_runtime_state_is_active(tmp_path) -> None:
     task = Task(id="task", description="Generate and write app")
     runtime = FakeRuntime(
@@ -1036,6 +1271,109 @@ def test_tool_planning_executor_invalid_or_empty_plan_returns_failed_result(tmp_
 
     assert result.status == TaskStatus.FAILED
     assert result.error == "LLM generated empty decision_needs plan"
+
+
+def test_tool_planning_executor_falls_back_for_unroutable_actionable_plan(tmp_path) -> None:
+    package = tmp_path / "assistant"
+    package.mkdir()
+    target_file = package / "core.py"
+    target_file.write_text(
+        "class Assistant:\n"
+        "    def respond(self, text):\n"
+        "        return text\n",
+        encoding="utf-8",
+    )
+    task = Task(id="task", description="Implement core assistant logic and command parsing loop")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "assistant_logic",
+                    "question": "decide how to implement the assistant core",
+                }
+            ]
+        },
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+    context = TaskExecutionContext(
+        task=task,
+        parent_context={"goal": f"build app in '{tmp_path}'"},
+        shared_state={},
+        execution_history=[],
+    )
+
+    result = executor.execute_task(task, context)
+
+    assert result.status == TaskStatus.COMPLETED
+    selections = runtime.tool_executor.selections
+    assert [selection.tool_name for selection in selections] == [
+        "code_generator",
+        "file_writer",
+        "command_executor",
+    ]
+    writer_input = selections[1].input_metadata.to_params()
+    assert writer_input["file_path"] == str(target_file)
+    assert writer_input["operation_kind"] == "file_replace"
+    assert writer_input["content"] == "print('ok')"
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(entry["event_type"] == "decision_need_fallback_plan" for entry in entries)
+
+
+def test_tool_planning_executor_falls_back_after_invalid_json_repair_exhaustion(tmp_path) -> None:
+    task = Task(id="task", description="Implement app.py and validate it")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    runtime.llm_client = InvalidJSONLLM()
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "code_generator",
+        "file_writer",
+        "command_executor",
+    ]
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    fallback_entries = [entry for entry in entries if entry["event_type"] == "decision_need_fallback_plan"]
+    assert fallback_entries
+    assert "invalid JSON" in fallback_entries[0]["payload"]["input_summary"]["reason"]
+
+
+def test_tool_planning_executor_falls_back_after_transport_failure(tmp_path) -> None:
+    task = Task(id="task", description="Implement app.py with README documentation")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    runtime.llm_client = TransportFailureLLM()
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "code_generator",
+        "file_writer",
+        "command_executor",
+    ]
+
+
+def test_tool_planning_executor_validation_fallback_does_not_regenerate_code(tmp_path) -> None:
+    task = Task(id="task", description="Test: validate the generated app")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    runtime.llm_client = TransportFailureLLM()
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == ["command_executor"]
+    command = runtime.tool_executor.selections[0].input_metadata.command
+    assert command == f"python -m compileall {tmp_path}"
 
 
 def test_tool_planning_executor_bad_json_returns_failed_result(tmp_path) -> None:

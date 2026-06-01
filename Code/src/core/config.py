@@ -100,3 +100,17 @@ class EmbeddingSettings(BaseSettings):
             raise MissingAPIKeyError(
                 f"Missing embedding configuration: {', '.join(missing)}."
             )
+
+
+class ModelHealthSettings(BaseSettings):
+    """Startup connectivity probe settings for configured model endpoints."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
+
+    enabled: bool = Field(default=True, alias="OPENPILOT_MODEL_HEALTHCHECK_ENABLED")
+    timeout_seconds: float = Field(default=5.0, gt=0, le=30, alias="OPENPILOT_MODEL_HEALTHCHECK_TIMEOUT_SECONDS")

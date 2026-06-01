@@ -26,6 +26,7 @@ from metadata.base import (
     MetadataKind,
     MetadataSource,
     ensure_metadata,
+    json_safe,
     metadata_summary,
 )
 from metadata.bugfix import (
@@ -167,5 +168,6 @@ __all__ = [
     "WarningItemMetadata",
     "artifact_to_tool_input",
     "ensure_metadata",
+    "json_safe",
     "metadata_summary",
 ]

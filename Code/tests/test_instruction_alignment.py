@@ -282,6 +282,32 @@ def test_enhanced_cli_failure_details_extract_from_task_result_metadata() -> Non
     assert "Tool: tool_planning_executor" in details
 
 
+def test_enhanced_cli_failure_details_extract_from_runtime_session_result() -> None:
+    from ui import enhanced_cli
+
+    details = enhanced_cli._format_failure_details(
+        {
+            "success": False,
+            "session_result": {
+                "success": False,
+                "failure_reason": "Request timed out while generating code",
+                "failure_stage": "Task Executor",
+                "failed_tool": "code_generator",
+                "failed_call_id": "task:r1:c1",
+                "error_type": "LLMTimeoutError",
+                "suggested_recovery": "Retry code generation with a bounded request.",
+            },
+        }
+    )
+
+    assert details.startswith("Request timed out while generating code")
+    assert "Stage: Task Executor" in details
+    assert "Tool: code_generator" in details
+    assert "Call: task:r1:c1" in details
+    assert "Error Type: LLMTimeoutError" in details
+    assert "Recovery: Retry code generation with a bounded request." in details
+
+
 def test_enhanced_cli_failure_details_show_diagnostics_for_tool_and_llm_errors() -> None:
     from types import SimpleNamespace
 

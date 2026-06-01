@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from metadata import (
@@ -22,6 +24,7 @@ from metadata import (
     ReferenceInsightMetadata,
     RelatedProjectFileMetadata,
     ResultStatus,
+    RuntimeStateMetadata,
     SuccessMetricMetadata,
     TaskResultMetadata,
     TaskRouteMetadata,
@@ -38,6 +41,8 @@ from metadata import (
     WarningCheckResultMetadata,
     WarningItemMetadata,
     artifact_to_tool_input,
+    json_safe,
+    metadata_summary,
 )
 
 
@@ -50,6 +55,87 @@ def test_metadata_base_fields_and_json_serialization() -> None:
     assert payload["schema_version"] == "1.0"
     assert payload["code"] == "print('ok')"
     assert payload["content"] == "print('ok')"
+
+
+def test_json_safe_summarizes_callables_and_drops_internal_handles() -> None:
+    class CallbackOwner:
+        def approve(self) -> bool:
+            return True
+
+    owner = CallbackOwner()
+
+    payload = json_safe(
+        {
+            "callback": owner.approve,
+            "_internal_callback": owner.approve,
+            "nested": [owner.approve],
+        }
+    )
+
+    assert payload == {
+        "callback": "<callable:approve>",
+        "nested": ["<callable:approve>"],
+    }
+
+
+def test_metadata_summary_summarizes_callables() -> None:
+    class CallbackOwner:
+        def approve(self) -> bool:
+            return True
+
+    owner = CallbackOwner()
+
+    assert metadata_summary({"callback": owner.approve}) == {"callback": "<callable:approve>"}
+
+
+def test_runtime_state_json_export_handles_method_values() -> None:
+    class CallbackOwner:
+        def approve(self) -> bool:
+            return True
+
+    owner = CallbackOwner()
+    input_metadata = ToolInputMetadata.from_mapping(
+        "command_executor",
+        {
+            "command": "pytest",
+            "_command_approval_callback": owner.approve,
+        },
+    )
+    state = RuntimeStateMetadata(goal="Serialize runtime callbacks")
+    state.annotations["callback"] = owner.approve
+    state.record_tool_event(
+        {
+            "event_type": "tool_run",
+            "input": input_metadata.to_params(),
+            "callback": owner.approve,
+        }
+    )
+
+    payload = state.to_json_dict()
+
+    json.dumps(payload)
+    assert payload["annotations"]["callback"] == "<callable:approve>"
+    assert payload["tool_history"][0]["callback"] == "<callable:approve>"
+    assert "_command_approval_callback" not in payload["tool_history"][0]["input"]
+    assert "runtime_handles" not in input_metadata.to_json_dict()
+    assert callable(input_metadata.runtime_handles["_command_approval_callback"])
+
+
+def test_tool_input_from_mapping_normalizes_llm_aliases_and_preserves_extras() -> None:
+    metadata = ToolInputMetadata.from_mapping(
+        "file_writer",
+        {
+            "file_path": "assistant.py",
+            "content": "print('ok')",
+            "create_intermediate": True,
+            "unexpected_planner_hint": "keep as context",
+        },
+    )
+
+    assert metadata.create_dirs is True
+    assert "create_intermediate" not in metadata.attributes
+    assert metadata.attributes["unexpected_planner_hint"] == "keep as context"
+    assert metadata.to_params()["create_dirs"] is True
 
 
 def test_task_route_metadata_serializes_typed_route_fields() -> None:

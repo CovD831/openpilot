@@ -940,6 +940,7 @@ class AutonomousTaskExecutor:
                 "project_path": str(project_path),
                 "stderr": error_message,
                 "context": error_message,
+                "_memory_store": getattr(self.runtime, "memory_store", None),
             },
         )
         execute_fix = getattr(self.runtime, "_execute_environment_fix_agent_tool", None)

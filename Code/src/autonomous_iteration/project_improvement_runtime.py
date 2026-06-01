@@ -220,6 +220,7 @@ class ProjectImprovementRuntime:
                 "project_path": str(project_path),
                 "stderr": error_message,
                 "context": error_message,
+                "_memory_store": getattr(self.autopilot, "memory_store", None),
             },
         )
         execute_fix = getattr(self.autopilot, "_execute_environment_fix_agent_tool", None)

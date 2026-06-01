@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from openai import OpenAIError
 from rich.console import Console
 
 from agent_generator.data_collector import _build_search_query, collect_data
@@ -21,8 +22,10 @@ from agent_generator.runner import _complete_empty_slots
 from agent_generator.slot_generator import generate_slots
 from core.instrumented_llm import InstrumentedLLMClient
 from core.llm import LLMClient, LLMMessage, LLMRequest
-from core.exceptions import InvalidLLMResponseError
+from core.exceptions import ErrorCategory, InvalidLLMResponseError, LLMProviderError, LLMTimeoutError
 from core.openpilot_log import OpenPilotLogger
+from core.semantic_analyzer import SemanticAnalyzer
+from core.semantic_types import RiskLevel, TaskType
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker
 from metadata import (
@@ -603,6 +606,124 @@ def test_llm_json_mode_invalid_after_retries_raises_clean_error(monkeypatch) -> 
     assert "transport_retry_history" in exc.value.context
 
 
+def test_llm_transport_retries_without_env_proxy_after_network_error(monkeypatch) -> None:
+    class FakeCompletions:
+        def __init__(self, response=None, error: Exception | None = None) -> None:
+            self.response = response
+            self.error = error
+
+        def create(self, **_payload):
+            if self.error:
+                raise self.error
+            return self.response
+
+    class FakeClient:
+        def __init__(self, response=None, error: Exception | None = None) -> None:
+            self.chat = SimpleNamespace(completions=FakeCompletions(response, error))
+
+    monkeypatch.setenv("all_proxy", "http://127.0.0.1:7892")
+    client = LLMClient(FakeLLMSettings())
+    direct_response = _fake_chat_response('{"ok": true}')
+    direct_client = FakeClient(response=direct_response)
+    fallback_calls = []
+
+    def fake_make_openai_client(*, trust_env: bool = True):
+        fallback_calls.append(trust_env)
+        return direct_client
+
+    monkeypatch.setattr(client, "_make_openai_client", fake_make_openai_client)
+    monkeypatch.setattr(client, "_classify_provider_error", lambda _exc: ErrorCategory.NETWORK)
+
+    response = client._create_completion_with_transport_retry(
+        FakeClient(error=OpenAIError("Connection error.")),
+        {"model": "fake-model", "messages": []},
+    )
+
+    assert response is direct_response
+    assert fallback_calls == [False]
+    assert client._last_transport_retry_history[-1]["reason"] == "env_proxy_fallback"
+    assert client._last_transport_retry_history[-1]["trust_env"] is False
+
+
+def test_llm_transport_retries_incomplete_chunked_reads(monkeypatch) -> None:
+    class FakeCompletions:
+        def __init__(self, response) -> None:
+            self.response = response
+            self.calls = 0
+
+        def create(self, **_payload):
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.RemoteProtocolError("peer closed connection without sending complete message body")
+            return self.response
+
+    response = _fake_chat_response('{"ok": true}')
+    completions = FakeCompletions(response)
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = LLMClient(FakeLLMSettings())
+    client.settings.transport_retries = 1
+
+    result = client._create_completion_with_transport_retry(
+        fake_client,
+        {"model": "fake-model", "messages": []},
+    )
+
+    assert result is response
+    assert completions.calls == 2
+    assert client._last_transport_retry_history[0]["category"] == ErrorCategory.NETWORK.value
+    assert client._last_transport_retry_history[0]["retryable"] is True
+
+
+def test_llm_openai_client_disables_sdk_level_retries(monkeypatch) -> None:
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr("core.llm.OpenAI", FakeOpenAI)
+    client = LLMClient(FakeLLMSettings())
+
+    client._make_openai_client()
+
+    assert captured["max_retries"] == 0
+
+
+def test_llm_request_can_override_timeout_and_transport_retry_budget(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    calls = []
+
+    def fake_create(_openai_client, payload, *, transport_retries=None):
+        calls.append((payload, transport_retries))
+        return _fake_chat_response('{"ok": true}')
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="bounded")],
+            response_format="json_object",
+            timeout_seconds=4.0,
+            transport_retries=0,
+        )
+    )
+
+    assert response.parsed_json == {"ok": True}
+    assert calls[0][0]["timeout"] == 4.0
+    assert calls[0][1] == 0
+
+
+def test_semantic_analyzer_local_fallback_classifies_multilingual_code_goal() -> None:
+    analyzer = SemanticAnalyzer(SimpleNamespace())
+
+    analysis = analyzer.fallback_goal_analysis("在目标目录中做一个个人数字助手", "LLMTimeoutError")
+
+    assert analysis.task_type == TaskType.CODING
+    assert analysis.risk_level == RiskLevel.MEDIUM
+    assert "code_execution" in analysis.required_resources
+    assert "LLMTimeoutError" in analysis.reason
+
+
 def test_llm_extracts_text_from_content_parts(monkeypatch) -> None:
     client = LLMClient(FakeLLMSettings())
 
@@ -674,6 +795,61 @@ def test_llm_streaming_json_response_still_parses(monkeypatch) -> None:
     assert response.parsed_json == {"ok": True}
     assert response.content == '{"ok": true}'
     assert any(event.event_type == "delta" for event in events)
+
+
+def test_llm_streaming_uses_provider_timeout_as_default_wall_clock_deadline(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    captured = {}
+
+    def fake_stream(_client, _payload, _callback, *, wall_clock_timeout=None):
+        captured["wall_clock_timeout"] = wall_clock_timeout
+        return _fake_chat_response("done")
+
+    monkeypatch.setattr(client, "_create_streaming_completion_with_transport_retry", fake_stream)
+
+    response = client.complete(
+        LLMRequest(messages=[LLMMessage(role="user", content="bounded stream")]),
+        stream_callback=lambda _event: None,
+    )
+
+    assert response.content == "done"
+    assert captured["wall_clock_timeout"] == FakeLLMSettings.timeout_seconds
+
+
+def test_llm_streaming_wall_clock_timeout_stops_continuous_chunks(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    clock = iter([10.0, 12.0])
+    monkeypatch.setattr("core.llm.time.monotonic", lambda: next(clock))
+
+    with pytest.raises(LLMTimeoutError, match="wall-clock timeout"):
+        client._collect_streaming_completion(
+            [_fake_stream_chunk("still streaming")],
+            lambda _event: None,
+            wall_clock_timeout=1.0,
+        )
+
+
+def test_llm_streaming_wraps_transport_errors_raised_during_iteration() -> None:
+    class BrokenStream:
+        def __iter__(self):
+            yield _fake_stream_chunk("partial")
+            raise httpx.RemoteProtocolError("incomplete chunked read")
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_payload: BrokenStream()),
+        )
+    )
+    client = LLMClient(FakeLLMSettings())
+
+    with pytest.raises(LLMProviderError, match="incomplete chunked read") as exc:
+        client._create_streaming_completion_with_transport_retry(
+            fake_client,
+            {"model": "fake-model", "messages": []},
+            lambda _event: None,
+        )
+
+    assert exc.value.category == ErrorCategory.NETWORK
 
 
 def test_llm_streaming_filters_reasoning_fields_from_visible_delta(monkeypatch) -> None:
@@ -1729,6 +1905,38 @@ def test_web_searcher_continues_from_empty_google_to_bing_without_network() -> N
     assert result["effective_query"] == "openpilot research"
     assert [attempt["status"] for attempt in result["search_attempts"]] == ["empty", "success"]
     assert result["results"][0]["url"] == "https://example.com/bing-result"
+
+
+def test_web_searcher_continues_to_duckduckgo_and_decodes_redirect_without_network() -> None:
+    duckduckgo_html = """
+    <div class="result">
+      <a class="result__a" href="/l/?uddg=https%3A%2F%2Fpypi.org%2Fproject%2FSpeechRecognition%2F">
+        SpeechRecognition - PyPI
+      </a>
+      <a class="result__snippet">Install the published speech recognition package.</a>
+    </div>
+    """
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        if "google.com/search" in url or "bing.com/search" in url:
+            return "<html><body>No results</body></html>"
+        if "html.duckduckgo.com/html/" in url:
+            return duckduckgo_html
+        raise AssertionError(f"unexpected url: {url}")
+
+    result = web_searcher_executor(
+        {
+            "query": "speech_recognition pypi",
+            "max_pages": 0,
+            "llm_cleanup": False,
+            "max_search_attempts": 3,
+            "_http_get": fake_http_get,
+        }
+    )
+
+    assert result["provider"] == "duckduckgo_html"
+    assert [attempt["status"] for attempt in result["search_attempts"]] == ["empty", "empty", "success"]
+    assert result["results"][0]["url"] == "https://pypi.org/project/SpeechRecognition/"
 
 
 def test_web_searcher_builds_short_query_variants_from_long_slot_query() -> None:

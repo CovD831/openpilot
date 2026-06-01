@@ -102,6 +102,7 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
         )
     ask_user_to_continue = params.get("_ask_user_to_continue")
     command_approval_callback = params.get("_command_approval_callback")
+    progress_callback = params.get("_bug_fix_progress_callback")
 
     allowed_files = _resolve_allowed_files(input_metadata.file_paths, cwd)
     use_terminal_smoke = _should_use_terminal_smoke(allowed_files)
@@ -123,6 +124,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
         warning_check_required=warning_check_required,
     )
     last_warning_check = initial_warning_check
+    _emit_progress(
+        progress_callback,
+        event="initial_validation",
+        iteration=0,
+        budget=max_iterations,
+        success=initial_command.success and not _warning_requires_fix(initial_warning_check),
+        error_summary=_command_error_summary(initial_command),
+    )
     if initial_command.success and not _warning_requires_fix(initial_warning_check):
         result = _bug_fix_result(
             command=command,
@@ -145,6 +154,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
     while True:
         while iteration < budget:
             iteration += 1
+            _emit_progress(
+                progress_callback,
+                event="iteration_started",
+                iteration=iteration,
+                budget=budget,
+                success=False,
+                error_summary=_command_error_summary(last_command_result),
+            )
             file_contents = _read_allowed_files(allowed_files)
             fix_payload = _request_fix(
                 llm_client=llm_client,
@@ -170,6 +187,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                         rationale="invalid fix payload",
                         llm_payload=fix_payload if isinstance(fix_payload, dict) else {"raw": str(fix_payload)},
                     )
+                )
+                _emit_progress(
+                    progress_callback,
+                    event="iteration_completed",
+                    iteration=iteration,
+                    budget=budget,
+                    success=False,
+                    error_summary=str(exc),
                 )
                 result = _bug_fix_result(
                     command=command,
@@ -219,6 +244,15 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                     llm_payload=fix_payload,
                 )
             )
+            _emit_progress(
+                progress_callback,
+                event="iteration_completed",
+                iteration=iteration,
+                budget=budget,
+                success=last_command_result.success and not _warning_requires_fix(latest_warning_check),
+                modified_files=modified_files,
+                error_summary=_command_error_summary(last_command_result),
+            )
             if last_command_result.success and not _warning_requires_fix(latest_warning_check):
                 result = _bug_fix_result(
                     command=command,
@@ -246,12 +280,34 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
             requires_user_decision=True,
         )
         if callable(ask_user_to_continue):
+            _emit_progress(
+                progress_callback,
+                event="continuation_requested",
+                iteration=iteration,
+                budget=budget,
+                success=False,
+                error_summary=_command_error_summary(last_command_result),
+            )
             if _should_continue(ask_user_to_continue, result):
                 result.requires_user_decision = False
                 budget += continuation_iterations
+                _emit_progress(
+                    progress_callback,
+                    event="continuation_approved",
+                    iteration=iteration,
+                    budget=budget,
+                    success=False,
+                )
                 continue
             result.requires_user_decision = False
             result.user_terminated = True
+            _emit_progress(
+                progress_callback,
+                event="terminated",
+                iteration=iteration,
+                budget=budget,
+                success=False,
+            )
             return ToolResultMetadata(
                 tool_name="bug_fix_tool",
                 status=ResultStatus.FAIL,
@@ -264,6 +320,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                 ),
             )
 
+        _emit_progress(
+            progress_callback,
+            event="iteration_limit_reached",
+            iteration=iteration,
+            budget=budget,
+            success=False,
+            error_summary=_command_error_summary(last_command_result),
+        )
         return ToolResultMetadata(
             tool_name="bug_fix_tool",
             status=ResultStatus.FAIL,
@@ -288,6 +352,15 @@ def _positive_int(value: Any, *, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed > 0 else default
+
+
+def _emit_progress(callback: Any, **event: Any) -> None:
+    if not callable(callback):
+        return
+    try:
+        callback(event)
+    except Exception:
+        return
 
 
 def _resolve_allowed_files(file_paths: list[str], cwd: str) -> dict[str, Path]:

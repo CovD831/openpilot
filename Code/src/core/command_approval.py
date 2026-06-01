@@ -38,12 +38,15 @@ class CommandApprovalGate:
         reasons: list[str] = []
         lowered = f" {command.lower()} "
         tokens = _split_command(command)
+        safe_executable_chmod = _is_safe_local_executable_chmod(tokens, cwd)
 
         if re.search(r"(^|\s)(sudo|su)\b", lowered):
             reasons.append("Command requests elevated privileges.")
         if any(token in {">", ">>"} for token in tokens):
             reasons.append("Command writes through shell redirection.")
-        if any(token in {"rm", "chmod", "chown", "kill", "pkill", "shutdown", "reboot"} for token in tokens):
+        if any(token in {"rm", "chown", "kill", "pkill", "shutdown", "reboot"} for token in tokens) or (
+            "chmod" in tokens and not safe_executable_chmod
+        ):
             reasons.append("Command uses a high-risk system or destructive operation.")
         if any(token in {"brew", "apt", "apt-get", "yum", "dnf", "pacman"} for token in tokens):
             reasons.append("Command uses a system package manager.")
@@ -104,7 +107,44 @@ def _split_command(command: str) -> list[str]:
 
 def _writes_system_path(command: str) -> bool:
     lowered = command.lower()
-    return any(path in lowered for path in ("/usr/", "/system/", "/library/", "/opt/homebrew/"))
+    system_paths = (
+        "/bin/",
+        "/etc/",
+        "/library/",
+        "/opt/homebrew/",
+        "/sbin/",
+        "/system/",
+        "/usr/",
+        "/var/",
+    )
+    return any(re.search(rf"(^|[\\s'\"=]){re.escape(path)}", lowered) for path in system_paths)
+
+
+def _is_safe_local_executable_chmod(tokens: list[str], cwd: str) -> bool:
+    if len(tokens) != 3 or Path(tokens[0]).name != "chmod":
+        return False
+    if tokens[1] not in {"+x", "a+x", "u+x", "ug+x", "ugo+x"}:
+        return False
+
+    target = Path(tokens[2]).expanduser()
+    if not target.is_absolute():
+        target = Path(cwd or ".").expanduser() / target
+    if target.is_symlink():
+        return False
+    try:
+        resolved = target.resolve()
+    except OSError:
+        return False
+    if not resolved.exists() or not resolved.is_file():
+        return False
+
+    roots = [Path.home().resolve()]
+    if cwd:
+        try:
+            roots.append(Path(cwd).expanduser().resolve())
+        except OSError:
+            pass
+    return any(resolved == root or root in resolved.parents for root in roots)
 
 
 def _looks_like_global_package_install(tokens: list[str], command: str, cwd: str) -> bool:

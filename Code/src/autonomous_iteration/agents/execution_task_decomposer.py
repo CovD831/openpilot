@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, Callable
 
@@ -121,7 +122,7 @@ class TaskDecomposer:
         # Analyze task and generate decomposition
         decomposition = self._generate_decomposition(original_task, context)
         if self._is_simple_code_artifact(task_description):
-            decomposition["subtasks"] = decomposition.get("subtasks", [])[:3]
+            decomposition["subtasks"] = self._compact_simple_code_subtasks(decomposition.get("subtasks", []))
 
         # Create subtasks
         subtasks = []
@@ -358,7 +359,9 @@ Respond with just a number between 0.0 and 1.0."""
             request = LLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 temperature=0.3,
-                max_tokens=10
+                max_tokens=10,
+                timeout_seconds=15.0,
+                transport_retries=0,
             )
 
             response = self.llm_client.complete(request)
@@ -420,7 +423,9 @@ Guidelines:
                 messages=[LLMMessage(role="user", content=prompt)],
                 response_format="json_object",
                 temperature=0.5,
-                max_tokens=2000
+                max_tokens=2000,
+                timeout_seconds=45.0,
+                transport_retries=0,
             )
 
             response = self.llm_client.complete(request)
@@ -476,8 +481,88 @@ Guidelines:
     def _is_simple_code_artifact(self, task_description: str) -> bool:
         text = task_description.lower()
         has_path = "'" in task_description or '"' in task_description or "/" in task_description
-        code_keywords = ("snake", "贪吃蛇", "game", "小游戏", "script", "脚本", "程序", "app")
+        code_keywords = (
+            "app",
+            "assistant",
+            "cli",
+            "game",
+            "script",
+            "service",
+            "site",
+            "website",
+            "个人数字助手",
+            "小游戏",
+            "工具",
+            "助手",
+            "服务",
+            "程序",
+            "网站",
+            "脚本",
+            "贪吃蛇",
+        )
         return has_path and any(keyword in text for keyword in code_keywords)
+
+    def _compact_simple_code_subtasks(self, subtasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not subtasks:
+            return []
+        actionable = [
+            dict(subtask)
+            for subtask in subtasks
+            if not self._is_planning_subtask(str(subtask.get("description") or ""))
+        ]
+        compact = (actionable or [dict(subtask) for subtask in subtasks])[:3]
+        for index, subtask in enumerate(compact):
+            subtask["dependencies"] = [index - 1] if index > 0 else []
+        return compact
+
+    def _is_planning_subtask(self, description: str) -> bool:
+        text = description.lower()
+        planning_markers = (
+            "analyze requirements",
+            "define",
+            "design",
+            "outline",
+            "plan",
+            "specify",
+            "分析需求",
+            "定义",
+            "梳理",
+            "确定",
+            "规划",
+            "设计",
+        )
+        implementation_markers = (
+            "build",
+            "create",
+            "develop",
+            "fix",
+            "generate",
+            "implement",
+            "run",
+            "test",
+            "update",
+            "validate",
+            "write",
+            "创建",
+            "修复",
+            "实现",
+            "开发",
+            "构建",
+            "生成",
+            "编写",
+            "运行",
+            "验证",
+        )
+        return self._contains_marker(text, planning_markers) and not self._contains_marker(text, implementation_markers)
+
+    def _contains_marker(self, text: str, markers: tuple[str, ...]) -> bool:
+        for marker in markers:
+            if marker.isascii():
+                if re.search(rf"\b{re.escape(marker)}\b", text):
+                    return True
+            elif marker in text:
+                return True
+        return False
 
     def _generate_graph_summary(self, graph: Graph, tasks: list[Task]) -> str:
         """Generate summary of task graph.

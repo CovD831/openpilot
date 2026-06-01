@@ -512,11 +512,19 @@ class EnhancedUI:
         tool_error = self._tool_event_nested(payload, "tool_error")
         failure = self._tool_event_nested(payload, "failure")
         return str(
-            tool_error.get("suggested_recovery")
-            or tool_error.get("error_message")
+            tool_error.get("error_message")
             or failure.get("error_message")
             or tool_call.get("reason")
             or payload.get("reason")
+            or ""
+        )
+
+    def _tool_event_recovery(self, payload: dict[str, Any]) -> str:
+        tool_error = self._tool_event_nested(payload, "tool_error")
+        failure = self._tool_event_nested(payload, "failure")
+        return str(
+            tool_error.get("suggested_recovery")
+            or failure.get("recovery_strategy")
             or ""
         )
 
@@ -559,7 +567,10 @@ class EnhancedUI:
         line.append(f"{message}: {tool_name} ({call_id})", style=style)
         reason = self._tool_event_reason(payload)
         if reason:
-            line.append(f" - {self._shorten_inline(reason, 120)}", style="dim")
+            line.append(f" - {self._shorten_inline(reason, 160)}", style="dim")
+        recovery = self._tool_event_recovery(payload)
+        if recovery and recovery != reason:
+            line.append(f" | Recovery: {self._shorten_inline(recovery, 100)}", style="dim")
         self.console.print(line)
 
     def _shorten_inline(self, value: str, limit: int) -> str:

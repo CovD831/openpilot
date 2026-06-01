@@ -5,8 +5,17 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
+from core.python_packages import (
+    canonical_distribution_name,
+    distribution_for_import,
+    plausible_distribution_alias,
+    replace_requirement_name,
+    requirement_name,
+)
 from core.tool_contracts import PermissionLevel, ToolCapability, ToolDefinition, ToolFailureMode
+from memory.memory_models import MemoryRecord, MemoryType
 from metadata import (
     EnvironmentFailureMetadata,
     EnvironmentFixResultMetadata,
@@ -59,6 +68,10 @@ def environment_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResu
     diagnosis = diagnose_environment_failure(project_path, error_text)
     changed_files: list[str] = []
     repair_actions: list[str] = []
+    replacement_requirement = ""
+    research_queries: list[str] = []
+    research_results: list[dict[str, Any]] = []
+    memory_record_ids: list[str] = []
     applied = False
 
     if diagnosis.error_type == "invalid_requirements_file" and diagnosis.affected_file:
@@ -73,10 +86,45 @@ def environment_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResu
                     f"Removed invalid requirement line(s) from {target.name}: {', '.join(removed)}"
                 )
                 applied = True
+    elif diagnosis.error_type == "unavailable_distribution" and diagnosis.affected_file:
+        target = Path(diagnosis.affected_file).expanduser()
+        if target.exists() and target.is_file():
+            replacement_requirement, research_queries, research_results, recalled_memory_ids = (
+                _resolve_distribution_alias(
+                    diagnosis.failed_requirement,
+                    memory_store=params.get("_memory_store"),
+                    web_searcher=params.get("_web_searcher"),
+                )
+            )
+            memory_record_ids.extend(recalled_memory_ids)
+            if replacement_requirement:
+                original = target.read_text(encoding=str(params.get("encoding") or "utf-8"))
+                updated, replaced_lines = _replace_requirement(
+                    original,
+                    diagnosis.failed_requirement,
+                    replacement_requirement,
+                )
+                if updated != original:
+                    target.write_text(updated, encoding=str(params.get("encoding") or "utf-8"))
+                    changed_files.append(str(target))
+                    repair_actions.append(
+                        f"Replaced unavailable distribution {diagnosis.failed_requirement!r} "
+                        f"with {replacement_requirement!r} in {target.name}: {', '.join(replaced_lines)}"
+                    )
+                    applied = True
+                    memory_record_id = _remember_resolved_distribution_alias(
+                        params.get("_memory_store"),
+                        diagnosis.failed_requirement,
+                        replacement_requirement,
+                        research_queries,
+                        research_results,
+                    )
+                    if memory_record_id and memory_record_id not in memory_record_ids:
+                        memory_record_ids.append(memory_record_id)
 
     command_executed = False
     user_declined = False
-    if not applied and diagnosis.suggested_command:
+    if not applied and diagnosis.error_type == "environment_setup_failed" and diagnosis.suggested_command:
         try:
             command_result = command_executor(
                 ToolInputMetadata.from_mapping(
@@ -109,6 +157,10 @@ def environment_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResu
         applied=applied,
         changed_files=changed_files,
         repair_actions=repair_actions,
+        replacement_requirement=replacement_requirement,
+        research_queries=research_queries,
+        research_results=research_results,
+        memory_record_ids=memory_record_ids,
         suggested_command=diagnosis.suggested_command,
         command_executed=command_executed,
         requires_confirmation=diagnosis.requires_confirmation,
@@ -130,6 +182,10 @@ def environment_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResu
             details={
                 "root_cause": diagnosis.root_cause,
                 "affected_file": diagnosis.affected_file,
+                "failed_requirement": diagnosis.failed_requirement,
+                "replacement_requirement": replacement_requirement,
+                "research_queries": research_queries,
+                "research_results": research_results,
                 "suggested_command": diagnosis.suggested_command,
                 "pip_notices": diagnosis.pip_notices,
             },
@@ -160,6 +216,29 @@ def diagnose_environment_failure(project_path: Path, error_text: str) -> Environ
             line_number=line_number,
             pip_notices=pip_notices,
             suggested_command=f"Fix invalid requirement in {affected_file}, then rerun pip install -r requirements.txt",
+            requires_confirmation=False,
+        )
+
+    unavailable_distribution = re.search(
+        r"(?:Could not find a version that satisfies the requirement|No matching distribution found for)"
+        r"\s+(?P<requirement>[^\s(]+)",
+        str(error_text),
+        flags=re.IGNORECASE,
+    )
+    if unavailable_distribution:
+        failed_requirement = requirement_name(unavailable_distribution.group("requirement"))
+        affected_file = _extract_existing_requirements_path(project_path, str(error_text))
+        return EnvironmentFailureMetadata(
+            raw_stderr=str(error_text or ""),
+            root_cause=root_cause,
+            error_type="unavailable_distribution",
+            affected_file=affected_file,
+            failed_requirement=failed_requirement,
+            pip_notices=pip_notices,
+            suggested_command=(
+                f"Replace unavailable distribution {failed_requirement!r} with its published package name, "
+                "then rerun pip install -r requirements.txt"
+            ),
             requires_confirmation=False,
         )
 
@@ -210,6 +289,159 @@ def _sanitize_requirements(content: str, line_number: int | None) -> tuple[str, 
             continue
         updated.append(line)
     return "".join(updated), removed
+
+
+def _replace_requirement(content: str, failed_requirement: str, replacement: str) -> tuple[str, list[str]]:
+    lines = content.splitlines(keepends=True)
+    updated: list[str] = []
+    replaced_lines: list[str] = []
+    for index, line in enumerate(lines, start=1):
+        if canonical_distribution_name(requirement_name(line)) == canonical_distribution_name(failed_requirement):
+            replacement_line = replace_requirement_name(line, replacement)
+            updated.append(replacement_line)
+            replaced_lines.append(f"{index}: {line.strip()} -> {replacement_line.strip()}")
+            continue
+        updated.append(line)
+    return "".join(updated), replaced_lines
+
+
+def _resolve_distribution_alias(
+    failed_requirement: str,
+    *,
+    memory_store: Any = None,
+    web_searcher: Any = None,
+) -> tuple[str, list[str], list[dict[str, Any]], list[str]]:
+    remembered_alias, memory_ids = _recall_resolved_distribution_alias(memory_store, failed_requirement)
+    if remembered_alias:
+        return remembered_alias, [], [{"source": "memory", "candidate": remembered_alias}], memory_ids
+
+    query = f"site:pypi.org/project {failed_requirement} Python package install"
+    research_results = _search_distribution_alias(query, web_searcher=web_searcher)
+    for research_result in research_results:
+        candidate = str(research_result.get("candidate") or "")
+        if plausible_distribution_alias(failed_requirement, candidate):
+            return candidate, [query], research_results, []
+
+    known_distribution = distribution_for_import(failed_requirement)
+    if known_distribution != failed_requirement and plausible_distribution_alias(failed_requirement, known_distribution):
+        research_results.append({"source": "known_import_alias", "candidate": known_distribution})
+        return known_distribution, [query], research_results, []
+    return "", [query], research_results, []
+
+
+def _search_distribution_alias(query: str, *, web_searcher: Any = None) -> list[dict[str, Any]]:
+    try:
+        if callable(web_searcher):
+            search_output = web_searcher(query)
+        else:
+            from tools.web_searcher import web_searcher_executor
+
+            search_result = web_searcher_executor(
+                ToolInputMetadata.from_mapping(
+                    "web_searcher",
+                    {
+                        "query": query,
+                        "max_results": 5,
+                        "max_pages": 0,
+                        "max_search_attempts": 3,
+                        "search_budget_seconds": 6,
+                        "timeout": 3,
+                        "llm_cleanup": False,
+                    },
+                )
+            )
+            search_output = search_result.result
+    except Exception as exc:
+        return [{"source": "web_search", "error": str(exc)}]
+
+    if hasattr(search_output, "results"):
+        results = list(getattr(search_output, "results") or [])
+    elif isinstance(search_output, dict):
+        results = list(search_output.get("results") or [])
+    elif isinstance(search_output, list):
+        results = list(search_output)
+    else:
+        results = []
+
+    research_results = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "")
+        candidate = _pypi_project_name(url)
+        research_results.append(
+            {
+                "source": "web_search",
+                "url": url,
+                "title": str(item.get("title") or ""),
+                "candidate": candidate,
+            }
+        )
+    return research_results
+
+
+def _pypi_project_name(url: str) -> str:
+    parsed = urlparse(str(url or ""))
+    if parsed.netloc.lower().removeprefix("www.") != "pypi.org":
+        return ""
+    match = re.match(r"^/project/([^/]+)/?", parsed.path)
+    return unquote(match.group(1)) if match else ""
+
+
+def _recall_resolved_distribution_alias(memory_store: Any, failed_requirement: str) -> tuple[str, list[str]]:
+    if not memory_store or not hasattr(memory_store, "load_all"):
+        return "", []
+    try:
+        memories = memory_store.load_all(MemoryType.REFERENCE)
+    except Exception:
+        return "", []
+    for memory in reversed(memories):
+        attributes = dict(getattr(memory, "attributes", {}) or {})
+        if (
+            attributes.get("bug_kind") == "python_distribution_alias"
+            and attributes.get("failed_requirement") == failed_requirement
+        ):
+            replacement = str(attributes.get("replacement_requirement") or "")
+            if plausible_distribution_alias(failed_requirement, replacement):
+                return replacement, [str(getattr(memory, "id", "") or "")]
+    return "", []
+
+
+def _remember_resolved_distribution_alias(
+    memory_store: Any,
+    failed_requirement: str,
+    replacement_requirement: str,
+    research_queries: list[str],
+    research_results: list[dict[str, Any]],
+) -> str:
+    if not memory_store or not hasattr(memory_store, "save"):
+        return ""
+    existing, memory_ids = _recall_resolved_distribution_alias(memory_store, failed_requirement)
+    if existing == replacement_requirement and memory_ids:
+        return memory_ids[0]
+    try:
+        saved = memory_store.save(
+            MemoryRecord(
+                id="",
+                memory_type=MemoryType.REFERENCE,
+                content=(
+                    f"Resolved Python dependency alias: install {replacement_requirement!r} "
+                    f"when code imports or requirements request {failed_requirement!r}."
+                ),
+                tags=["resolved_bug", "python_packaging", "dependency_alias", failed_requirement],
+                confidence=0.96,
+                attributes={
+                    "bug_kind": "python_distribution_alias",
+                    "failed_requirement": failed_requirement,
+                    "replacement_requirement": replacement_requirement,
+                    "research_queries": research_queries,
+                    "research_results": research_results,
+                },
+            )
+        )
+    except Exception:
+        return ""
+    return str(getattr(saved, "id", "") or "")
 
 
 def _looks_like_requirement(value: str) -> bool:

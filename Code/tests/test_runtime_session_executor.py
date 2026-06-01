@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from rich.console import Console
 
 from autonomous_iteration.task_models import Task, TaskDecompositionResult, TaskExecutionResult, TaskStatus
+from core.exceptions import LLMProviderError
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.runtime_controller import _RuntimeSessionExecutor
 from metadata import (
@@ -62,6 +63,18 @@ class FakeMemoryStore:
 
 class FakeSemanticAnalyzer:
     def analyze_goal(self, goal):
+        return FakeSemantic()
+
+
+class FallbackSemanticAnalyzer:
+    def __init__(self) -> None:
+        self.fallback_calls = []
+
+    def analyze_goal(self, goal):
+        raise LLMProviderError("temporary provider failure", retryable=True)
+
+    def fallback_goal_analysis(self, goal, reason):
+        self.fallback_calls.append((goal, reason))
         return FakeSemantic()
 
 
@@ -254,6 +267,19 @@ def test_runtime_session_fast_path_skips_decomposition(tmp_path) -> None:
 
     assert result == {"success": True, "fast": True}
     assert runtime.task_decomposer.decompose_called is False
+
+
+def test_runtime_session_falls_back_when_semantic_llm_is_temporarily_unavailable(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path)
+    runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
+    runtime.semantic_analyzer = FallbackSemanticAnalyzer()
+    executor = _RuntimeSessionExecutor(runtime)
+
+    result = executor.run("Build app", {}, mode="standard")
+
+    assert result["success"] is True
+    assert runtime.semantic_analyzer.fallback_calls == [("Build app", "LLMProviderError")]
+    assert any("Semantic analysis fallback" in message for _level, message in runtime.enhanced_ui.activities)
 
 
 def test_runtime_session_surfaces_autonomous_iteration_failure(tmp_path) -> None:

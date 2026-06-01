@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Any, Callable, Literal
 
+import httpx
 from openai import APITimeoutError, OpenAI, OpenAIError
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -35,6 +37,8 @@ class LLMRequest(BaseModel):
     response_format: Literal["text", "json_object"] = "text"
     temperature: float | None = None
     max_tokens: int | None = None
+    timeout_seconds: float | None = Field(default=None, gt=0)
+    transport_retries: int | None = Field(default=None, ge=0)
     trace_info: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -119,21 +123,19 @@ class LLMClient:
                 return cached
 
         self.settings.require_ready()
-        client = OpenAI(
-            api_key=self.settings.api_key,
-            base_url=self.settings.base_url,
-            timeout=self.settings.timeout_seconds,
-        )
+        client = self._make_openai_client()
 
         last_error = None
         repair_messages = list(request.messages)
         for attempt in range(max_retries):
+            effective_timeout = request.timeout_seconds or self.settings.timeout_seconds
             payload: dict[str, Any] = {
                 "model": self.settings.model,
                 "messages": [message.model_dump() for message in repair_messages],
                 "temperature": request.temperature
                 if request.temperature is not None
                 else self.settings.temperature,
+                "timeout": effective_timeout,
             }
             if request.max_tokens is not None:
                 payload["max_tokens"] = request.max_tokens
@@ -148,14 +150,25 @@ class LLMClient:
                     provider_details={"attempt": attempt + 1},
                 ),
             )
+            transport_kwargs = (
+                {"transport_retries": request.transport_retries}
+                if request.transport_retries is not None
+                else {}
+            )
             if stream_callback is not None:
                 response = self._create_streaming_completion_with_transport_retry(
                     client,
                     payload,
                     stream_callback,
+                    wall_clock_timeout=effective_timeout,
+                    **transport_kwargs,
                 )
             else:
-                response = self._create_completion_with_transport_retry(client, payload)
+                response = self._create_completion_with_transport_retry(
+                    client,
+                    payload,
+                    **transport_kwargs,
+                )
 
             choice = response.choices[0]
             content, content_diagnostics = self._extract_message_content(choice.message)
@@ -341,19 +354,72 @@ class LLMClient:
         client: OpenAI,
         payload: dict[str, Any],
         stream_callback: Callable[[LLMStreamEvent], None],
+        *,
+        transport_retries: int | None = None,
+        wall_clock_timeout: float | None = None,
     ) -> Any:
         streaming_payload = dict(payload)
         streaming_payload["stream"] = True
-        stream = self._create_completion_with_transport_retry(client, streaming_payload)
-        return self._collect_streaming_completion(stream, stream_callback)
+        transport_kwargs = (
+            {"transport_retries": transport_retries}
+            if transport_retries is not None
+            else {}
+        )
+        stream = self._create_completion_with_transport_retry(
+            client,
+            streaming_payload,
+            **transport_kwargs,
+        )
+        try:
+            return self._collect_streaming_completion(
+                stream,
+                stream_callback,
+                wall_clock_timeout=wall_clock_timeout,
+            )
+        except LLMTimeoutError:
+            self._close_stream_quietly(stream)
+            raise
+        except Exception as exc:
+            self._close_stream_quietly(stream)
+            if isinstance(exc, (APITimeoutError, httpx.TimeoutException)):
+                raise LLMTimeoutError(
+                    str(exc),
+                    timeout_seconds=wall_clock_timeout or self.settings.timeout_seconds,
+                ) from exc
+            if not self._is_transport_exception(exc):
+                raise
+            error = LLMProviderError(
+                f"{ErrorCategory.NETWORK}: {exc}",
+                retryable=True,
+                category=ErrorCategory.NETWORK,
+            )
+            error.context["transport_retry_history"] = getattr(self, "_last_transport_retry_history", [])
+            raise error from exc
+
+    def _make_openai_client(self, *, trust_env: bool = True) -> OpenAI:
+        kwargs: dict[str, Any] = {
+            "api_key": self.settings.api_key,
+            "base_url": self.settings.base_url,
+            "timeout": self.settings.timeout_seconds,
+            "max_retries": 0,
+        }
+        if not trust_env:
+            kwargs["http_client"] = httpx.Client(
+                timeout=self.settings.timeout_seconds,
+                trust_env=False,
+            )
+        return OpenAI(**kwargs)
 
     def _collect_streaming_completion(
         self,
         stream: Any,
         stream_callback: Callable[[LLMStreamEvent], None],
+        *,
+        wall_clock_timeout: float | None = None,
     ) -> Any:
         from types import SimpleNamespace
 
+        started_at = time.monotonic()
         content_parts: list[str] = []
         finish_reason: str | None = None
         model = self.settings.model
@@ -363,6 +429,11 @@ class LLMClient:
         hidden_reasoning_fields: dict[str, int] = {}
 
         for chunk in stream:
+            if wall_clock_timeout is not None and time.monotonic() - started_at >= wall_clock_timeout:
+                raise LLMTimeoutError(
+                    f"Streaming response exceeded wall-clock timeout of {wall_clock_timeout}s.",
+                    timeout_seconds=wall_clock_timeout,
+                )
             model = str(getattr(chunk, "model", None) or model)
             response_id = getattr(chunk, "id", response_id)
             created = getattr(chunk, "created", created)
@@ -417,6 +488,14 @@ class LLMClient:
         )
         return response
 
+    def _close_stream_quietly(self, stream: Any) -> None:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                pass
+
     def _stream_delta_content(self, delta: Any) -> str:
         if delta is None:
             return ""
@@ -452,11 +531,18 @@ class LLMClient:
             merged[key] = merged.get(key, 0) + value
         return merged
 
-    def _create_completion_with_transport_retry(self, client: OpenAI, payload: dict[str, Any]) -> Any:
-        attempts = max(0, int(getattr(self.settings, "transport_retries", 0))) + 1
+    def _create_completion_with_transport_retry(
+        self,
+        client: OpenAI,
+        payload: dict[str, Any],
+        *,
+        transport_retries: int | None = None,
+    ) -> Any:
+        retries = getattr(self.settings, "transport_retries", 0) if transport_retries is None else transport_retries
+        attempts = max(0, int(retries)) + 1
         delay = max(0.0, float(getattr(self.settings, "retry_initial_delay", 0.0)))
         max_delay = max(delay, float(getattr(self.settings, "retry_max_delay", delay)))
-        last_error: OpenAIError | None = None
+        last_error: Exception | None = None
         history: list[dict[str, Any]] = []
         self._last_transport_retry_history = history
 
@@ -479,6 +565,12 @@ class LLMClient:
                 last_error = exc
                 category = self._classify_provider_error(exc)
                 retryable = self._is_retryable_provider_error(exc, category)
+            except Exception as exc:
+                if not self._is_transport_exception(exc):
+                    raise
+                last_error = exc
+                category = self._classify_provider_error(exc)
+                retryable = True
 
             history.append(
                 {
@@ -497,7 +589,48 @@ class LLMClient:
                 time.sleep(min(delay, max_delay))
                 delay = min(delay * 2 if delay else 0, max_delay)
 
-        if isinstance(last_error, APITimeoutError):
+        if last_error is not None and self._should_retry_without_env_proxy(last_error):
+            direct_attempt = attempts + 1
+            try:
+                response = self._make_openai_client(trust_env=False).chat.completions.create(**payload)
+                history.append(
+                    {
+                        "attempt": direct_attempt,
+                        "status": "success",
+                        "retryable": False,
+                        "trust_env": False,
+                        "reason": "env_proxy_fallback",
+                    }
+                )
+                return response
+            except APITimeoutError as exc:
+                last_error = exc
+                category = ErrorCategory.TIMEOUT
+                retryable = False
+            except OpenAIError as exc:
+                last_error = exc
+                category = self._classify_provider_error(exc)
+                retryable = False
+            except Exception as exc:
+                if not self._is_transport_exception(exc):
+                    raise
+                last_error = exc
+                category = self._classify_provider_error(exc)
+                retryable = False
+            history.append(
+                {
+                    "attempt": direct_attempt,
+                    "status": "failed",
+                    "category": category.value,
+                    "retryable": retryable,
+                    "error_type": type(last_error).__name__ if last_error else None,
+                    "error": str(last_error)[:500] if last_error else "",
+                    "trust_env": False,
+                    "reason": "env_proxy_fallback",
+                }
+            )
+
+        if isinstance(last_error, (APITimeoutError, httpx.TimeoutException)):
             error = LLMTimeoutError(str(last_error), timeout_seconds=self.settings.timeout_seconds)
             error.context["transport_retry_history"] = history
             raise error from last_error
@@ -514,7 +647,18 @@ class LLMClient:
             raise error from last_error
         raise LLMProviderError("Provider request failed without an error.", retryable=True, category=ErrorCategory.RETRYABLE)
 
-    def _classify_provider_error(self, exc: OpenAIError) -> ErrorCategory:
+    def _should_retry_without_env_proxy(self, exc: Exception) -> bool:
+        category = self._classify_provider_error(exc)
+        return category == ErrorCategory.NETWORK and any(
+            os.environ.get(name)
+            for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+        )
+
+    def _classify_provider_error(self, exc: Exception) -> ErrorCategory:
+        if isinstance(exc, (APITimeoutError, httpx.TimeoutException)):
+            return ErrorCategory.TIMEOUT
+        if self._is_transport_exception(exc):
+            return ErrorCategory.NETWORK
         status_code = getattr(exc, "status_code", None)
         if status_code == 429:
             return ErrorCategory.RETRYABLE
@@ -526,11 +670,33 @@ class LLMClient:
             return ErrorCategory.TERMINAL
         return classify_error(exc)
 
-    def _is_retryable_provider_error(self, exc: OpenAIError, category: ErrorCategory) -> bool:
+    def _is_retryable_provider_error(self, exc: Exception, category: ErrorCategory) -> bool:
         status_code = getattr(exc, "status_code", None)
         if isinstance(status_code, int):
             return status_code == 429 or status_code >= 500
         return category in {ErrorCategory.RETRYABLE, ErrorCategory.TIMEOUT, ErrorCategory.NETWORK}
+
+    def _is_transport_exception(self, exc: Exception) -> bool:
+        current: BaseException | None = exc
+        visited: set[int] = set()
+        transport_names = {
+            "ConnectError",
+            "ConnectTimeout",
+            "NetworkError",
+            "PoolTimeout",
+            "ReadError",
+            "ReadTimeout",
+            "RemoteProtocolError",
+            "TransportError",
+            "WriteError",
+            "WriteTimeout",
+        }
+        while current is not None and id(current) not in visited:
+            visited.add(id(current))
+            if isinstance(current, httpx.TransportError) or type(current).__name__ in transport_names:
+                return True
+            current = current.__cause__ or current.__context__
+        return False
 
     def _extract_message_content(self, message: Any) -> tuple[str, dict[str, Any]]:
         raw_content = getattr(message, "content", None)

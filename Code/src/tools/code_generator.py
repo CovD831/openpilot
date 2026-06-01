@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 
+from core.exceptions import OpenPilotError
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
@@ -18,6 +19,9 @@ from core.tool_contracts import (
     ToolFailureMode,
 )
 from tools.code_models import CodeGenerationRequest, CodeLanguage, GeneratedCode
+
+
+CODE_GENERATION_LLM_TIMEOUT_SECONDS = 90.0
 
 
 CODE_GENERATOR_DEFINITION = ToolDefinition(
@@ -79,6 +83,10 @@ def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMeta
     operation_kind = str(params.get("operation_kind") or "file_create")
     if isinstance(prompt_context, dict):
         prompt_context = {**prompt_context, "operation_kind": operation_kind}
+    use_local_fallback = bool(
+        isinstance(prompt_context, dict)
+        and prompt_context.get("local_fallback_after_provider_failure")
+    )
 
     # Map language string to CodeLanguage enum
     language_map = {
@@ -99,7 +107,7 @@ def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMeta
             settings = LLMSettings()
             llm_client = LLMClient(settings)
 
-        generator = CodeGenerator(llm_client)
+        generator = CodeGenerator(None if use_local_fallback else llm_client)
 
         # Create request
         request = CodeGenerationRequest(
@@ -114,15 +122,25 @@ def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMeta
         # Generate code
         result = generator.generate_code(request)
 
-        return {
+        output = {
             "code": result.code,
             "language": result.language.value,
             "explanation": f"Generated {result.line_count} lines of {result.language.value} code",
             "imports": result.imports,
-            "functions": result.functions
+            "functions": result.functions,
+            "generation_mode": "local_fallback" if use_local_fallback else "llm",
         }
-    except Exception as e:
-        raise Exception(f"Code generation failed: {e}") from e
+        if use_local_fallback:
+            output["warning"] = (
+                "Remote code generation remained unavailable after bounded retries; "
+                "emitted a deterministic local fallback scaffold."
+            )
+        return output
+    except OpenPilotError as exc:
+        exc.context.setdefault("tool_name", "code_generator")
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"Code generation failed ({type(exc).__name__}): {exc}") from exc
 
 
 class CodeGenerator:
@@ -370,7 +388,9 @@ TOOL OUTPUT REQUIREMENTS:
             request = LLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 response_format="text",
-                temperature=0.7
+                temperature=0.7,
+                timeout_seconds=CODE_GENERATION_LLM_TIMEOUT_SECONDS,
+                transport_retries=0,
             )
             response = self.llm_client.complete(request)
             return response.content

@@ -45,6 +45,7 @@ class EnvironmentFailureMetadata(MetadataBase):
     error_type: str = ""
     affected_file: str = ""
     line_number: int | None = None
+    failed_requirement: str = ""
     pip_notices: list[str] = Field(default_factory=list)
     suggested_command: str = ""
     requires_confirmation: bool = False
@@ -59,6 +60,10 @@ class EnvironmentFixResultMetadata(MetadataBase):
     applied: bool = False
     changed_files: list[str] = Field(default_factory=list)
     repair_actions: list[str] = Field(default_factory=list)
+    replacement_requirement: str = ""
+    research_queries: list[str] = Field(default_factory=list)
+    research_results: list[dict[str, JsonValue]] = Field(default_factory=list)
+    memory_record_ids: list[str] = Field(default_factory=list)
     suggested_command: str = ""
     command_executed: bool = False
     requires_confirmation: bool = False

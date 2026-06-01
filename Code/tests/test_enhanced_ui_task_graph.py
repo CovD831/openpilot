@@ -433,7 +433,9 @@ def test_tool_event_recoverable_error_is_history_not_error_panel() -> None:
 
     output = console.export_text(clear=False)
     assert "Tool error recovered: code_generator (call_2)" in output
-    assert "Use a documentation writer instead." in output
+    assert "Unsupported language: text" in output
+    assert "Recovery:" in output
+    assert "documentation writer instead." in output
     assert "Tool failed: code_generator (call_2)" not in output
 
 

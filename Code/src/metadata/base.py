@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
+import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal, TypeAlias
@@ -115,7 +118,9 @@ class MetadataBase(BaseModel):
 
     def to_json_dict(self) -> dict[str, Any]:
         """Return a JSON-safe dict suitable for logs and model harnesses."""
-        return self.model_dump(mode="json")
+        payload = self.model_dump(mode="python")
+        safe_payload = json_safe(payload)
+        return safe_payload if isinstance(safe_payload, dict) else {"value": safe_payload}
 
     def get(self, key: str, default: Any = None) -> Any:
         if hasattr(self, key):
@@ -151,18 +156,87 @@ def ensure_metadata(value: Any, metadata_type: type[MetadataBase]) -> MetadataBa
     raise TypeError(f"Expected {metadata_type.__name__}, got {type(value).__name__}")
 
 
+def json_safe(value: Any) -> Any:
+    """Return a recursive JSON-safe representation of arbitrary metadata values."""
+    return _json_safe(value, set())
+
+
+def _callable_summary(value: Any) -> str:
+    name = getattr(value, "__name__", type(value).__name__)
+    return f"<callable:{name}>"
+
+
+def _json_safe(value: Any, seen: set[int]) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if inspect.ismethod(value) or inspect.isfunction(value) or callable(value):
+        return _callable_summary(value)
+    if isinstance(value, Enum):
+        return _json_safe(value.value, seen)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, os.PathLike):
+        return os.fspath(value)
+    if isinstance(value, MetadataBase):
+        object_id = id(value)
+        if object_id in seen:
+            return f"<recursive:{type(value).__name__}>"
+        seen.add(object_id)
+        try:
+            return _json_safe(value.model_dump(mode="python"), seen)
+        finally:
+            seen.discard(object_id)
+    if isinstance(value, BaseModel):
+        object_id = id(value)
+        if object_id in seen:
+            return f"<recursive:{type(value).__name__}>"
+        seen.add(object_id)
+        try:
+            return _json_safe(value.model_dump(mode="python", exclude={"runtime_handles"}), seen)
+        finally:
+            seen.discard(object_id)
+    if isinstance(value, Mapping):
+        object_id = id(value)
+        if object_id in seen:
+            return "<recursive:dict>"
+        seen.add(object_id)
+        try:
+            return {
+                str(key): _json_safe(item, seen)
+                for key, item in value.items()
+                if not str(key).startswith("_")
+            }
+        finally:
+            seen.discard(object_id)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        object_id = id(value)
+        if object_id in seen:
+            return f"<recursive:{type(value).__name__}>"
+        seen.add(object_id)
+        try:
+            return [_json_safe(item, seen) for item in value]
+        finally:
+            seen.discard(object_id)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return repr(value)
+    return str(value)
+
+
 def metadata_summary(value: Any) -> Any:
     """Return a compact JSON-safe representation for logging."""
     if isinstance(value, MetadataBase):
         return value.to_json_dict()
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
-    if isinstance(value, dict):
+        return json_safe(value)
+    if isinstance(value, Mapping):
         return {str(key): metadata_summary(item) for key, item in value.items() if not str(key).startswith("_")}
-    if isinstance(value, list):
-        return [metadata_summary(item) for item in value[:20]]
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [metadata_summary(item) for item in list(value)[:20]]
     if isinstance(value, str) and len(value) > 1000:
         return value[:1000] + "...[truncated]"
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
-    return str(value)
+    return json_safe(value)

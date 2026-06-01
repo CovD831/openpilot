@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.exceptions import InvalidLLMResponseError, LLMProviderError, LLMTimeoutError
 from core.llm import LLMMessage, LLMRequest
 from core.tool_event_emitter import ToolEventEmitter
 from metadata import (
@@ -62,16 +63,30 @@ class ToolEventLoopRunner:
         last_code_output: ToolResultMetadata | None = None
         final_error: FailureMetadata | None = None
         rounds_used = 0
+        pending_retry_requests: list[dict[str, Any]] | None = None
+        direct_retry_counts: dict[str, int] = {}
 
         for round_index in range(1, self.max_steps + 1):
             rounds_used = round_index
-            llm_response = self.runtime.llm_client.complete(
-                LLMRequest(
-                    messages=[LLMMessage(role="user", content=prompt)],
-                    response_format="json_object",
-                )
-            )
-            tool_requests = self.owner._parse_decision_needs(llm_response)
+            if pending_retry_requests is not None:
+                tool_requests = pending_retry_requests
+                pending_retry_requests = None
+            else:
+                try:
+                    llm_response = self.runtime.llm_client.complete(
+                        LLMRequest(
+                            messages=[LLMMessage(role="user", content=prompt)],
+                            response_format="json_object",
+                            timeout_seconds=45.0,
+                            transport_retries=0,
+                        )
+                    )
+                    tool_requests = self.owner._parse_decision_needs(llm_response)
+                except (InvalidLLMResponseError, LLMProviderError, LLMTimeoutError) as exc:
+                    fallback = getattr(self.owner, "_fallback_tool_requests", None)
+                    tool_requests = fallback(reason=str(exc)) if callable(fallback) else []
+                    if not tool_requests:
+                        raise
             round_had_recoverable_error = False
 
             for index, tool_call in enumerate(tool_requests):
@@ -246,7 +261,9 @@ class ToolEventLoopRunner:
                     failure = FailureMetadata(
                         error_type=str(getattr(failure, "error_type", "") or type(failure).__name__),
                         error_message=str(getattr(failure, "error_message", failure)),
-                        recoverable=self._is_recoverable_error(tool_name, str(getattr(failure, "error_message", failure))),
+                        recoverable=bool(getattr(failure, "recoverable", False))
+                        or self._is_recoverable_error(tool_name, str(getattr(failure, "error_message", failure))),
+                        retry_recommended=bool(getattr(failure, "retry_recommended", False)),
                     )
                 failure = self._enrich_execution_failure(
                     failure,
@@ -279,12 +296,48 @@ class ToolEventLoopRunner:
                 final_error = failure
                 if not recoverable:
                     return self._finish(task_id, session_id, False, rounds_used, last_output, final_error, failure.error_message)
+                if self._is_transient_error(f"{failure.error_type}: {failure.error_message}"):
+                    retry_count = direct_retry_counts.get(signature, 0)
+                    if retry_count < 1:
+                        direct_retry_counts[signature] = retry_count + 1
+                        pending_retry_requests = [
+                            dict(request)
+                            for request in tool_requests[index:]
+                            if isinstance(request, dict)
+                        ]
+                        self.owner._log(
+                            "tool_loop_direct_retry_scheduled",
+                            output_summary={
+                                "task_id": task_id,
+                                "call_id": call_id,
+                                "tool": tool_name,
+                                "retry_count": retry_count + 1,
+                                "remaining_tool_requests": len(pending_retry_requests),
+                            },
+                            success=None,
+                            level="WARNING",
+                        )
+                    elif tool_name == "code_generator" and not self._uses_local_code_fallback(input_metadata):
+                        pending_retry_requests = self._local_code_fallback_requests(tool_requests, index)
+                        self.owner._log(
+                            "tool_loop_local_fallback_scheduled",
+                            output_summary={
+                                "task_id": task_id,
+                                "call_id": call_id,
+                                "tool": tool_name,
+                                "remaining_tool_requests": len(pending_retry_requests),
+                                "fallback_mode": "deterministic_local_scaffold",
+                            },
+                            success=None,
+                            level="WARNING",
+                        )
                 round_had_recoverable_error = True
                 break
 
             if not round_had_recoverable_error:
                 return self._finish(task_id, session_id, True, rounds_used, last_output, None, None)
-            prompt = self._build_recovery_prompt(initial_prompt, self.recoverable_errors[-3:])
+            if pending_retry_requests is None:
+                prompt = self._build_recovery_prompt(initial_prompt, self.recoverable_errors[-3:])
 
         final_error = FailureMetadata(
             error_type="ToolLoopExceeded",
@@ -585,6 +638,7 @@ class ToolEventLoopRunner:
                 forbidden_changes=["Do not modify files outside the approved edit plan."],
                 risk_level=str(selection.input_metadata.risk_level or "medium"),
                 verification=verification,
+                attributes={"budget_kind": self._write_budget_kind(selection)},
             )
             state.planned_edits.append(edit_plan)
 
@@ -694,6 +748,16 @@ class ToolEventLoopRunner:
             return f"Apply {operation} local edit to {', '.join(target_files)}"
         command = str(selection.input_metadata.command or "")
         return f"Run approved command with bounded side effects: {command[:160]}"
+
+    def _write_budget_kind(self, selection: ToolSelection) -> str:
+        operation_kind = str(selection.input_metadata.operation_kind or "").lower()
+        if selection.tool_name == "file_writer" and operation_kind in {
+            "create_file",
+            "file_create",
+            "directory_generate",
+        }:
+            return "file_create"
+        return "file_edit"
 
     def _matching_edit_plan(self, state: Any, target_files: list[str]) -> EditPlanMetadata | None:
         targets = set(target_files)
@@ -1115,14 +1179,60 @@ class ToolEventLoopRunner:
         ]
         return (
             f"{initial_prompt}\n\n"
-            "The previous tool call attempt produced recoverable tool protocol errors. "
+            "The previous tool call attempt produced recoverable tool errors. "
             "Revise the decision_needs JSON and try again. Focus on the unresolved information need only; "
             "do not repeat needs that already produced useful state, and do not repeat the same invalid need/input.\n"
             f"Recoverable errors:\n{json.dumps(errors_payload, ensure_ascii=False, indent=2)}"
         )
 
     def _call_signature(self, tool_name: str, input_metadata: ToolInputMetadata) -> str:
-        return json.dumps({"tool": tool_name, "input": input_metadata.to_json_dict()}, sort_keys=True, ensure_ascii=False)
+        stable_input = input_metadata.model_dump(
+            mode="json",
+            exclude={
+                "kind",
+                "schema_version",
+                "source",
+                "correlation",
+                "created_at",
+                "annotations",
+                "runtime_handles",
+                "tool_name",
+            },
+        )
+        return json.dumps({"tool": tool_name, "input": stable_input}, sort_keys=True, ensure_ascii=False)
+
+    def _uses_local_code_fallback(self, input_metadata: ToolInputMetadata) -> bool:
+        prompt_context = input_metadata.prompt_context
+        return bool(
+            isinstance(prompt_context, dict)
+            and prompt_context.get("local_fallback_after_provider_failure")
+        )
+
+    def _local_code_fallback_requests(
+        self,
+        tool_requests: list[dict[str, Any]],
+        failed_index: int,
+    ) -> list[dict[str, Any]]:
+        pending = [
+            dict(request)
+            for request in tool_requests[failed_index:]
+            if isinstance(request, dict)
+        ]
+        if not pending:
+            return []
+        first = pending[0]
+        raw_input = first.get("input_metadata")
+        input_metadata = dict(raw_input) if isinstance(raw_input, dict) else {}
+        prompt_context = input_metadata.get("prompt_context")
+        prompt_context = dict(prompt_context) if isinstance(prompt_context, dict) else {}
+        prompt_context["local_fallback_after_provider_failure"] = True
+        input_metadata["prompt_context"] = prompt_context
+        first["input_metadata"] = input_metadata
+        first["reason"] = (
+            f"{str(first.get('reason') or 'Generate code')}. "
+            "Use deterministic local fallback after repeated transient provider failure."
+        )
+        return pending
 
     def _looks_like_invented_intermediate_file(self, file_path: Path) -> bool:
         name = file_path.name.lower()
@@ -1150,11 +1260,39 @@ class ToolEventLoopRunner:
             "received a directory",
             "generated placeholder",
             "placeholder text",
+            "file exists",
+            "refuses to overwrite",
+            "operation_kind=file_replace",
+            "timeout",
+            "timed out",
+            "read operation timed out",
+            "connection error",
+            "network error",
+            "incomplete chunked read",
+            "peer closed connection",
         )
         return any(token in lowered for token in recoverable_tokens)
 
+    def _is_transient_error(self, message: str) -> bool:
+        lowered = message.lower()
+        return any(
+            token in lowered
+            for token in (
+                "timeout",
+                "timed out",
+                "connection error",
+                "network error",
+                "incomplete chunked read",
+                "peer closed connection",
+            )
+        )
+
     def _suggest_recovery(self, tool_name: str, message: str) -> str:
         lowered = message.lower()
+        if self._is_transient_error(lowered):
+            if tool_name == "code_generator":
+                return "Retry code generation with a bounded request. If the provider remains unavailable, simplify the requested artifact and preserve the same target file."
+            return "Retry the operation with a bounded request. The failure appears transient rather than a tool-contract violation."
         if tool_name == "code_generator" and ("text" in lowered or "unsupported language" in lowered):
             return "Use code_generator only for python/shell/bash code. For prose/design tasks, write Markdown/text with a document/file tool or return planning metadata."
         if tool_name == "command_executor":
@@ -1177,7 +1315,6 @@ class ToolEventLoopRunner:
 
     def _generated_placeholder_reason(self, content: str) -> str | None:
         placeholder_patterns = (
-            (r"\bPLACEHOLDER\b", "PLACEHOLDER token"),
             (r"will be replaced", "will be replaced marker"),
             (r"\bREPLACE_ME\b", "REPLACE_ME token"),
             (r"\bTO_BE_FILLED\b", "TO_BE_FILLED token"),
@@ -1185,7 +1322,6 @@ class ToolEventLoopRunner:
             (r"\bTODO_GENERATED\b", "TODO_GENERATED token"),
             (r"\bCODE_GENERATOR_OUTPUT\b", "CODE_GENERATOR_OUTPUT token"),
             (r"\{\{\s*[^}]*output[^}]*\}\}", "template output placeholder"),
-            (r"占位", "Chinese placeholder marker"),
             (r"待填充|后填充|输出填充|由.*填充", "Chinese fill-later marker"),
             (r"前一步输出", "previous-step-output marker"),
             (r"code_generation生成", "code_generation fill marker"),
@@ -1193,6 +1329,11 @@ class ToolEventLoopRunner:
         for pattern, reason in placeholder_patterns:
             if re.search(pattern, content, flags=re.IGNORECASE):
                 return reason
+        standalone = content.strip().strip("#/*- ").strip()
+        if re.fullmatch(r"PLACEHOLDER", standalone, flags=re.IGNORECASE):
+            return "standalone PLACEHOLDER token"
+        if standalone == "占位":
+            return "standalone Chinese placeholder marker"
         return None
 
     def _enrich_execution_failure(

@@ -8,7 +8,11 @@ from memory.agents.virtual_environment_manager import (
     EnvironmentManager as MemoryEnvironmentManager,
     VirtualEnvironmentManager,
 )
-from memory.agents.project_environment_tool import EnvironmentManager, project_environment_tool_executor
+from memory.agents.project_environment_tool import (
+    EnvironmentManager,
+    infer_project_dependencies,
+    project_environment_tool_executor,
+)
 from metadata import ToolInputMetadata
 
 
@@ -88,3 +92,12 @@ def test_project_environment_tool_uses_injected_manager_without_real_venv(tmp_pa
         assert ".venv/" in (project / ".gitignore").read_text(encoding="utf-8")
     else:
         assert any("Git safety unavailable" in warning for warning in result.result.warnings)
+
+
+def test_project_environment_tool_maps_import_name_to_published_distribution(tmp_path) -> None:
+    app = tmp_path / "assistant.py"
+    app.write_text("import speech_recognition\nimport pyttsx3\n", encoding="utf-8")
+
+    detected = infer_project_dependencies(tmp_path, ["assistant.py"])
+
+    assert detected == ["pyttsx3", "SpeechRecognition"]

@@ -19,6 +19,7 @@ from metadata import (
 )
 
 
+from core.python_packages import IMPORT_TO_DISTRIBUTION, distribution_for_import
 from memory.agents.git_manager_agent import GitManagerAgent, GitManagerError
 from memory.memory_models import MemoryRecord, MemoryType
 from memory.agents.virtual_environment_manager import (
@@ -64,13 +65,7 @@ PROJECT_ENVIRONMENT_TOOL_DEFINITION = ToolDefinition(
 )
 
 
-THIRD_PARTY_IMPORT_MAP = {
-    "pygame": "pygame",
-    "PIL": "Pillow",
-    "cv2": "opencv-python",
-    "yaml": "PyYAML",
-    "sklearn": "scikit-learn",
-}
+THIRD_PARTY_IMPORT_MAP = IMPORT_TO_DISTRIBUTION
 
 DEPENDENCY_ROLE_HINTS = {
     "pygame": "interactive_window_rendering_input_game_loop",
@@ -87,6 +82,8 @@ DEPENDENCY_ROLE_HINTS = {
     "flask": "web_server",
     "fastapi": "web_api",
     "requests": "http_client",
+    "speechrecognition": "speech_to_text",
+    "pyttsx3": "text_to_speech",
 }
 
 PACKAGING_TOOL_PACKAGES = {"pip", "setuptools", "wheel"}
@@ -217,7 +214,7 @@ def infer_project_dependencies(project_path: Path, files: list[str]) -> list[str
     for import_name in sorted(imports):
         if _is_stdlib_or_local(import_name, local_modules):
             continue
-        packages.append(THIRD_PARTY_IMPORT_MAP.get(import_name, import_name))
+        packages.append(distribution_for_import(import_name))
     return sorted(set(packages), key=str.lower)
 
 
@@ -379,7 +376,7 @@ def _imports_by_package(project_path: Path, files: list[str]) -> dict[str, list[
         for import_name in _read_top_level_imports(path):
             if _is_stdlib_or_local(import_name, local_modules):
                 continue
-            package = THIRD_PARTY_IMPORT_MAP.get(import_name, import_name)
+            package = distribution_for_import(import_name)
             imports.setdefault(package, []).append(import_name)
     return {package: sorted(set(names)) for package, names in imports.items()}
 

@@ -885,7 +885,32 @@ class IntelligentAutopilot:
             return input_metadata
         handles = dict(input_metadata.runtime_handles or {})
         handles.setdefault("_command_approval_callback", self._confirm_command_execution)
+        if tool_name == "bug_fix_tool":
+            handles.setdefault("_bug_fix_progress_callback", self._report_bug_fix_progress)
         return input_metadata.model_copy(update={"runtime_handles": handles})
+
+    def _report_bug_fix_progress(self, event: dict[str, Any]) -> None:
+        """Expose the bug-fix tool's internal loop through logs and the live UI."""
+        payload = {str(key): value for key, value in dict(event or {}).items()}
+        self.logger.log_event(
+            "bug_fix_iteration_progress",
+            payload,
+            session_id=self.session_id or "unknown",
+            turn_id=1,
+        )
+        if self.enhanced_ui:
+            iteration = int(payload.get("iteration") or 0)
+            budget = int(payload.get("budget") or 0)
+            details = [f"Event: {payload.get('event') or 'progress'}"]
+            if payload.get("modified_files"):
+                details.append(f"Modified files: {', '.join(payload['modified_files'])}")
+            if payload.get("error_summary"):
+                details.append(f"Latest error: {payload['error_summary']}")
+            self.enhanced_ui.set_current_task_state(
+                title=f"Bug Fix Iteration {iteration}/{budget}",
+                details="\n".join(details),
+                status="success" if payload.get("success") else "running",
+            )
 
     def _confirm_command_execution(self, decision) -> bool:
         reasons = "; ".join(getattr(decision, "reasons", []) or ["Command requires confirmation."])
@@ -1421,6 +1446,7 @@ class IntelligentAutopilot:
 
         handles = dict(input_metadata.runtime_handles or {})
         handles.setdefault("_command_approval_callback", self._confirm_command_execution)
+        handles.setdefault("_memory_store", self.memory_store)
         input_metadata = input_metadata.model_copy(update={"runtime_handles": handles})
         result = self._execute_module_owned_tool(
             task=task,

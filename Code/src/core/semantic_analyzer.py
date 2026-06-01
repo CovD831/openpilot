@@ -13,6 +13,9 @@ from core.semantic_types import RiskLevel, STANDARD_RESOURCES, TaskType
 from core.tool_contracts import ToolCapability
 
 
+BEST_EFFORT_TIMEOUT_SECONDS = 30.0
+
+
 class CompletionClient(Protocol):
     def complete(self, request: LLMRequest) -> LLMResponse:
         """Return a normalized LLM response."""
@@ -222,6 +225,8 @@ class SemanticAnalyzer:
                 ],
                 response_format="json_object",
                 temperature=0.0,
+                timeout_seconds=BEST_EFFORT_TIMEOUT_SECONDS,
+                transport_retries=0,
                 trace_info={"semantic_task": "goal"},
             )
         )
@@ -234,6 +239,73 @@ class SemanticAnalyzer:
             return GoalSemanticAnalysis.model_validate(raw)
         except ValidationError as exc:
             raise InvalidLLMResponseError(f"Goal semantic analysis failed validation: {exc}") from exc
+
+    def fallback_goal_analysis(self, goal: str, reason: str = "") -> GoalSemanticAnalysis:
+        """Return a conservative local classification when semantic LLM analysis is unavailable."""
+        task_type = self._fallback_task_type(goal)
+        resources_by_type = {
+            TaskType.CODING: ["local_file", "python_runtime", "code_execution", "tool_orchestration"],
+            TaskType.FILE_WORKFLOW: ["local_file", "tool_orchestration"],
+            TaskType.RESEARCH: ["web_search", "llm"],
+            TaskType.DOCUMENT_SUMMARY: ["local_file", "document_tool", "llm"],
+            TaskType.DATA_ANALYSIS: ["local_file", "python_runtime", "llm"],
+            TaskType.AUTOMATION: ["python_runtime", "tool_orchestration"],
+            TaskType.CALENDAR_RELATED: ["calendar"],
+            TaskType.COMMUNICATION: ["email"],
+            TaskType.PLANNING: ["llm", "timeline"],
+        }
+        fallback_reason = "Deterministic fallback classification after semantic LLM failure."
+        if reason:
+            fallback_reason = f"{fallback_reason} Cause: {reason[:120]}"
+        return GoalSemanticAnalysis(
+            task_type=task_type,
+            risk_level=RiskLevel.MEDIUM,
+            required_resources=resources_by_type.get(task_type, ["llm"]),
+            expected_deliverables=[],
+            intent=goal[:240],
+            confidence=0.35,
+            reason=fallback_reason,
+        )
+
+    def _fallback_task_type(self, goal: str) -> TaskType:
+        text = goal.casefold()
+        marker_groups = (
+            (TaskType.CALENDAR_RELATED, ("calendar", "schedule", "meeting", "日历", "会议", "日程")),
+            (TaskType.COMMUNICATION, ("email", "mail", "message", "邮件", "发信", "消息")),
+            (TaskType.DATA_ANALYSIS, ("analyze data", "dataset", "csv", "spreadsheet", "数据分析", "数据集", "表格")),
+            (
+                TaskType.CODING,
+                (
+                    "code",
+                    "script",
+                    "app",
+                    "application",
+                    "website",
+                    "service",
+                    "assistant",
+                    "implement",
+                    "develop",
+                    "代码",
+                    "脚本",
+                    "应用",
+                    "网站",
+                    "服务",
+                    "助手",
+                    "开发",
+                    "实现",
+                    "做一个",
+                ),
+            ),
+            (TaskType.AUTOMATION, ("automation", "automate", "workflow", "自动化", "工作流")),
+            (TaskType.DOCUMENT_SUMMARY, ("summarize", "summary", "document", "总结", "摘要", "文档")),
+            (TaskType.FILE_WORKFLOW, ("file", "directory", "folder", "文件", "目录", "文件夹")),
+            (TaskType.RESEARCH, ("research", "search", "investigate", "调研", "搜索", "查找")),
+            (TaskType.PLANNING, ("plan", "planning", "roadmap", "计划", "规划", "路线图")),
+        )
+        for task_type, markers in marker_groups:
+            if any(marker in text for marker in markers):
+                return task_type
+        return TaskType.UNKNOWN
 
     def analyze_plan_step(
         self,
@@ -262,6 +334,8 @@ class SemanticAnalyzer:
                 ],
                 response_format="json_object",
                 temperature=0.0,
+                timeout_seconds=BEST_EFFORT_TIMEOUT_SECONDS,
+                transport_retries=0,
                 trace_info={"semantic_task": "plan_step", "step_id": step.id},
             )
         )

@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from core.command_approval import CommandApprovalGate
+from memory.memory_models import MemoryType
+from memory.memory_store import MemoryStore
 from metadata import ResultStatus, ToolInputMetadata
 from tools.command_tool import command_executor
 from tools.environment_fix_tool import diagnose_environment_failure, environment_fix_tool_executor
@@ -14,6 +16,11 @@ PIP_INVALID_REQUIREMENT_ERROR = """
 ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of dependency specifier
     \"\"\"
     ^ (from line 2 of /tmp/project/requirements.txt)
+"""
+
+PIP_NO_MATCHING_DISTRIBUTION_ERROR = """
+ERROR: Could not find a version that satisfies the requirement speech_recognition (from versions: none)
+ERROR: No matching distribution found for speech_recognition
 """
 
 
@@ -54,6 +61,104 @@ def test_environment_fix_tool_sanitizes_invalid_requirements_line(tmp_path) -> N
     assert requirements.read_text(encoding="utf-8") == "rich\nrequests>=2\n"
 
 
+def test_environment_fix_tool_resolves_pypi_distribution_alias_and_remembers_fix(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    requirements = project / "requirements.txt"
+    requirements.write_text("speech_recognition>=3\npyttsx3\n", encoding="utf-8")
+    memory_store = MemoryStore(tmp_path / "memory")
+    queries = []
+
+    result = environment_fix_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "environment_fix_tool",
+            {
+                "project_path": str(project),
+                "stderr": PIP_NO_MATCHING_DISTRIBUTION_ERROR,
+                "_memory_store": memory_store,
+                "_web_searcher": lambda query: queries.append(query)
+                or [{"url": "https://pypi.org/project/SpeechRecognition/", "title": "SpeechRecognition"}],
+            },
+        )
+    )
+
+    assert result.status == ResultStatus.SUCCESS
+    assert result.result.environment_failure.error_type == "unavailable_distribution"
+    assert result.result.environment_failure.failed_requirement == "speech_recognition"
+    assert result.result.replacement_requirement == "SpeechRecognition"
+    assert requirements.read_text(encoding="utf-8") == "SpeechRecognition>=3\npyttsx3\n"
+    assert queries == ["site:pypi.org/project speech_recognition Python package install"]
+    memories = memory_store.load_all(MemoryType.REFERENCE)
+    assert len(memories) == 1
+    assert memories[0].attributes["replacement_requirement"] == "SpeechRecognition"
+
+
+def test_environment_fix_tool_reuses_resolved_alias_memory_before_web_search(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    requirements = project / "requirements.txt"
+    requirements.write_text("speech_recognition\n", encoding="utf-8")
+    memory_store = MemoryStore(tmp_path / "memory")
+
+    first = environment_fix_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "environment_fix_tool",
+            {
+                "project_path": str(project),
+                "stderr": PIP_NO_MATCHING_DISTRIBUTION_ERROR,
+                "_memory_store": memory_store,
+                "_web_searcher": lambda query: [{"url": "https://pypi.org/project/SpeechRecognition/"}],
+            },
+        )
+    )
+    requirements.write_text("speech_recognition\n", encoding="utf-8")
+
+    second = environment_fix_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "environment_fix_tool",
+            {
+                "project_path": str(project),
+                "stderr": PIP_NO_MATCHING_DISTRIBUTION_ERROR,
+                "_memory_store": memory_store,
+                "_web_searcher": lambda query: (_ for _ in ()).throw(AssertionError("web search should not run")),
+            },
+        )
+    )
+
+    assert first.status == ResultStatus.SUCCESS
+    assert second.status == ResultStatus.SUCCESS
+    assert second.result.research_queries == []
+    assert second.result.research_results == [{"source": "memory", "candidate": "SpeechRecognition"}]
+    assert requirements.read_text(encoding="utf-8") == "SpeechRecognition\n"
+
+
+def test_environment_fix_tool_uses_known_alias_when_web_search_is_unavailable(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    requirements = project / "requirements.txt"
+    requirements.write_text("speech_recognition\n", encoding="utf-8")
+
+    result = environment_fix_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "environment_fix_tool",
+            {
+                "project_path": str(project),
+                "stderr": PIP_NO_MATCHING_DISTRIBUTION_ERROR,
+                "_web_searcher": lambda query: (_ for _ in ()).throw(OSError("offline")),
+            },
+        )
+    )
+
+    assert result.status == ResultStatus.SUCCESS
+    assert result.result.replacement_requirement == "SpeechRecognition"
+    assert result.result.research_results[0]["error"] == "offline"
+    assert result.result.research_results[-1] == {
+        "source": "known_import_alias",
+        "candidate": "SpeechRecognition",
+    }
+    assert requirements.read_text(encoding="utf-8") == "SpeechRecognition\n"
+
+
 def test_command_approval_gate_requires_user_for_sudo_and_allows_local_venv_pip(tmp_path) -> None:
     gate = CommandApprovalGate()
     local = gate.evaluate(f"{tmp_path}/.venv/bin/python -m pip install -r requirements.txt", cwd=str(tmp_path))
@@ -63,6 +168,16 @@ def test_command_approval_gate_requires_user_for_sudo_and_allows_local_venv_pip(
     assert local.requires_confirmation is False
     assert risky.requires_confirmation is True
     assert risky.risk_level == "high"
+
+
+def test_command_approval_gate_allows_local_single_file_executable_bit(tmp_path) -> None:
+    script = tmp_path / "run.py"
+    script.write_text("print('ok')\n", encoding="utf-8")
+
+    decision = CommandApprovalGate().evaluate("chmod +x run.py", cwd=str(tmp_path))
+
+    assert decision.auto_approved is True
+    assert decision.requires_confirmation is False
 
 
 def test_command_executor_stops_when_user_declines_high_risk_command(tmp_path) -> None:

@@ -74,6 +74,14 @@ class ExecutionToolIO:
         last_code_output: Any,
     ) -> ToolInputMetadata:
         params = input_metadata.to_params()
+        if tool_name not in {
+            "code_editor",
+            "code_executor",
+            "code_reviewer",
+            "file_patch_writer",
+            "file_writer",
+        }:
+            return input_metadata
         preferred_output = last_code_output or last_output
         if (
             tool_name == "file_writer"
@@ -99,10 +107,9 @@ class ExecutionToolIO:
         if not isinstance(value, str):
             return False
         lowered = value.lower()
-        return any(
+        if any(
             marker in lowered
             for marker in (
-                "placeholder",
                 "will be replaced",
                 "replace_me",
                 "to_be_filled",
@@ -111,14 +118,16 @@ class ExecutionToolIO:
                 "code_generator_output",
                 "{{code_generation.output}}",
                 "{{ code_generation.output }}",
-                "占位",
                 "待填充",
                 "后填充",
                 "输出填充",
                 "前一步输出",
                 "code_generation生成",
             )
-        )
+        ):
+            return True
+        standalone = lowered.strip().strip("#/*- ")
+        return standalone in {"placeholder", "占位"}
 
     def extract_generated_content(self, output: Any) -> str | None:
         if output is None:

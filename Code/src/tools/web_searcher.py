@@ -169,11 +169,16 @@ class SearchResultHTMLParser(HTMLParser):
         if self.provider == "bing_html":
             url = _normalize_result_url(href, self.provider)
             return self._bing_result_depth > 0 and bool(url and not _is_search_engine_internal_url(url))
+        if self.provider == "duckduckgo_html":
+            url = _normalize_result_url(href, self.provider)
+            return "result__a" in classes and bool(url and not _is_search_engine_internal_url(url))
         return False
 
     def _is_snippet(self, tag: str, classes: set[str]) -> bool:
         if self.provider == "bing_html":
             return self._bing_result_depth > 0 and tag == "p"
+        if self.provider == "duckduckgo_html":
+            return "result__snippet" in classes
         return False
 
 
@@ -408,7 +413,7 @@ def web_searcher_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
     search_started_at = time.monotonic()
     attempt_count = 0
     search_budget_exhausted = False
-    for search_query in query_variants:
+    for query_index, search_query in enumerate(query_variants):
         if attempt_count >= max_search_attempts:
             break
         if time.monotonic() - search_started_at >= search_budget_seconds:
@@ -418,8 +423,12 @@ def web_searcher_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                 already_appended=search_budget_exhausted,
             )
             break
-        for candidate_provider in ("google_html", "bing_html"):
+        for candidate_provider in ("google_html", "bing_html", "duckduckgo_html"):
             if attempt_count >= max_search_attempts:
+                break
+            remaining_variants = len(query_variants) - query_index - 1
+            remaining_attempts = max_search_attempts - attempt_count
+            if candidate_provider == "duckduckgo_html" and remaining_variants and remaining_attempts <= remaining_variants:
                 break
             elapsed = time.monotonic() - search_started_at
             if elapsed >= search_budget_seconds:
@@ -432,8 +441,10 @@ def web_searcher_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
             attempt_count += 1
             if candidate_provider == "google_html":
                 search_url = _build_google_search_url(search_query, safe_search, time_range)
-            else:
+            elif candidate_provider == "bing_html":
                 search_url = _build_bing_search_url(search_query, safe_search, time_range)
+            else:
+                search_url = _build_duckduckgo_search_url(search_query, safe_search, time_range)
             attempt = {
                 "provider": candidate_provider,
                 "query": search_query,
@@ -486,7 +497,7 @@ def web_searcher_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
 
     if not parsed_results:
         provider = search_attempts[-1]["provider"] if search_attempts else ""
-        warnings.append("No search results found after trying Google/Bing query variants.")
+        warnings.append("No search results found after trying Google/Bing/DuckDuckGo query variants.")
         if search_attempts and all(attempt.get("status") in {"network_error", "blocked", "timeout"} for attempt in search_attempts):
             warnings.append(_network_failure_warning(network_diagnostics))
         for attempt in search_attempts:
@@ -738,6 +749,22 @@ def _build_bing_search_url(query: str, safe_search: str, time_range: str) -> str
     return f"https://www.bing.com/search?{urlencode(query_params, quote_via=quote_plus)}"
 
 
+def _build_duckduckgo_search_url(query: str, safe_search: str, time_range: str) -> str:
+    query_params = {
+        "q": query,
+        "kp": SAFE_SEARCH_PARAMS[safe_search],
+    }
+    freshness = {
+        "day": "d",
+        "week": "w",
+        "month": "m",
+        "year": "y",
+    }.get(time_range)
+    if freshness:
+        query_params["df"] = freshness
+    return f"https://html.duckduckgo.com/html/?{urlencode(query_params, quote_via=quote_plus)}"
+
+
 def _default_http_get(url: str, timeout: int) -> str:
     _load_dotenv_for_proxy()
     with httpx.Client(
@@ -780,7 +807,7 @@ def _parse_search_results(html: str, provider: str) -> list[dict[str, str]]:
     parser.close()
     if parser.results:
         return parser.results
-    if provider not in {"google_html", "bing_html"}:
+    if provider not in {"google_html", "bing_html", "duckduckgo_html"}:
         return []
     fallback_parser = SearchFallbackLinkParser(provider)
     fallback_parser.feed(html)
@@ -1253,7 +1280,10 @@ def _normalize_result_url(url: str, provider: str = "") -> str:
     if url.startswith("//"):
         url = f"https:{url}"
     if url.startswith("/"):
-        base_url = "https://www.bing.com" if provider == "bing_html" else "https://www.google.com"
+        base_url = {
+            "bing_html": "https://www.bing.com",
+            "duckduckgo_html": "https://html.duckduckgo.com",
+        }.get(provider, "https://www.google.com")
         url = urljoin(base_url, url)
 
     parsed = urlparse(url)
@@ -1269,6 +1299,10 @@ def _normalize_result_url(url: str, provider: str = "") -> str:
         if target:
             return _normalize_result_url(target, provider)
         return ""
+    if parsed.netloc.lower().removeprefix("www.") in {"duckduckgo.com", "html.duckduckgo.com"}:
+        target = (parse_qs(parsed.query).get("uddg") or [""])[0]
+        if target:
+            return _normalize_result_url(unquote(target), provider)
 
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return ""
@@ -1312,6 +1346,8 @@ def _is_search_engine_internal_url(url: str) -> bool:
         return True
     if domain.endswith("bing.com") or domain.endswith("microsoft.com"):
         return parsed.path.startswith(("/search", "/ck/", "/aclick", "/images", "/videos", "/maps"))
+    if domain in {"duckduckgo.com", "html.duckduckgo.com"}:
+        return True
     return False
 
 

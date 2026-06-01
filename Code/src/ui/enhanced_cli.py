@@ -10,6 +10,7 @@ from rich.console import Console
 
 from core.config import EmbeddingSettings, LLMSettings
 from core.instrumented_llm import InstrumentedLLMClient
+from core.model_health import run_startup_model_health_check
 from core.openpilot_log import OpenPilotLogger
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker
@@ -88,11 +89,12 @@ def _result_value(value, key: str):
 def _extract_failure_context(result) -> dict:
     if not isinstance(result, dict):
         return {}
-    nested_result = result.get("result")
-    if isinstance(nested_result, dict):
-        nested_context = _extract_failure_context(nested_result)
-        if nested_context:
-            return nested_context
+    for nested_key in ("session_result", "result"):
+        nested_result = result.get(nested_key)
+        if isinstance(nested_result, dict):
+            nested_context = _extract_failure_context(nested_result)
+            if nested_context:
+                return nested_context
     direct_reason = result.get("failure_reason")
     if direct_reason and direct_reason != "Autopilot reported failure":
         direct_context = {
@@ -222,15 +224,21 @@ def run_enhanced_cli(
     if block_missing_socksio(console):
         return 2
 
+    # Probe configured providers before the runtime starts doing real work.
+    settings = LLMSettings()
+    if llm_client is None:
+        run_startup_model_health_check(
+            console,
+            llm_settings=settings,
+            embedding_settings=EmbeddingSettings(),
+        )
+
     # Initialize enhanced UI
     enhanced_ui = EnhancedUI(console)
     enhanced_ui.show_banner()
 
     # Initialize progress tracker
     tracker = ProgressTracker(enhanced_ui)
-
-    # Initialize settings
-    settings = LLMSettings()
 
     # Create instrumented LLM client
     if llm_client is None:

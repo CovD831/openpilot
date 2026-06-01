@@ -131,7 +131,31 @@ class ToolInputMetadata(MetadataBase):
     def from_mapping(cls, tool_name: str, values: dict[str, Any]) -> "ToolInputMetadata":
         runtime_handles = {key: value for key, value in values.items() if str(key).startswith("_")}
         public_values = {key: value for key, value in values.items() if not str(key).startswith("_")}
-        return cls(tool_name=tool_name, runtime_handles=runtime_handles, **public_values)
+        public_values = cls._normalize_input_aliases(public_values)
+        public_values.pop("tool_name", None)
+
+        known_fields = set(cls.model_fields)
+        known_values = {key: value for key, value in public_values.items() if key in known_fields}
+        extra_values = {str(key): value for key, value in public_values.items() if key not in known_fields}
+
+        if extra_values:
+            attributes = known_values.get("attributes") if isinstance(known_values.get("attributes"), dict) else {}
+            known_values["attributes"] = {**attributes, **extra_values}
+        return cls(tool_name=tool_name, runtime_handles=runtime_handles, **known_values)
+
+    @staticmethod
+    def _normalize_input_aliases(values: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(values)
+        aliases = {
+            "create_intermediate": "create_dirs",
+            "create_intermediates": "create_dirs",
+            "parents": "create_dirs",
+        }
+        for source, target in aliases.items():
+            if source in normalized:
+                normalized.setdefault(target, normalized[source])
+                normalized.pop(source, None)
+        return normalized
 
     def to_params(self) -> dict[str, Any]:
         """Return public tool fields plus runtime handles for implementation internals."""
