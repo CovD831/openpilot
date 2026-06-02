@@ -86,6 +86,7 @@ class ProjectDiagnoser:
             reference_insights=reference_insights,
             dependencies=project_state.dependencies,
             dependency_strategy=dependency_strategy,
+            stack_preset=project_state.stack_preset,
             summary=summary,
             candidate_shortage_reason="" if selected else "No high-value diagnosis candidate survived constraints.",
             confidence=self._diagnosis_confidence(objective, metrics, ranked, reference_insights),
@@ -97,6 +98,7 @@ class ProjectDiagnoser:
         delivery_surface = "project_native"
         target_users = ["the requester"]
         core_value = ["Satisfy the original project goal with observable software behavior."]
+        stack_preset = state.stack_preset
         if self._has_any(text, ("web", "website", "browser", "网页", ".html", "react", "frontend")):
             project_type = "web_app"
             delivery_surface = "browser"
@@ -122,6 +124,18 @@ class ProjectDiagnoser:
             delivery_surface = "interactive_runtime"
             target_users = ["people using the interactive software"]
             core_value = ["Provide the requested interactive experience with visible feedback and controls."]
+        if stack_preset is not None:
+            delivery_surface = stack_preset.delivery_surface or delivery_surface
+            if delivery_surface == "browser":
+                project_type = "web_app"
+                target_users = ["browser users"]
+                core_value = ["Deliver the requested browser workflow clearly and responsively."]
+            elif delivery_surface == "terminal":
+                project_type = "cli_tool"
+                target_users = ["terminal users"]
+            elif delivery_surface == "interactive_runtime":
+                project_type = "interactive_app"
+                target_users = ["people using the interactive software"]
         success = [
             "Core behavior from the user goal is present and testable.",
             "The documented run path works without blocking runtime failures.",
@@ -132,6 +146,11 @@ class ProjectDiagnoser:
             evidence.append(f"readme:{state.readme_summary[:220]}")
         if state.module_summaries:
             evidence.append("modules:" + "; ".join(state.module_summaries[:4]))
+        if stack_preset is not None:
+            evidence.append(
+                f"stack_preset:r{stack_preset.revision} {stack_preset.architecture} "
+                f"frontend={stack_preset.frontend_language} backend={stack_preset.backend_language}"
+            )
         confidence = 0.78 if project_type != "software_project" else (0.64 if state.readme_summary or state.file_summaries else 0.48)
         return ProjectObjectiveMetadata(
             goal=state.goal,
@@ -182,7 +201,10 @@ class ProjectDiagnoser:
                 current_assessment="README and project state need UX review.",
                 evidence=[state.readme_summary[:220]] if state.readme_summary else ["No README evidence provided."],
                 confidence=0.68 if objective.project_type != "software_project" else 0.52,
-                required=objective.project_type in {"web_app", "cli_tool", "interactive_app"},
+                required=bool(
+                    objective.project_type in {"web_app", "cli_tool", "interactive_app"}
+                    or (state.stack_preset and state.stack_preset.ui_review_required)
+                ),
             ),
             SuccessMetricMetadata(
                 metric_id="maintainable_change",
@@ -237,6 +259,10 @@ class ProjectDiagnoser:
             elif dimension == "user_experience":
                 score -= 0.12 if objective.project_type in {"interactive_app", "web_app", "cli_tool"} else 0.0
                 gaps.extend(warnings[:2])
+                ui_gap = self._ui_surface_gap(state)
+                if ui_gap:
+                    score -= 0.2
+                    gaps.append(ui_gap)
             elif dimension == "technical_scalability":
                 evidence.extend(state.module_summaries[:3])
                 if len(state.safe_target_files) <= 1:
@@ -278,6 +304,27 @@ class ProjectDiagnoser:
         if evaluation.has_blocking_bugs or not evaluation.validation_passed:
             return [self._repair_candidate(evaluation)]
         candidates: list[ImprovementCandidateMetadata] = []
+        ui_gap = self._ui_surface_gap(state)
+        if ui_gap and state.stack_preset is not None:
+            candidates.append(
+                self._candidate(
+                    candidate_id="ui_surface_completion",
+                    title=f"Implement the planned {state.stack_preset.ui_strategy} user interface",
+                    dimension="user_experience",
+                    rationale=ui_gap,
+                    criteria=[
+                        f"The project exposes its planned {state.stack_preset.delivery_surface} user-facing surface.",
+                        "New or existing user-facing capabilities are reachable through coherent UI controls and visible states.",
+                        "UI files and backend behavior follow the persisted project stack preset.",
+                    ],
+                    evidence=[ui_gap, *state.stack_preset.rationale[:2]],
+                    candidate_type="ui_surface",
+                    value=0.94,
+                    impact=0.92,
+                    difficulty=0.58,
+                    risk=0.3,
+                )
+            )
         preserve_packages = list(dependency_strategy.preserve_packages if dependency_strategy else [])
         if preserve_packages:
             package_text = ", ".join(preserve_packages[:4])
@@ -613,6 +660,26 @@ class ProjectDiagnoser:
         chunks.extend(state.module_summaries[:4])
         chunks.extend(f"{dependency.package_name} {dependency.role}" for dependency in state.dependencies[:8])
         return "\n".join(chunks).lower()
+
+    def _ui_surface_gap(self, state: ProjectStateSnapshot) -> str:
+        preset = state.stack_preset
+        if preset is None or not preset.ui_review_required:
+            return ""
+        file_text = "\n".join(
+            f"{item.get('name', '')} {item.get('suffix', '')} {item.get('preview', '')}"
+            for item in state.file_summaries
+        ).lower()
+        if preset.delivery_surface == "browser" and not self._has_any(
+            file_text,
+            (".html", ".css", ".js", ".jsx", ".ts", ".tsx", "<html", "react", "vue", "svelte"),
+        ):
+            return "The persisted browser UI preset has no frontend file evidence yet."
+        if preset.delivery_surface == "interactive_runtime" and not self._has_any(
+            file_text,
+            ("pygame", "tkinter", "canvas", "window", "render", "draw"),
+        ):
+            return "The persisted interactive UI preset has no visible rendering or window evidence yet."
+        return ""
 
     @staticmethod
     def _has_any(text: str, terms: tuple[str, ...]) -> bool:

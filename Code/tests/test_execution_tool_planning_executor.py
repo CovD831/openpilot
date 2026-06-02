@@ -232,6 +232,26 @@ class FakeToolExecutor:
         )
 
 
+class AssistantCodeToolExecutor(FakeToolExecutor):
+    def execute_single(self, selection, context=None):
+        if selection.tool_name == "code_generator":
+            self.selections.append(selection)
+            return SimpleNamespace(
+                success=True,
+                output_metadata=ToolResultMetadata(
+                    tool_name="code_generator",
+                    status=ResultStatus.SUCCESS,
+                    result=CodeArtifactMetadata(
+                        code='"""OpenPilot Assistant main file."""\n\n\ndef main():\n    print("ok")\n',
+                        language="python",
+                    ),
+                ),
+                error=None,
+                execution_time_ms=10,
+            )
+        return super().execute_single(selection, context)
+
+
 class InvalidMultiFileReaderExecutor(FakeToolExecutor):
     def execute_single(self, selection, context=None):
         if selection.tool_name == "multi_file_reader":
@@ -416,6 +436,37 @@ def test_tool_planning_executor_success_and_chained_file_writer(tmp_path) -> Non
     ]
     assert any(payload.get("source_type") == "agent" for payload in payloads)
     assert any(payload.get("source_name") == "autonomous_iteration.agents.tool_planning_executor" for payload in payloads)
+
+
+def test_tool_planning_reroutes_generated_python_away_from_requirements(tmp_path) -> None:
+    task = Task(id="task", description="Create assistant core")
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "code_generation",
+                    "question": "generate assistant",
+                    "attributes": {"task_description": "Create the main assistant Python file"},
+                },
+                {
+                    "need_type": "file_write",
+                    "question": "write generated assistant",
+                    "target_path": str(tmp_path / "requirements.txt"),
+                },
+            ]
+        },
+    )
+    runtime.tool_executor = AssistantCodeToolExecutor()
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    writer_input = runtime.tool_executor.selections[1].input_metadata
+    assert writer_input.file_path == str(tmp_path / "assistant.py")
+    assert writer_input.content.startswith('"""OpenPilot Assistant')
+    assert result.result_metadata.result.attributes["all_tools_succeeded"] is True
 
 
 def test_tool_planning_defaults_missing_question_and_normalizes_readme_path(tmp_path) -> None:
@@ -924,7 +975,11 @@ def test_tool_planning_executor_rejects_old_tool_calls_protocol(tmp_path) -> Non
     result = executor.execute_task(task, _context(task))
 
     assert result.status == TaskStatus.FAILED
-    assert result.error == "LLM generated empty decision_needs plan"
+    assert result.error == "Tool planning requires decomposition after empty decision_needs plan"
+    assert result.result_metadata.failure.error_type == "DecisionNeedResolutionError"
+    assert result.result_metadata.failure.details["problem_signal"]["category"] == "tool_contract"
+    assert result.result_metadata.failure.details["resolution_plan"]["strategy"] == "direct_retry"
+    assert len(runtime.llm_client.requests) == 2
 
 
 def test_tool_event_loop_missing_required_field_is_recoverable(tmp_path) -> None:
@@ -990,8 +1045,9 @@ def test_tool_router_blocks_incomplete_directory_need_before_tool_call(tmp_path)
     result = executor.execute_task(task, _context(task))
 
     assert result.status == TaskStatus.FAILED
-    assert result.error == "LLM generated empty decision_needs plan"
-    assert state.unknowns == ["read project files"]
+    assert result.error == "Tool planning requires decomposition after empty decision_needs plan"
+    assert result.result_metadata.failure.details["problem_signal"]["category"] == "tool_contract"
+    assert "read project files" in state.unknowns
 
 
 def test_tool_event_loop_execution_value_error_can_recover(tmp_path) -> None:
@@ -1270,7 +1326,42 @@ def test_tool_planning_executor_invalid_or_empty_plan_returns_failed_result(tmp_
     result = executor.execute_task(task, _context(task))
 
     assert result.status == TaskStatus.FAILED
-    assert result.error == "LLM generated empty decision_needs plan"
+    assert result.error == "Tool planning requires decomposition after empty decision_needs plan"
+    assert result.result_metadata.failure.error_type == "DecisionNeedResolutionError"
+    assert result.result_metadata.failure.details["problem_signal"]["category"] == "planning_gap"
+    assert result.result_metadata.failure.details["difficulty_assessment"]["level"] in {"simple", "moderate"}
+
+
+def test_tool_planning_executor_empty_plan_retry_can_recover(tmp_path) -> None:
+    task = Task(id="task", description="Do impossible thing")
+    runtime = FakeRuntime(
+        tmp_path,
+        [
+            {"decision_needs": []},
+            {
+                "decision_needs": [
+                    {
+                        "need_type": "command_check",
+                        "question": "run smoke validation",
+                        "command": "python -m compileall .",
+                    }
+                ]
+            },
+        ],
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert len(runtime.llm_client.requests) == 2
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == ["command_executor"]
+    entries = [
+        json.loads(line)
+        for line in (tmp_path / "tool_planning.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(entry["event_type"] == "problem_resolution_planned" for entry in entries)
+    assert any(entry["event_type"] == "decision_need_empty_plan_retry_recovered" for entry in entries)
 
 
 def test_tool_planning_executor_falls_back_for_unroutable_actionable_plan(tmp_path) -> None:
@@ -1374,6 +1465,29 @@ def test_tool_planning_executor_validation_fallback_does_not_regenerate_code(tmp
     assert [selection.tool_name for selection in runtime.tool_executor.selections] == ["command_executor"]
     command = runtime.tool_executor.selections[0].input_metadata.command
     assert command == f"python -m compileall {tmp_path}"
+
+
+def test_tool_planning_executor_validation_fallback_prefers_runtime_command(tmp_path) -> None:
+    task = Task(id="task", description="Validate generated assistant")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    runtime._project_environments[str(tmp_path)]["run_command"] = "python app.py --smoke"
+    executor = ToolPlanningTaskExecutor(runtime)
+    context = TaskExecutionContext(
+        task=task,
+        parent_context={"goal": "build app", "project_path": str(tmp_path), "run_command": "python app.py --smoke"},
+        shared_state={},
+        execution_history=[],
+    )
+
+    result = executor.execute_task(task, context)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "command_executor",
+        "command_executor",
+    ]
+    assert runtime.tool_executor.selections[0].input_metadata.command == "python app.py --smoke"
+    assert runtime.tool_executor.selections[1].input_metadata.command == f"python -m compileall {tmp_path}"
 
 
 def test_tool_planning_executor_bad_json_returns_failed_result(tmp_path) -> None:

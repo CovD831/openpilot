@@ -73,7 +73,8 @@ def test_project_manager_agent_sketch_shape(tmp_path) -> None:
     assert result["file_count"] == 1
     assert "main.py" in sketch["files"]
     assert sketch["files"]["main.py"]["function_description"]
-    assert sketch["files"]["main.py"]["semantic_info"]["kind"] == "keyword_fallback"
+    assert sketch["files"]["main.py"]["semantic_info"]["kind"] == "content_index"
+    assert sketch["files"]["main.py"]["content_index"]["sections"][0]["title"] == "function main"
     assert agent.search("instruction aligned")[0]["name"] == "main.py"
 
 

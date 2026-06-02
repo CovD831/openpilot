@@ -34,9 +34,11 @@ from tools.tool_selection import (
 )
 from tools.tool_registry import ToolRegistry
 from tools.tool_executor import ToolExecutor
+from tools.environment_fix_tool import summarize_environment_failure
 from core.openpilot_log import OpenPilotLogger
 from core.exceptions import ErrorCategory, classify_error
 from metadata import (
+    ExecutionStateMetadata,
     FailureMetadata,
     ProjectObjectiveMetadata,
     ReferenceInsightMetadata,
@@ -44,6 +46,8 @@ from metadata import (
     SuccessMetricMetadata,
     TaskResultMetadata,
     TextArtifactMetadata,
+    TaskGraphEdgeMetadata,
+    TaskGraphNodeMetadata,
     ToolExecutionEnvelopeMetadata,
     ToolInputMetadata,
     ToolResultMetadata,
@@ -482,13 +486,14 @@ class IntelligentAutopilot:
                     written_files=[str(target_file)],
                     entry_files=[str(target_file)],
                     run_command=f"python {shlex.quote(target_file.name)}",
+                    goal=goal,
                 )
                 tool_results.append(environment_result)
                 if not environment_result.success:
                     if self.enhanced_ui:
                         self.enhanced_ui.set_current_task_state(
                             title="Environment Setup failed",
-                            details=str(environment_result.error_message or "Project environment sync failed."),
+                            details=summarize_environment_failure(environment_result.error_message or ""),
                             status="failed",
                         )
                     readme_result = None
@@ -1198,6 +1203,8 @@ class IntelligentAutopilot:
         written_files: list[str],
         entry_files: list[str],
         run_command: str,
+        goal: str = "",
+        stack_preset_update: dict[str, Any] | None = None,
         parent_task_id: str | None = None,
     ) -> ToolExecutionEnvelopeMetadata:
         if self.enhanced_ui and parent_task_id:
@@ -1212,6 +1219,8 @@ class IntelligentAutopilot:
             "written_files": written_files,
             "entry_files": entry_files,
             "run_command": run_command,
+            "goal": goal,
+            "stack_preset_update": stack_preset_update or {},
             "env_name": ".venv",
             "install": True,
         }
@@ -1228,6 +1237,7 @@ class IntelligentAutopilot:
             self._project_environments[str(project_path.resolve())] = payload.to_json_dict()
             if self.enhanced_ui and parent_task_id:
                 packages = payload.get("detected_packages") or []
+                stack_preset = payload.get("stack_preset") or {}
                 self._set_dashboard_task_status(parent_task_id, "completed")
                 self._append_dashboard_stage_child(
                     "environment",
@@ -1244,6 +1254,17 @@ class IntelligentAutopilot:
                     description="Saved project environment dependency context to short-term memory",
                     kind="note",
                 )
+                if stack_preset:
+                    self._append_dashboard_stage_child(
+                        "environment",
+                        child_id=f"stack_{step_id}",
+                        description=(
+                            f"Stack preset r{stack_preset.get('revision', 1)}: "
+                            f"{stack_preset.get('architecture', 'project_native')}; "
+                            f"UI strategy: {stack_preset.get('ui_strategy', 'evaluate_user_facing_ui')}"
+                        ),
+                        kind="note",
+                    )
                 git_repository = payload.get("git_repository")
                 if git_repository:
                     head = git_repository.get("head") if hasattr(git_repository, "get") else ""
@@ -1271,7 +1292,9 @@ class IntelligentAutopilot:
                     details=(
                         f"Virtual environment: {payload.get('venv_path')}\n"
                         f"Run command: {payload.get('run_command')}\n"
-                        f"Packages: {', '.join(packages) if packages else 'none'}"
+                        f"Packages: {', '.join(packages) if packages else 'none'}\n"
+                        f"Stack preset: {stack_preset.get('architecture', 'project_native')}\n"
+                        f"UI strategy: {stack_preset.get('ui_strategy', 'evaluate_user_facing_ui')}"
                     ),
                     status="completed",
                 )
@@ -1280,7 +1303,7 @@ class IntelligentAutopilot:
             self._append_dashboard_stage_child(
                 "environment",
                 child_id=f"sync_failed_{step_id}",
-                description=str(result.error_message or "Project environment sync failed."),
+                description=summarize_environment_failure(result.error_message or ""),
                 kind="result",
                 status="failed",
             )
@@ -1363,7 +1386,7 @@ class IntelligentAutopilot:
             )
             self.enhanced_ui.set_current_task_state(
                 title=f"Tool: {tool_name}",
-                details="Tool returned successfully" if success else (error or "Project environment sync failed."),
+                details="Tool returned successfully" if success else summarize_environment_failure(error or ""),
                 status=status.value,
             )
 
@@ -2132,18 +2155,32 @@ class IntelligentAutopilot:
                     "[yellow]⚠ Cannot determine execution order (cyclic dependencies?), executing sequentially[/yellow]"
                 )
             execution_order = [task.id for task in tasks]
+        execution_batches = IntelligentAutopilot._execution_batches_with_file_locks(tasks, execution_order)
+        graph_nodes, graph_edges = IntelligentAutopilot._task_graph_metadata(tasks)
+        self._log_task_execution_event(
+            "task_graph_scheduled",
+            input_summary={"total_tasks": len(tasks), "execution_order": execution_order},
+            output_summary={
+                "execution_batches": execution_batches,
+                "task_graph_nodes": [node.to_json_dict() for node in graph_nodes],
+                "task_graph_edges": [edge.to_json_dict() for edge in graph_edges],
+            },
+            success=True,
+        )
 
         if self.use_enhanced_ui:
             results = self._execute_tasks_enhanced_ui(tasks, execution_order, goal)
         else:
             results = self._execute_tasks_standard(tasks, execution_order, goal)
 
+        execution_state = IntelligentAutopilot._execution_state_metadata(tasks, results, execution_batches)
         self._log_task_execution_event(
             "task_execution_completed",
             output_summary={
                 "results": len(results),
                 "completed": len([result for result in results if result.status == TaskStatus.COMPLETED]),
                 "failed": len([result for result in results if result.status == TaskStatus.FAILED]),
+                "execution_state": execution_state.to_json_dict(),
             },
             success=all(result.status == TaskStatus.COMPLETED for result in results),
         )
@@ -2192,6 +2229,136 @@ class IntelligentAutopilot:
             if previous_id not in dependencies:
                 dependencies.append(previous_id)
         return dependencies
+
+    @staticmethod
+    def _task_graph_metadata(tasks: list[Task]) -> tuple[list[TaskGraphNodeMetadata], list[TaskGraphEdgeMetadata]]:
+        nodes = [
+            TaskGraphNodeMetadata(
+                task_id=task.id,
+                description=task.description,
+                task_kind=task.kind,
+                difficulty=task.difficulty,
+                required_inputs=list(task.required_inputs),
+                expected_outputs=list(task.expected_outputs),
+                read_files=list(task.read_files),
+                write_files=list(task.write_files),
+                dependencies=list(task.dependencies),
+                can_run_parallel=task.can_run_parallel,
+                validation_command=task.validation_command,
+            )
+            for task in tasks
+        ]
+        edges = [
+            TaskGraphEdgeMetadata(from_task=dependency_id, to_task=task.id, edge_type="blocks")
+            for task in tasks
+            for dependency_id in task.dependencies
+        ]
+        explicit_edges = {(edge.from_task, edge.to_task) for edge in edges}
+        effective_dependencies = IntelligentAutopilot._effective_task_dependencies(tasks)
+        for task in tasks:
+            for dependency_id in effective_dependencies.get(task.id, set()):
+                if dependency_id in task.dependencies or (dependency_id, task.id) in explicit_edges:
+                    continue
+                edges.append(TaskGraphEdgeMetadata(from_task=dependency_id, to_task=task.id, edge_type="validates"))
+        return nodes, edges
+
+    @staticmethod
+    def _execution_batches_with_file_locks(tasks: list[Task], execution_order: list[str]) -> list[list[str]]:
+        task_by_id = {task.id: task for task in tasks}
+        effective_dependencies = IntelligentAutopilot._effective_task_dependencies(tasks)
+        completed: set[str] = set()
+        scheduled: set[str] = set()
+        batches: list[list[str]] = []
+        while len(scheduled) < len(execution_order):
+            batch: list[str] = []
+            locked_writes: set[str] = set()
+            batch_allows_more = True
+            progress = False
+            for task_id in execution_order:
+                if task_id in scheduled:
+                    continue
+                if not batch_allows_more:
+                    break
+                task = task_by_id.get(task_id)
+                if task is None:
+                    scheduled.add(task_id)
+                    progress = True
+                    continue
+                if not all(dependency_id in completed for dependency_id in effective_dependencies.get(task.id, set())):
+                    continue
+                if not IntelligentAutopilot._task_can_join_batch(task, locked_writes, batch_is_empty=not batch):
+                    continue
+                batch.append(task_id)
+                locked_writes.update(IntelligentAutopilot._normalized_task_write_files(task))
+                if not task.can_run_parallel:
+                    batch_allows_more = False
+                scheduled.add(task_id)
+                progress = True
+            if not batch and not progress:
+                remaining = [task_id for task_id in execution_order if task_id not in scheduled]
+                if remaining:
+                    batch = [remaining[0]]
+                    scheduled.add(remaining[0])
+            if batch:
+                batches.append(batch)
+                completed.update(batch)
+        return batches
+
+    @staticmethod
+    def _effective_task_dependencies(tasks: list[Task]) -> dict[str, set[str]]:
+        dependencies = {task.id: set(task.dependencies) for task in tasks}
+        write_tasks = [task for task in tasks if task.write_files]
+        for task in tasks:
+            if task.kind != "validate" and not task.validation_command:
+                continue
+            for write_task in write_tasks:
+                if write_task.id != task.id:
+                    dependencies.setdefault(task.id, set()).add(write_task.id)
+        return dependencies
+
+    @staticmethod
+    def _task_can_join_batch(task: Task, locked_writes: set[str], *, batch_is_empty: bool) -> bool:
+        if not task.can_run_parallel and not batch_is_empty:
+            return False
+        writes = IntelligentAutopilot._normalized_task_write_files(task)
+        if writes.intersection(locked_writes):
+            return False
+        return True
+
+    @staticmethod
+    def _normalized_task_write_files(task: Task) -> set[str]:
+        return {IntelligentAutopilot._normalize_task_file_key(path) for path in task.write_files if str(path).strip()}
+
+    @staticmethod
+    def _normalize_task_file_key(path: str) -> str:
+        try:
+            return str(Path(path).expanduser().resolve())
+        except OSError:
+            return str(Path(path).expanduser())
+
+    @staticmethod
+    def _execution_state_metadata(
+        tasks: list[Task],
+        results: list[TaskExecutionResult],
+        execution_batches: list[list[str]],
+    ) -> ExecutionStateMetadata:
+        completed = [result.task_id for result in results if result.status == TaskStatus.COMPLETED]
+        failed = [result.task_id for result in results if result.status == TaskStatus.FAILED and not result.attributes.get("blocked")]
+        blocked = [result.task_id for result in results if result.attributes.get("blocked")]
+        changed_files: list[str] = []
+        task_by_id = {task.id: task for task in tasks}
+        for result in results:
+            task = task_by_id.get(result.task_id)
+            if task is not None:
+                changed_files.extend(task.write_files)
+        return ExecutionStateMetadata(
+            completed_tasks=completed,
+            failed_tasks=failed,
+            blocked_tasks=blocked,
+            changed_files=list(dict.fromkeys(changed_files)),
+            validation_result={"all_completed": not failed and not blocked},
+            execution_batches=execution_batches,
+        )
 
     def _blocking_dependency(
         self,
@@ -2365,7 +2532,7 @@ class IntelligentAutopilot:
             )
 
             try:
-                result = self._execute_task(task, task_context)
+                result = IntelligentAutopilot._execute_task_with_problem_resolution(self, task, task_context, goal)
                 results.append(result)
 
                 self.logger.log_event(
@@ -2569,7 +2736,7 @@ class IntelligentAutopilot:
                 )
 
                 try:
-                    result = self._execute_task(task, task_context)
+                    result = IntelligentAutopilot._execute_task_with_problem_resolution(self, task, task_context, goal)
                 except Exception as exc:
                     result = TaskExecutionResult(
                         task_id=task.id,
@@ -2649,6 +2816,140 @@ class IntelligentAutopilot:
             Valid SelectionReason enum value
         """
         return self.tool_io.map_reason_to_enum(reason_text)
+
+    @staticmethod
+    def _execute_task_with_problem_resolution(
+        runtime: Any,
+        task: Task,
+        context: TaskExecutionContext,
+        goal: str,
+    ) -> TaskExecutionResult:
+        """Execute one task and locally decompose recoverable hard planning gaps."""
+        result = runtime._execute_task(task, context)
+        resolution_plan = IntelligentAutopilot._failure_resolution_plan(result)
+        if not resolution_plan or resolution_plan.get("strategy") != "decompose":
+            return result
+        depth = int(task.attributes.get("problem_resolution_depth") or 0)
+        if depth >= 1:
+            return result
+        decomposer = getattr(runtime, "task_decomposer", None)
+        if decomposer is None or not hasattr(decomposer, "decompose"):
+            return result
+
+        failure_details = IntelligentAutopilot._failure_details(result)
+        try:
+            runtime._log_task_execution_event(
+                "task_problem_decomposition_started",
+                input_summary={
+                    "task_id": task.id,
+                    "resolution_plan": resolution_plan,
+                    "problem_signal": failure_details.get("problem_signal"),
+                },
+                success=None,
+            )
+            decomposition = decomposer.decompose(
+                task.description,
+                context={
+                    "goal": goal,
+                    "parent_task_id": task.id,
+                    "problem_signal": failure_details.get("problem_signal"),
+                    "problem_judgment": failure_details.get("problem_judgment"),
+                    "difficulty_assessment": failure_details.get("difficulty_assessment"),
+                    "resolution_plan": resolution_plan,
+                },
+                parent_task_id=task.id,
+            )
+        except Exception as exc:
+            runtime._log_task_execution_event(
+                "task_problem_decomposition_failed",
+                input_summary={"task_id": task.id},
+                success=False,
+                error=str(exc),
+            )
+            return result
+
+        subtasks = list(getattr(decomposition, "subtasks", []) or [])
+        if not subtasks:
+            runtime._log_task_execution_event(
+                "task_problem_decomposition_empty",
+                input_summary={"task_id": task.id},
+                success=False,
+                error="Problem decomposition produced no subtasks",
+            )
+            return result
+        for subtask in subtasks:
+            subtask.attributes["problem_resolution_depth"] = depth + 1
+            subtask.attributes["problem_resolution_parent_task_id"] = task.id
+
+        sub_results = runtime._execute_tasks(subtasks, goal)
+        all_completed = all(sub_result.status == TaskStatus.COMPLETED for sub_result in sub_results)
+        duration = sum(float(sub_result.duration or 0.0) for sub_result in sub_results)
+        payload = {
+            "original_task_id": task.id,
+            "resolution_strategy": "decompose",
+            "subtask_count": len(subtasks),
+            "subtask_results": [
+                {
+                    "task_id": sub_result.task_id,
+                    "status": sub_result.status.value if hasattr(sub_result.status, "value") else str(sub_result.status),
+                    "error": sub_result.error,
+                }
+                for sub_result in sub_results
+            ],
+            "original_failure": failure_details,
+        }
+        runtime._log_task_execution_event(
+            "task_problem_decomposition_completed",
+            input_summary={"task_id": task.id, "subtask_count": len(subtasks)},
+            output_summary=payload,
+            success=all_completed,
+        )
+        if all_completed:
+            return TaskExecutionResult(
+                task_id=task.id,
+                status=TaskStatus.COMPLETED,
+                result_metadata=TaskResultMetadata(
+                    task_id=task.id,
+                    status=ResultStatus.SUCCESS,
+                    result=TextArtifactMetadata(content="problem resolved through decomposition", attributes=payload),
+                    duration=duration,
+                ),
+                duration=duration,
+                attributes={"problem_resolution": payload},
+            )
+
+        failed = [sub_result for sub_result in sub_results if sub_result.status == TaskStatus.FAILED]
+        error = failed[0].error if failed else "Problem decomposition did not complete"
+        return TaskExecutionResult(
+            task_id=task.id,
+            status=TaskStatus.FAILED,
+            error=f"Problem decomposition failed: {error}",
+            result_metadata=TaskResultMetadata(
+                task_id=task.id,
+                status=ResultStatus.FAIL,
+                failure=FailureMetadata(
+                    error_type="ProblemDecompositionFailed",
+                    error_message=f"Problem decomposition failed: {error}",
+                    details=payload,
+                ),
+                duration=duration,
+            ),
+            duration=duration,
+            attributes={"problem_resolution": payload},
+        )
+
+    @staticmethod
+    def _failure_resolution_plan(result: TaskExecutionResult) -> dict[str, Any]:
+        details = IntelligentAutopilot._failure_details(result)
+        resolution_plan = details.get("resolution_plan")
+        return resolution_plan if isinstance(resolution_plan, dict) else {}
+
+    @staticmethod
+    def _failure_details(result: TaskExecutionResult) -> dict[str, Any]:
+        metadata = getattr(result, "result_metadata", None)
+        failure = getattr(metadata, "failure", None)
+        details = getattr(failure, "details", None)
+        return details if isinstance(details, dict) else {}
 
     def _execute_task(self, task: Task, context: TaskExecutionContext) -> TaskExecutionResult:
         """Execute a single task through the module-owned tool planning agent."""

@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
+from metadata import CodeArtifactMetadata
 from metadata import ToolInputMetadata, ToolResultMetadata, artifact_to_tool_input
+from core.python_requirements import is_requirements_file
 from tools.tool_selection import ToolSelection
 
 
@@ -91,6 +95,19 @@ class ExecutionToolIO:
             return input_metadata
         routed = artifact_to_tool_input(tool_name, preferred_output)
         routed_params = routed.to_params()
+        rerouted_file_path = self._reroute_incompatible_writer_target(
+            params.get("file_path"),
+            routed_params,
+            preferred_output,
+        )
+        if rerouted_file_path:
+            params["file_path"] = rerouted_file_path
+            try:
+                if Path(rerouted_file_path).expanduser().exists():
+                    params["operation_kind"] = "file_replace"
+                    params["overwrite"] = True
+            except OSError:
+                pass
         for key, value in routed_params.items():
             current = params.get(key)
             if current in (None, "", [], {}) or self._is_generated_placeholder(current):
@@ -102,6 +119,52 @@ class ExecutionToolIO:
             {"output_keys": list(resolved.to_params())},
         )
         return resolved
+
+    def _reroute_incompatible_writer_target(
+        self,
+        current_file_path: Any,
+        routed_params: dict[str, Any],
+        preferred_output: Any,
+    ) -> str:
+        if not current_file_path or not is_requirements_file(str(current_file_path)):
+            return ""
+        artifact = preferred_output.result if isinstance(preferred_output, ToolResultMetadata) else preferred_output
+        if not isinstance(artifact, CodeArtifactMetadata):
+            return ""
+        if str(artifact.language or "").lower() != "python":
+            return ""
+        content = str(routed_params.get("content") or artifact.code or artifact.content or "")
+        if not content.strip():
+            return ""
+        return self._suggest_python_file_path(Path(str(current_file_path)), content, artifact)
+
+    def _suggest_python_file_path(
+        self,
+        rejected_path: Path,
+        content: str,
+        artifact: CodeArtifactMetadata,
+    ) -> str:
+        attrs = artifact.attributes if isinstance(artifact.attributes, dict) else {}
+        for key in ("file_path", "target_file", "target_path"):
+            candidate = str(attrs.get(key) or "").strip()
+            if candidate and candidate.endswith(".py") and not is_requirements_file(candidate):
+                return candidate
+
+        lowered = content.lower()
+        stem = "generated"
+        if "assistant" in lowered:
+            stem = "assistant"
+        elif re.search(r"^\s*def\s+main\s*\(", content, flags=re.MULTILINE) or "__main__" in content:
+            stem = "main"
+        else:
+            class_match = re.search(r"^\s*class\s+([A-Z][A-Za-z0-9_]*)", content, flags=re.MULTILINE)
+            if class_match:
+                stem = self._camel_to_snake(class_match.group(1))
+        return str(rejected_path.expanduser().parent / f"{stem}.py")
+
+    def _camel_to_snake(self, value: str) -> str:
+        first = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", value)
+        return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", first).lower()
 
     def _is_generated_placeholder(self, value: Any) -> bool:
         if not isinstance(value, str):

@@ -187,6 +187,28 @@ def test_tool_router_replaces_existing_files_for_idempotent_generation(tmp_path)
     assert selection.input_metadata.operation_kind == "file_replace"
 
 
+def test_tool_router_routes_file_deletion_to_delete_tool(tmp_path) -> None:
+    target = tmp_path / "obsolete.py"
+    target.write_text("print('remove me')\n", encoding="utf-8")
+    router = ToolRouter()
+    state = RuntimeStateMetadata(goal="Remove obsolete file")
+
+    selection = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="file_delete",
+            question="Delete obsolete file after evidence read",
+            target_path=str(target),
+            operation_kind="delete_file",
+        ),
+    )[0]
+
+    assert selection.tool_name == "file_delete_tool"
+    assert selection.input_metadata.file_path == str(target)
+    assert selection.input_metadata.operation_kind == "delete_file"
+    assert selection.requires_confirmation is True
+
+
 def test_tool_router_distinguishes_code_generation_and_symbol_edits() -> None:
     router = ToolRouter()
     state = RuntimeStateMetadata(goal="Patch code")

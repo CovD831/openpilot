@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 from typing import Any
 
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 
 from core.tool_contracts import PermissionLevel, ToolCapability, ToolDefinition, ToolFailureMode
+from memory.project_index import ProjectIndexManager
+from tools.file_indexing import refresh_after_file_change
 
 
 FILE_PATCH_WRITER_DEFINITION = ToolDefinition(
@@ -67,6 +70,9 @@ def file_patch_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultM
         if not unit:
             raise ValueError("file_patch_writer add_symbol requires generated_unit")
         updated, changed_ranges = _insert_unit(original, unit, params | patch)
+    elif operation_kind in {"delete_range", "delete_section", "remove_section", "delete_symbol", "remove_symbol"}:
+        line_start, line_end = _target_range(original, params | patch, file_path=file_path)
+        updated, changed_ranges = _delete_range(original, line_start, line_end)
     else:
         replacement = str(
             params.get("replacement_text")
@@ -77,19 +83,28 @@ def file_patch_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultM
         ).rstrip()
         if not replacement:
             raise ValueError("file_patch_writer modify_symbol requires replacement_text or patch.replacement_text")
-        line_start, line_end = _target_range(original, params | patch)
+        line_start, line_end = _target_range(original, params | patch, file_path=file_path)
         updated, changed_ranges = _replace_range(original, line_start, line_end, replacement)
 
     if file_path.suffix == ".py":
         ast.parse(updated)
 
     file_path.write_text(updated, encoding=encoding)
+    index_update: dict[str, Any] = {}
+    warnings: list[str] = []
+    try:
+        index_update = refresh_after_file_change(file_path)
+    except Exception as exc:
+        warnings.append(f"File index refresh failed: {exc}")
+
     return {
         "file_path": str(file_path.absolute()),
         "bytes_written": file_path.stat().st_size,
         "created": False,
         "operation_kind": operation_kind,
         "changed_ranges": changed_ranges,
+        "index_update": index_update,
+        "warnings": warnings,
     }
 
 
@@ -134,15 +149,40 @@ def _replace_range(original: str, line_start: int, line_end: int, replacement: s
     return _with_trailing_newline(updated_lines, original), [{"line_start": line_start, "line_end": end}]
 
 
-def _target_range(original: str, params: dict[str, Any]) -> tuple[int, int]:
+def _delete_range(original: str, line_start: int, line_end: int) -> tuple[str, list[dict[str, int]]]:
+    lines = _split_lines(original)
+    if line_start < 1 or line_end < line_start or line_end > len(lines):
+        raise ValueError(f"Invalid delete range: {line_start}-{line_end}")
+    updated_lines = lines[: line_start - 1] + lines[line_end:]
+    return _with_trailing_newline(updated_lines, original), [{"line_start": line_start, "line_end": line_end}]
+
+
+def _target_range(original: str, params: dict[str, Any], *, file_path: Path | None = None) -> tuple[int, int]:
     line_start = params.get("line_start")
     line_end = params.get("line_end")
     if isinstance(line_start, int) and isinstance(line_end, int):
         return line_start, line_end
+    section_id = str(params.get("section_id") or "")
+    section_title = str(params.get("section_title") or params.get("title") or "")
+    if file_path is not None and (section_id or section_title):
+        indexed_range = _target_range_from_index(file_path, section_id=section_id, section_title=section_title)
+        if indexed_range:
+            return indexed_range
     symbol_name = str(params.get("symbol_name") or "")
     if symbol_name:
-        return _find_python_symbol_range(original, symbol_name)
-    raise ValueError("file_patch_writer requires line_start/line_end or symbol_name for modify_symbol")
+        if file_path is not None and file_path.suffix != ".py":
+            indexed_range = _target_range_from_index(file_path, symbol_name=symbol_name)
+            if indexed_range:
+                return indexed_range
+        try:
+            return _find_python_symbol_range(original, symbol_name)
+        except ValueError:
+            if file_path is not None:
+                indexed_range = _target_range_from_index(file_path, symbol_name=symbol_name)
+                if indexed_range:
+                    return indexed_range
+            raise
+    raise ValueError("file_patch_writer requires line_start/line_end, section_id, section_title, or symbol_name")
 
 
 def _find_python_symbol_range(source: str, symbol_name: str) -> tuple[int, int]:
@@ -157,3 +197,37 @@ def _find_python_symbol_range(source: str, symbol_name: str) -> tuple[int, int]:
                 raise ValueError(f"Python runtime did not provide end_lineno for symbol: {symbol_name}")
             return int(node.lineno), int(end_lineno)
     raise ValueError(f"Python symbol not found: {symbol_name}")
+
+
+def _target_range_from_index(
+    file_path: Path,
+    *,
+    section_id: str = "",
+    section_title: str = "",
+    symbol_name: str = "",
+) -> tuple[int, int] | None:
+    try:
+        manager = ProjectIndexManager.for_path(file_path)
+        index = manager.update_file_index(file_path)
+        payload = index.to_json_dict()
+    except Exception:
+        try:
+            index_file = ProjectIndexManager.for_path(file_path).index_file_for(file_path)
+            payload = json.loads(index_file.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    title_query = section_title.lower().strip()
+    symbol_query = symbol_name.lower().strip()
+    for section in payload.get("sections", []) or []:
+        if not isinstance(section, dict):
+            continue
+        if section_id and str(section.get("section_id") or "") == section_id:
+            return int(section["line_start"]), int(section["line_end"])
+        title = str(section.get("title") or "").lower()
+        symbol = str(section.get("symbol_name") or "").lower()
+        if title_query and (title == title_query or title_query in title):
+            return int(section["line_start"]), int(section["line_end"])
+        if symbol_query and symbol == symbol_query:
+            return int(section["line_start"]), int(section["line_end"])
+    return None

@@ -90,6 +90,31 @@ def test_tool_io_resolves_chained_metadata_for_writer_and_executor() -> None:
     assert executor_metadata.language == "python"
 
 
+def test_tool_io_reroutes_python_code_away_from_requirements_file(tmp_path) -> None:
+    helper = ExecutionToolIO()
+    generated = ToolResultMetadata(
+        tool_name="code_generator",
+        status=ResultStatus.SUCCESS,
+        result=CodeArtifactMetadata(
+            code='"""OpenPilot Assistant main file."""\n\ndef main():\n    pass\n',
+            language="python",
+        ),
+    )
+
+    writer_metadata = helper.resolve_chained_metadata(
+        "file_writer",
+        ToolInputMetadata.from_mapping(
+            "file_writer",
+            {"file_path": str(tmp_path / "requirements.txt"), "operation_kind": "create_file"},
+        ),
+        last_output=None,
+        last_code_output=generated,
+    )
+
+    assert writer_metadata.file_path == str(tmp_path / "assistant.py")
+    assert writer_metadata.content.startswith('"""OpenPilot Assistant')
+
+
 def test_tool_io_does_not_chain_file_content_into_command_executor() -> None:
     helper = ExecutionToolIO()
     read_result = ToolResultMetadata(

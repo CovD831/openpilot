@@ -68,3 +68,5 @@ class EnvironmentFixResultMetadata(MetadataBase):
     command_executed: bool = False
     requires_confirmation: bool = False
     user_declined: bool = False
+    index_updates: list[dict[str, JsonValue]] = Field(default_factory=list)
+    index_warnings: list[str] = Field(default_factory=list)

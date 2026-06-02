@@ -135,3 +135,88 @@ def test_task_file_resolver_uses_written_files_only_as_last_resort(tmp_path) -> 
 
     assert result.result.primary_file.name == "app.py"
     assert result.result.primary_file.relation_source == "written_files_fallback"
+
+
+def test_task_file_resolver_accepts_explicit_planned_frontend_file_inside_project(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "assistant.py").write_text("print('assistant')\n", encoding="utf-8")
+
+    result = task_file_resolver_executor(
+        ToolInputMetadata.from_mapping(
+            "task_file_resolver",
+            {
+                "project_path": str(project),
+                "task_description": "Create the planned browser user interface",
+                "file_paths": ["index.html"],
+                "written_files": ["assistant.py"],
+            },
+        )
+    )
+
+    assert result.result.primary_file.name == "index.html"
+    assert result.result.primary_file.relation_source == "planned_target"
+    assert not (project / "index.html").exists()
+
+
+def test_task_file_resolver_extracts_nested_planned_file_from_task_text(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "assistant.py").write_text("print('assistant')\n", encoding="utf-8")
+
+    result = task_file_resolver_executor(
+        ToolInputMetadata.from_mapping(
+            "task_file_resolver",
+            {
+                "project_path": str(project),
+                "task_description": "Enhance the frontend template (templates/index.html) with a polished chat interface.",
+                "written_files": ["assistant.py"],
+            },
+        )
+    )
+
+    assert result.result.primary_file.file_path == str(project / "templates" / "index.html")
+    assert result.result.primary_file.relation_source == "planned_target"
+    assert not (project / "templates").exists()
+
+
+def test_task_file_resolver_prefers_specific_nested_planned_path_over_bare_hint(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "assistant.py").write_text("print('assistant')\n", encoding="utf-8")
+
+    result = task_file_resolver_executor(
+        ToolInputMetadata.from_mapping(
+            "task_file_resolver",
+            {
+                "project_path": str(project),
+                "task_description": "Enhance templates/index.html with conversation history.",
+                "file_paths": ["index.html"],
+                "written_files": ["assistant.py"],
+            },
+        )
+    )
+
+    assert result.result.primary_file.file_path == str(project / "templates" / "index.html")
+
+
+def test_task_file_resolver_rejects_planned_file_outside_project(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    app = project / "assistant.py"
+    app.write_text("print('assistant')\n", encoding="utf-8")
+
+    result = task_file_resolver_executor(
+        ToolInputMetadata.from_mapping(
+            "task_file_resolver",
+            {
+                "project_path": str(project),
+                "task_description": "",
+                "file_paths": ["../outside.html"],
+                "written_files": ["assistant.py"],
+            },
+        )
+    )
+
+    assert result.result.primary_file.name == "assistant.py"
+    assert result.result.primary_file.relation_source == "written_files_fallback"

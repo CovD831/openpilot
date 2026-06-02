@@ -7,6 +7,7 @@ from autonomous_iteration.project_diagnosis import ProjectDiagnoser
 from metadata import (
     ProjectDependencyMetadata,
     ProjectObjectiveMetadata,
+    ProjectStackPresetMetadata,
     ReferenceInsightMetadata,
     SuccessMetricMetadata,
     ValidationIssueMetadata,
@@ -223,3 +224,28 @@ def test_project_diagnoser_reference_query_includes_dependency_context(tmp_path)
     assert "pygame" in calls[0]
     assert diagnosis.dependency_strategy is not None
     assert calls[0] in diagnosis.dependency_strategy.reference_queries
+
+
+def test_project_diagnoser_prioritizes_missing_planned_browser_ui(tmp_path) -> None:
+    state = _state(tmp_path, "帮我做一个个人数字助手")
+    state.stack_preset = ProjectStackPresetMetadata(
+        project_path=str(tmp_path),
+        delivery_surface="browser",
+        architecture="frontend_backend_split",
+        frontend_language="html_css_javascript",
+        backend_language="python",
+        ui_strategy="browser_application",
+        ui_review_required=True,
+    )
+
+    diagnosis = ProjectDiagnoser(allow_reference_search=False).diagnose(
+        project_state=state,
+        evaluation=_passing_evaluation(),
+        iteration=1,
+    )
+
+    assert diagnosis.stack_preset is not None
+    assert diagnosis.objective.delivery_surface == "browser"
+    assert diagnosis.selected_candidate is not None
+    assert diagnosis.selected_candidate.candidate_id == "ui_surface_completion"
+    assert "frontend file evidence" in diagnosis.selected_candidate.rationale

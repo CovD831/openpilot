@@ -109,6 +109,7 @@ class ToolInputMetadata(MetadataBase):
     memory_query: str | None = None
     validation_context: dict[str, JsonValue] = Field(default_factory=dict)
     validation_result: dict[str, JsonValue] = Field(default_factory=dict)
+    stack_preset_update: dict[str, JsonValue] = Field(default_factory=dict)
     memory_context: dict[str, JsonValue] = Field(default_factory=dict)
     iteration: int | None = None
     include_environment: bool | None = None
@@ -161,8 +162,11 @@ class ToolInputMetadata(MetadataBase):
         """Return public tool fields plus runtime handles for implementation internals."""
         data = self.model_dump(exclude_none=True, exclude={"kind", "schema_version", "source", "correlation", "created_at", "annotations", "runtime_handles"})
         data.pop("tool_name", None)
-        data.pop("attributes", None)
+        attributes = data.pop("attributes", None)
         data = {key: value for key, value in data.items() if value not in ({}, [])}
+        if isinstance(attributes, dict):
+            for key, value in attributes.items():
+                data.setdefault(str(key), value)
         data.update(self.runtime_handles)
         return data
 

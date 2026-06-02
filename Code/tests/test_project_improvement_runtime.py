@@ -65,6 +65,7 @@ class FakeAutopilot:
         *,
         environment_failures_before_success: int = 0,
         environment_error: str = "env failed",
+        environment_errors: list[str] | None = None,
     ) -> None:
         self.enable_iterative_improvement = True
         self.required_successful_improvements = 1
@@ -78,6 +79,7 @@ class FakeAutopilot:
         self.environment_success = environment_success
         self.environment_failures_before_success = environment_failures_before_success
         self.environment_error = environment_error
+        self.environment_errors = list(environment_errors or [])
         self.environment_calls = 0
 
     def _resolve_project_improvement_iterations(self, goal, project_path) -> bool:
@@ -85,6 +87,12 @@ class FakeAutopilot:
 
     def _sync_project_environment(self, **kwargs):
         self.environment_calls += 1
+        if self.environment_errors:
+            return _tool_envelope(
+                "project_environment_tool",
+                {"success": False, "error": self.environment_errors.pop(0)},
+                kwargs.get("input_metadata"),
+            )
         if self.environment_failures_before_success > 0:
             self.environment_failures_before_success -= 1
             return _tool_envelope("project_environment_tool", {"success": False, "error": self.environment_error}, kwargs.get("input_metadata"))
@@ -190,6 +198,37 @@ def test_project_improvement_runtime_repairs_invalid_requirements_then_retries(t
     assert result["success"] is True
     assert autopilot.environment_calls == 2
     assert requirements.read_text(encoding="utf-8") == "rich\nrequests>=2\n"
+
+
+def test_project_improvement_runtime_iterates_environment_repairs_until_sync_succeeds(tmp_path) -> None:
+    requirements = tmp_path / "requirements.txt"
+    secondary_requirements = tmp_path / "requirements-dev.txt"
+    requirements.write_text('rich\n"""\n', encoding="utf-8")
+    secondary_requirements.write_text('pytest\n"""\n', encoding="utf-8")
+    invalid_requirement = (
+        f"ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of dependency specifier\n"
+        f"    ^ (from line 2 of {requirements})\n"
+    )
+    secondary_invalid_requirement = (
+        f"ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of dependency specifier\n"
+        f"    ^ (from line 2 of {secondary_requirements})\n"
+    )
+    autopilot = FakeAutopilot(
+        tmp_path,
+        environment_errors=[invalid_requirement, secondary_invalid_requirement],
+    )
+    runtime = ProjectImprovementRuntime(autopilot)
+
+    result = runtime.run(
+        goal="Improve project",
+        project_path=tmp_path,
+        written_files=[str(tmp_path / "app.py")],
+    )
+
+    assert result["success"] is True
+    assert autopilot.environment_calls == 3
+    assert requirements.read_text(encoding="utf-8") == "rich\n"
+    assert secondary_requirements.read_text(encoding="utf-8") == "pytest\n"
 
 
 def test_project_improvement_runtime_success_callbacks_and_shape(tmp_path) -> None:

@@ -171,11 +171,12 @@ class AutonomousIterationAgent:
         attempts_used = 0
         improvement_report: dict[str, Any] | None = None
         failure_context: dict[str, Any] = {}
+        known_project_files = self._merge_project_files(written_files)
 
         current = self.evaluator.evaluate_project(
             goal=goal,
             project_path=project_path,
-            written_files=written_files,
+            written_files=known_project_files,
             run_command=run_command,
             readme_path=readme_path,
             static_review=static_review,
@@ -206,7 +207,7 @@ class AutonomousIterationAgent:
                 reader=read_project_state,
                 goal=goal,
                 project_path=project_path,
-                written_files=written_files,
+                written_files=known_project_files,
                 run_command=run_command or current.run_command,
                 readme_path=readme_path,
                 evaluation=current,
@@ -422,6 +423,7 @@ class AutonomousIterationAgent:
                 is_repair,
             )
             if not iteration_result.success:
+                known_project_files = self._merge_project_files(known_project_files, iteration_result.changed_files)
                 failure_context = self._failure_context(
                     iteration_result,
                     attempts_used,
@@ -447,11 +449,12 @@ class AutonomousIterationAgent:
                 )
                 break
 
+            known_project_files = self._merge_project_files(known_project_files, iteration_result.changed_files)
             self._notify(on_progress, "modification_evaluation_started", {"iteration": attempts_used, "result": iteration_result})
             current = self.evaluator.evaluate_project(
                 goal=goal,
                 project_path=project_path,
-                written_files=written_files,
+                written_files=known_project_files,
                 run_command=run_command,
                 readme_path=readme_path,
                 static_review=static_review,
@@ -779,7 +782,10 @@ class AutonomousIterationAgent:
             "You are OpenPilot's Task Designer Agent. Convert one improvement goal into 1-2 "
             "specific implementation tasks with target files and acceptance criteria. Return ONLY JSON.\n"
             "Carry forward the Prompt Context/rubric from the improvement report exactly. Do not dilute "
-            "a product-fit migration goal into terminal-only polish tasks.\n\n"
+            "a product-fit migration goal into terminal-only polish tasks. Assess UI impact for every "
+            "feature task: when behavior is user-facing, include the corresponding controls, visible states, "
+            "feedback, navigation, and frontend target files required by the persisted stack preset. "
+            "Do not silently change frontend/backend languages or frameworks; request an explicit stack preset revision.\n\n"
             f"Completed successful improvements: {completed_iteration}\n"
             f"Selected goal JSON: {goal.model_dump_json()}\n"
             f"Project state JSON: {project_state.model_dump_json()}\n"
@@ -1176,6 +1182,12 @@ class AutonomousIterationAgent:
 
     def _dedupe_text(self, items: list[Any]) -> list[str]:
         return self._coerce_string_list(items) if len(items) <= 1 else list(dict.fromkeys(self._coerce_string_list(items)))
+
+    def _merge_project_files(self, *groups: list[str] | tuple[str, ...]) -> list[str]:
+        files: list[Any] = []
+        for group in groups:
+            files.extend(group or [])
+        return self._dedupe_text(files)
 
     def _select_repair_actions(self, evaluation: EvaluationResult) -> list[str]:
         primary_issue = self._primary_validation_issue(evaluation)

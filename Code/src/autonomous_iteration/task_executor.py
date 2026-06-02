@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import uuid
+from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +21,13 @@ from metadata import (
     ToolExecutionEnvelopeMetadata,
     ToolInputMetadata,
 )
-from tools.environment_fix_tool import environment_fix_tool_executor
+from tools.environment_fix_tool import environment_fix_tool_executor, summarize_environment_failure
 
 
 class AutonomousTaskExecutor:
     """Execute instruction-defined autonomous iteration subtasks."""
+
+    MAX_ENVIRONMENT_REPAIR_ATTEMPTS = 3
 
     def __init__(self, runtime: Any) -> None:
         self.runtime = runtime
@@ -84,8 +87,11 @@ class AutonomousTaskExecutor:
         try:
             current_content = target_file.read_text(encoding="utf-8")
         except OSError as exc:
-            reason = f"Failed to read {target_file}: {exc}"
-            return self._failure(iteration, actions, reason, "file_reader")
+            if resolution.primary_file.relation_source == "planned_target" and not target_file.exists():
+                current_content = ""
+            else:
+                reason = f"Failed to read {target_file}: {exc}"
+                return self._failure(iteration, actions, reason, "file_reader")
 
         if is_repair and self._should_use_bug_fix(evaluation):
             return self._execute_bug_fix(
@@ -102,6 +108,7 @@ class AutonomousTaskExecutor:
                 task=task,
                 iteration=iteration,
                 goal=goal,
+                project_path=project_path,
                 target_file=target_file,
                 current_text=current_content,
                 edit_kind=edit_kind,
@@ -237,6 +244,12 @@ class AutonomousTaskExecutor:
             written_files=[str(target_file)],
             entry_files=[str(target_file)],
             run_command=run_command,
+            goal=goal,
+            stack_preset_update=(
+                improvement_report.get("stack_preset_update")
+                if isinstance(improvement_report.get("stack_preset_update"), dict)
+                else None
+            ),
             parent_task_id=self.runtime._dashboard_stage_id("environment"),
         )
         self._log_agent(
@@ -247,32 +260,43 @@ class AutonomousTaskExecutor:
             error=environment_result.error_message,
         )
         if not environment_result.success:
-            repair_result = self._attempt_environment_repair(
-                task=task,
-                project_path=project_path,
-                environment_result=environment_result,
-            )
-            repair_payload = repair_result.output if repair_result else None
-            if repair_result and repair_result.success and getattr(repair_payload, "applied", False):
+            repair_results: list[ToolExecutionEnvelopeMetadata] = []
+            for repair_attempt in range(1, self.MAX_ENVIRONMENT_REPAIR_ATTEMPTS + 1):
+                repair_result = self._attempt_environment_repair(
+                    task=task,
+                    project_path=project_path,
+                    environment_result=environment_result,
+                    repair_attempt=repair_attempt,
+                )
+                if repair_result is not None:
+                    repair_results.append(repair_result)
+                repair_payload = repair_result.output if repair_result else None
+                if not repair_result or not repair_result.success or not getattr(repair_payload, "applied", False):
+                    break
                 environment_result = self.runtime._sync_project_environment(
                     task=task,
-                    step_id=f"iteration_{iteration}_repaired_project_environment_tool",
+                    step_id=f"iteration_{iteration}_repaired_project_environment_tool_{repair_attempt}",
                     project_path=project_path,
                     written_files=[str(target_file)],
                     entry_files=[str(target_file)],
                     run_command=run_command,
+                    goal=goal,
                     parent_task_id=self.runtime._dashboard_stage_id("environment"),
                 )
-                environment_result = self._with_environment_repair_details(environment_result, repair_result)
                 self._log_agent(
                     "environment_sync_retried_after_repair",
-                    {"iteration": iteration, "project_path": str(project_path)},
+                    {
+                        "iteration": iteration,
+                        "project_path": str(project_path),
+                        "repair_attempt": repair_attempt,
+                    },
                     {"success": environment_result.success},
                     success=environment_result.success,
                     error=environment_result.error_message,
                 )
-            else:
-                environment_result = self._with_environment_repair_details(environment_result, repair_result)
+                if environment_result.success:
+                    break
+            environment_result = self._with_environment_repair_details(environment_result, repair_results)
         if not environment_result.success or environment_result.output is None:
             reason = environment_result.error_message or "Project environment sync failed."
             if environment_result.failure and isinstance(environment_result.failure.details, dict):
@@ -534,6 +558,7 @@ class AutonomousTaskExecutor:
         task: Task,
         iteration: int,
         goal: str,
+        project_path: Path,
         target_file: Path,
         current_text: str,
         edit_kind: str,
@@ -556,7 +581,7 @@ class AutonomousTaskExecutor:
         if validation_error:
             return self._failure(iteration, actions, validation_error, "file_content_generator")
         self._create_git_snapshot(
-            project_path=target_file.parent,
+            project_path=project_path,
             iteration=iteration,
             reason=f"{edit_kind}_file_write",
             target_files=[str(target_file)],
@@ -626,6 +651,8 @@ class AutonomousTaskExecutor:
                                     f"Validation summary: {evaluation.summary}\n"
                                     f"Actions: {actions}\n"
                                     f"Acceptance criteria: {improvement_report.get('must_implement_next') or []}\n\n"
+                                    f"Persisted stack preset: {improvement_report.get('stack_preset') or {}}\n"
+                                    f"UI iteration contract: {improvement_report.get('ui_iteration_contract') or {}}\n\n"
                                     f"Current file content:\n{current_text}"
                                 ),
                             )
@@ -655,6 +682,26 @@ class AutonomousTaskExecutor:
             lines = [current_text.rstrip(), "", f"## {heading}"]
             lines.extend(f"- {item}" for item in (criteria or actions))
             return "\n".join(lines).rstrip() + "\n"
+        if target_file.suffix.lower() == ".html":
+            items = "\n".join(f"      <li>{escape(str(item))}</li>" for item in (criteria or actions))
+            return (
+                "<!doctype html>\n"
+                '<html lang="en">\n'
+                "  <head>\n"
+                '    <meta charset="utf-8">\n'
+                '    <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+                "    <title>Application</title>\n"
+                "  </head>\n"
+                "  <body>\n"
+                "    <main>\n"
+                "      <h1>Application</h1>\n"
+                "      <ul>\n"
+                f"{items}\n"
+                "      </ul>\n"
+                "    </main>\n"
+                "  </body>\n"
+                "</html>\n"
+            )
         return current_text.rstrip() + "\n\n" + "\n".join(str(item) for item in (criteria or actions)) + "\n"
 
     def _validate_text_file_content(self, target_file: Path, content: str, edit_kind: str) -> str:
@@ -920,11 +967,21 @@ class AutonomousTaskExecutor:
         if warning_check and warning_check.requires_fix:
             return True
         issues = list(getattr(evaluation, "validation_issues", []) or [])
-        return any(
-            getattr(issue, "severity", "blocking") == "blocking"
-            and getattr(issue, "category", "") in {"runtime_error", "runtime_warning"}
-            for issue in issues
-        )
+        return any(self._issue_is_bug_fixable(issue) for issue in issues)
+
+    def _issue_is_bug_fixable(self, issue: Any) -> bool:
+        if getattr(issue, "severity", "blocking") != "blocking":
+            return False
+        category = str(getattr(issue, "category", "") or "")
+        if category in {"runtime_error", "runtime_warning"}:
+            return True
+        repair_kind = str(getattr(issue, "recommended_repair_kind", "") or "")
+        return category in {"environment", "configuration"} and repair_kind in {
+            "fix_startup_import_contract",
+            "repair_runtime_system_output",
+            "make_web_port_configurable",
+            "defer_required_secret_validation",
+        }
 
     def _attempt_environment_repair(
         self,
@@ -932,6 +989,7 @@ class AutonomousTaskExecutor:
         task: Task,
         project_path: Path,
         environment_result: ToolExecutionEnvelopeMetadata,
+        repair_attempt: int,
     ) -> ToolExecutionEnvelopeMetadata | None:
         error_message = environment_result.error_message or "Project environment sync failed."
         input_metadata = ToolInputMetadata.from_mapping(
@@ -947,7 +1005,7 @@ class AutonomousTaskExecutor:
         if callable(execute_fix):
             return execute_fix(
                 task=task,
-                step_id="iteration_environment_fix_tool",
+                step_id=f"iteration_environment_fix_tool_{repair_attempt}",
                 input_metadata=input_metadata,
                 parent_task_id=self.runtime._dashboard_stage_id("environment"),
             )
@@ -955,7 +1013,7 @@ class AutonomousTaskExecutor:
         success = output_metadata.status == ResultStatus.SUCCESS
         return ToolExecutionEnvelopeMetadata(
             tool_name="environment_fix_tool",
-            step_id="iteration_environment_fix_tool",
+            step_id=f"iteration_environment_fix_tool_{repair_attempt}",
             status=output_metadata.status,
             success=success,
             input_metadata=input_metadata,
@@ -966,27 +1024,35 @@ class AutonomousTaskExecutor:
     def _with_environment_repair_details(
         self,
         result: ToolExecutionEnvelopeMetadata,
-        repair_result: ToolExecutionEnvelopeMetadata | None,
+        repair_results: list[ToolExecutionEnvelopeMetadata],
     ) -> ToolExecutionEnvelopeMetadata:
-        if repair_result is None:
+        if not repair_results:
             return result
-        repair_output = repair_result.output.to_json_dict() if repair_result.output else None
+        repair_outputs = [repair.output.to_json_dict() if repair.output else None for repair in repair_results]
+        retry_history = list(result.retry_history)
+        retry_history.extend({"environment_repair": output, "success": result.success} for output in repair_outputs)
         if result.success:
-            result.retry_history.append({"environment_repair": repair_output, "success": True})
-            return result
+            return result.model_copy(update={"retry_history": retry_history})
         failure = result.failure or FailureMetadata(
             error_type="EnvironmentSetupFailed",
             error_message=result.error_message or "Project environment sync failed.",
         )
         details = dict(failure.details or {})
-        details["environment_repair"] = repair_output
-        if isinstance(repair_output, dict):
-            environment_failure = repair_output.get("environment_failure") or {}
+        details["environment_repairs"] = repair_outputs
+        details["environment_repair_attempts"] = len(repair_outputs)
+        details["root_cause"] = summarize_environment_failure(result.error_message or "")
+        last_repair_output = repair_outputs[-1]
+        if isinstance(last_repair_output, dict):
+            environment_failure = last_repair_output.get("environment_failure") or {}
             if isinstance(environment_failure, dict):
-                details["root_cause"] = environment_failure.get("root_cause")
                 details["affected_file"] = environment_failure.get("affected_file")
                 details["pip_notices"] = environment_failure.get("pip_notices")
-        return result.model_copy(update={"failure": failure.model_copy(update={"details": details})})
+        return result.model_copy(
+            update={
+                "failure": failure.model_copy(update={"details": details}),
+                "retry_history": retry_history,
+            }
+        )
 
     def _execute_bug_fix(
         self,
@@ -1046,12 +1112,13 @@ class AutonomousTaskExecutor:
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         if result.success:
+            changed_files = self._bug_fix_changed_files(result.output) or issue_target_files or [str(target_file)]
             return IterationResult(
                 iteration=iteration,
                 validation_passed=True,
                 completed_successful_iteration=False,
                 applied_actions=actions,
-                changed_files=[str(target_file)],
+                changed_files=changed_files,
                 success=True,
                 failure_stage=None,
                 failed_tool=None,
@@ -1063,10 +1130,17 @@ class AutonomousTaskExecutor:
         issues = [
             issue
             for issue in (getattr(evaluation, "validation_issues", []) or [])
-            if getattr(issue, "category", "") in {"runtime_error", "runtime_warning"}
+            if self._issue_is_bug_fixable(issue)
         ]
         blocking = [issue for issue in issues if getattr(issue, "severity", "blocking") == "blocking"]
         return (blocking or issues or [None])[0]
+
+    def _bug_fix_changed_files(self, output: Any) -> list[str]:
+        attempts = getattr(output, "attempts", []) or []
+        changed: list[str] = []
+        for attempt in attempts:
+            changed.extend(self._string_list(getattr(attempt, "modified_files", []) or []))
+        return self._dedupe_text(changed)
 
     def run_code_generation_retry_pipeline(
         self,

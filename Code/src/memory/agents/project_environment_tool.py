@@ -20,6 +20,8 @@ from metadata import (
 
 
 from core.python_packages import IMPORT_TO_DISTRIBUTION, distribution_for_import
+from core.python_requirements import is_supported_requirement_line
+from core.project_stack import load_or_create_project_stack_preset
 from memory.agents.git_manager_agent import GitManagerAgent, GitManagerError
 from memory.memory_models import MemoryRecord, MemoryType
 from memory.agents.virtual_environment_manager import (
@@ -49,7 +51,15 @@ PROJECT_ENVIRONMENT_TOOL_DEFINITION = ToolDefinition(
         input_metadata_type="ToolInputMetadata",
         output_metadata_type="ToolResultMetadata",
         required_input_fields=['project_path'],
-        input_defaults={'written_files': [], 'entry_files': [], 'run_command': '', 'env_name': '.venv', 'install': True},
+        input_defaults={
+            'written_files': [],
+            'entry_files': [],
+            'run_command': '',
+            'goal': '',
+            'stack_preset_update': {},
+            'env_name': '.venv',
+            'install': True,
+        },
     ),
     timeout_seconds=900,
     max_retries=0,
@@ -101,6 +111,19 @@ def project_environment_tool_executor(input_metadata: ToolInputMetadata) -> Tool
     install = bool(params.get("install", True))
     memory_store = params.get("_memory_store")
     manager = params.get("_environment_manager") or EnvironmentManager(base_dir=project_path)
+    requirements = project_path / "requirements.txt"
+    preset_dependencies = (
+        _read_requirements_packages(requirements)
+        if requirements.exists()
+        else infer_project_dependencies(project_path, written_files + entry_files)
+    )
+    stack_preset = load_or_create_project_stack_preset(
+        project_path,
+        goal=str(params.get("goal") or ""),
+        files=written_files + entry_files,
+        dependencies=preset_dependencies,
+        preset_update=params.get("stack_preset_update") if isinstance(params.get("stack_preset_update"), dict) else None,
+    )
 
     env_path = project_path / env_name
     operations: list[dict[str, Any]] = []
@@ -112,7 +135,6 @@ def project_environment_tool_executor(input_metadata: ToolInputMetadata) -> Tool
     else:
         operations.append({"operation": "create_env", "success": True, "message": f"Environment '{env_name}' already exists"})
 
-    requirements = project_path / "requirements.txt"
     if requirements.exists():
         dependency_source = "requirements.txt"
         detected_packages = _read_requirements_packages(requirements)
@@ -185,6 +207,7 @@ def project_environment_tool_executor(input_metadata: ToolInputMetadata) -> Tool
         "installed_packages": packages,
         "dependencies": [dependency.to_json_dict() for dependency in dependency_context],
         "dependency_strategy": dependency_strategy.to_json_dict(),
+        "stack_preset": stack_preset.to_json_dict(),
         "git_repository": git_repository.to_json_dict() if git_repository else None,
         "git_snapshot": git_snapshot.to_json_dict() if git_snapshot else None,
         "dependency_source": dependency_source,
@@ -429,7 +452,12 @@ def _read_requirements_packages(requirements: Path) -> list[str]:
     packages = []
     for line in requirements.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("-"):
+        if (
+            not stripped
+            or stripped.startswith("#")
+            or stripped.startswith("-")
+            or not is_supported_requirement_line(stripped)
+        ):
             continue
         packages.append(stripped)
     return packages

@@ -10,24 +10,32 @@ from metadata import (
     CodeArtifactMetadata,
     CommandArtifactMetadata,
     DependencyStrategyMetadata,
+    DifficultyAssessmentMetadata,
+    ExecutionStateMetadata,
     FailureMetadata,
     GitDiffContextMetadata,
     GitRepositoryMetadata,
     GitSnapshotMetadata,
     MetadataKind,
     ProductIntentMetadata,
+    ProblemJudgmentMetadata,
+    ProblemSignalMetadata,
     ProjectDiagnosisMetadata,
     ProjectDimensionAssessmentMetadata,
     ProjectDependencyMetadata,
     ProjectObjectiveMetadata,
+    ProjectStackPresetMetadata,
     ImprovementCandidateMetadata,
     ReferenceInsightMetadata,
     RelatedProjectFileMetadata,
+    ResolutionPlanMetadata,
     ResultStatus,
     RuntimeStateMetadata,
     SuccessMetricMetadata,
     TaskResultMetadata,
     TaskRouteMetadata,
+    TaskGraphEdgeMetadata,
+    TaskGraphNodeMetadata,
     TaskFileResolutionMetadata,
     TaskFileResolutionRequestMetadata,
     ToolCallMetadata,
@@ -55,6 +63,96 @@ def test_metadata_base_fields_and_json_serialization() -> None:
     assert payload["schema_version"] == "1.0"
     assert payload["code"] == "print('ok')"
     assert payload["content"] == "print('ok')"
+
+
+def test_project_stack_preset_metadata_serializes_frontend_backend_decision() -> None:
+    preset = ProjectStackPresetMetadata(
+        project_path="/tmp/assistant",
+        preset_file="/tmp/assistant/.openpilot/project_stack.json",
+        delivery_surface="browser",
+        architecture="frontend_backend_split",
+        frontend_language="html_css_javascript",
+        backend_language="python",
+        ui_strategy="browser_application",
+        ui_review_required=True,
+    )
+
+    payload = preset.to_json_dict()
+
+    assert payload["kind"] == MetadataKind.PROJECT_STACK_PRESET
+    assert payload["architecture"] == "frontend_backend_split"
+    assert payload["ui_review_required"] is True
+
+
+def test_problem_resolution_and_task_graph_metadata_serialize() -> None:
+    signal = ProblemSignalMetadata(
+        source="tool_planning",
+        category="planning_gap",
+        message="empty plan",
+        evidence=["decision_needs_count:0"],
+        task_id="task-1",
+        tool_name="tool_planning_executor",
+        target_files=["app.py"],
+        raw_payload={"decision_needs": []},
+    )
+    judgment = ProblemJudgmentMetadata(
+        is_problem=True,
+        severity="blocking",
+        requires_fix=True,
+        user_visible=True,
+        recommended_repair_kind="recover_tool_plan",
+        confidence=0.9,
+        reason="No routable tool plan.",
+    )
+    difficulty = DifficultyAssessmentMetadata(
+        level="simple",
+        needs_decomposition=False,
+        blocking_factors=["target file is known"],
+        recommended_task_count=1,
+    )
+    resolution = ResolutionPlanMetadata(
+        strategy="direct_retry",
+        target_tasks=["task-1"],
+        max_attempts=2,
+        acceptance_check="A routable decision_need is produced.",
+    )
+    node = TaskGraphNodeMetadata(
+        task_id="task-1",
+        description="Repair planner",
+        task_kind="repair",
+        difficulty="simple",
+        read_files=["planner.py"],
+        write_files=["planner.py"],
+        expected_outputs=["planner retries empty plan"],
+    )
+    edge = TaskGraphEdgeMetadata(from_task="task-1", to_task="task-2", edge_type="validates")
+    state = ExecutionStateMetadata(
+        completed_tasks=["task-1"],
+        failed_tasks=[],
+        blocked_tasks=[],
+        changed_files=["planner.py"],
+        validation_result={"all_completed": True},
+        execution_batches=[["task-1"], ["task-2"]],
+    )
+
+    payload = {
+        "signal": signal.to_json_dict(),
+        "judgment": judgment.to_json_dict(),
+        "difficulty": difficulty.to_json_dict(),
+        "resolution": resolution.to_json_dict(),
+        "node": node.to_json_dict(),
+        "edge": edge.to_json_dict(),
+        "state": state.to_json_dict(),
+    }
+
+    json.dumps(payload)
+    assert payload["signal"]["kind"] == MetadataKind.PROBLEM_SIGNAL
+    assert payload["judgment"]["kind"] == MetadataKind.PROBLEM_JUDGMENT
+    assert payload["difficulty"]["kind"] == MetadataKind.DIFFICULTY_ASSESSMENT
+    assert payload["resolution"]["kind"] == MetadataKind.RESOLUTION_PLAN
+    assert payload["node"]["kind"] == MetadataKind.TASK_GRAPH_NODE
+    assert payload["edge"]["edge_type"] == "validates"
+    assert payload["state"]["execution_batches"] == [["task-1"], ["task-2"]]
 
 
 def test_json_safe_summarizes_callables_and_drops_internal_handles() -> None:

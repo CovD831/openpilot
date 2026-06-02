@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from metadata import ToolInputMetadata
 from tools.code_editor import code_editor_executor
+from tools.file_delete_tool import file_delete_tool_executor
 from tools.file_patch_writer import file_patch_writer_executor
 from tools.file_writer import file_writer_executor
 
@@ -38,6 +42,23 @@ def test_file_writer_rejects_existing_file_without_explicit_replace(tmp_path) ->
 
     assert result.result.file_path == str(target.absolute())
     assert target.read_text(encoding="utf-8") == "print('new')\n"
+
+
+def test_file_writer_rejects_python_source_written_as_requirements(tmp_path) -> None:
+    target = tmp_path / "requirements.txt"
+
+    with pytest.raises(ValueError, match="rejected malformed requirements content"):
+        file_writer_executor(
+            ToolInputMetadata.from_mapping(
+                "file_writer",
+                {
+                    "file_path": str(target),
+                    "content": "#!/usr/bin/env python3\nimport json\nclass Reminder:\n    pass\n",
+                },
+            )
+        )
+
+    assert not target.exists()
 
 
 def test_file_patch_writer_inserts_generated_unit_without_rewriting_existing_content(tmp_path) -> None:
@@ -118,3 +139,99 @@ def test_code_editor_fails_when_python_symbol_cannot_be_located(tmp_path) -> Non
                 },
             )
         )
+
+
+def test_file_mutation_tools_refresh_indexes_and_directory_sketch(tmp_path) -> None:
+    project = tmp_path / "demo"
+    project.mkdir()
+    target = project / "app.py"
+
+    write_result = file_writer_executor(
+        ToolInputMetadata.from_mapping(
+            "file_writer",
+            {
+                "file_path": str(target),
+                "content": "def run():\n    return 1\n",
+            },
+        )
+    )
+
+    index_update = write_result.result.attributes["index_update"]
+    index_file = Path(index_update["index_file"])
+    assert index_file.exists()
+    index_payload = json.loads(index_file.read_text(encoding="utf-8"))
+    assert index_payload["sections"][0]["title"] == "function run"
+    old_hash = index_payload["content_sha256"]
+
+    sketch = json.loads((project / "sketch.json").read_text(encoding="utf-8"))
+    assert sketch["files"]["app.py"]["content_index"]["index_file"] == str(index_file)
+    assert sketch["files"]["app.py"]["content_index"]["sections"][0]["line_start"] == 1
+
+    patch_result = file_patch_writer_executor(
+        ToolInputMetadata.from_mapping(
+            "file_patch_writer",
+            {
+                "file_path": str(target),
+                "operation_kind": "modify_symbol",
+                "symbol_name": "run",
+                "replacement_text": "def run():\n    return 2",
+            },
+        )
+    )
+    patched_index_file = Path(patch_result.result.attributes["index_update"]["index_file"])
+    patched_payload = json.loads(patched_index_file.read_text(encoding="utf-8"))
+    assert patched_payload["content_sha256"] != old_hash
+    assert "return 2" in target.read_text(encoding="utf-8")
+
+    delete_result = file_delete_tool_executor(
+        ToolInputMetadata.from_mapping("file_delete_tool", {"file_path": str(target)})
+    )
+
+    assert delete_result.result.attributes["deleted"] is True
+    assert not target.exists()
+    assert not index_file.exists()
+    sketch_after_delete = json.loads((project / "sketch.json").read_text(encoding="utf-8"))
+    assert "app.py" not in sketch_after_delete["files"]
+
+
+def test_file_patch_writer_can_target_index_sections_and_delete_ranges(tmp_path) -> None:
+    target = tmp_path / "notes.md"
+    file_writer_executor(
+        ToolInputMetadata.from_mapping(
+            "file_writer",
+            {
+                "file_path": str(target),
+                "content": "# One\nold body\n\n# Two\nkeep body\n",
+            },
+        )
+    )
+    sketch = json.loads((tmp_path / "sketch.json").read_text(encoding="utf-8"))
+    first_section = sketch["files"]["notes.md"]["content_index"]["sections"][0]
+
+    file_patch_writer_executor(
+        ToolInputMetadata.from_mapping(
+            "file_patch_writer",
+            {
+                "file_path": str(target),
+                "section_id": first_section["section_id"],
+                "replacement_text": "# One\nnew body",
+            },
+        )
+    )
+
+    assert "# One\nnew body" in target.read_text(encoding="utf-8")
+
+    file_patch_writer_executor(
+        ToolInputMetadata.from_mapping(
+            "file_patch_writer",
+            {
+                "file_path": str(target),
+                "operation_kind": "delete_section",
+                "section_title": "Two",
+            },
+        )
+    )
+
+    updated = target.read_text(encoding="utf-8")
+    assert "# One\nnew body" in updated
+    assert "# Two" not in updated

@@ -670,7 +670,7 @@ class ToolEventLoopRunner:
         )
 
     def _requires_edit_guard(self, selection: ToolSelection) -> bool:
-        if selection.tool_name in {"file_writer", "file_patch_writer"}:
+        if selection.tool_name in {"file_writer", "file_patch_writer", "file_delete_tool"}:
             return True
         if selection.tool_name != "command_executor":
             return False
@@ -716,7 +716,7 @@ class ToolEventLoopRunner:
 
     def _edit_target_files(self, selection: ToolSelection) -> list[str]:
         params = selection.input_metadata.to_params()
-        if selection.tool_name in {"file_writer", "file_patch_writer"}:
+        if selection.tool_name in {"file_writer", "file_patch_writer", "file_delete_tool"}:
             return [str(params["file_path"])] if params.get("file_path") else []
         if selection.tool_name == "command_executor":
             explicit = params.get("file_paths") or params.get("files") or []
@@ -736,8 +736,8 @@ class ToolEventLoopRunner:
                 return list(plan.commands)
             if plan.fallback_checks:
                 return list(plan.fallback_checks)
-        if selection.tool_name in {"file_writer", "file_patch_writer"}:
-            return ["Run the runtime-selected verification after the write."]
+        if selection.tool_name in {"file_writer", "file_patch_writer", "file_delete_tool"}:
+            return ["Run the runtime-selected verification after the file change."]
         return [f"Verify command side effects for: {', '.join(target_files)}"]
 
     def _allowed_change_description(self, selection: ToolSelection, target_files: list[str]) -> str:
@@ -746,6 +746,8 @@ class ToolEventLoopRunner:
         if selection.tool_name == "file_patch_writer":
             operation = selection.input_metadata.operation_kind or selection.input_metadata.patch_mode or "local patch"
             return f"Apply {operation} local edit to {', '.join(target_files)}"
+        if selection.tool_name == "file_delete_tool":
+            return f"Delete requested file {', '.join(target_files)}"
         command = str(selection.input_metadata.command or "")
         return f"Run approved command with bounded side effects: {command[:160]}"
 
@@ -776,7 +778,7 @@ class ToolEventLoopRunner:
         round_index: int,
         last_output: ToolResultMetadata | None,
     ) -> FailureMetadata | None:
-        if source_selection.tool_name not in {"file_writer", "file_patch_writer", "command_executor"}:
+        if source_selection.tool_name not in {"file_writer", "file_patch_writer", "file_delete_tool", "command_executor"}:
             return None
         controller = getattr(self.runtime, "runtime_controller", None)
         state = getattr(controller, "state", None)
@@ -960,6 +962,7 @@ class ToolEventLoopRunner:
         fallback = {
             "code_generator": ["task_description"],
             "file_writer": ["file_path", "content"],
+            "file_delete_tool": ["file_path"],
             "readme_tool": ["project_path"],
             "command_executor": ["command"],
         }
@@ -1260,6 +1263,8 @@ class ToolEventLoopRunner:
             "received a directory",
             "generated placeholder",
             "placeholder text",
+            "malformed requirements content",
+            "dependency specifiers",
             "file exists",
             "refuses to overwrite",
             "operation_kind=file_replace",
@@ -1307,6 +1312,11 @@ class ToolEventLoopRunner:
             return "Check that file_path exists before calling file_reader, or use project_structure/multi_file_reader to discover files first."
         if tool_name == "file_writer" and ("placeholder" in lowered or "generated" in lowered):
             return "Regenerate real content or route code_generator output into file_writer.content before writing."
+        if tool_name == "file_writer" and ("malformed requirements" in lowered or "dependency specifiers" in lowered):
+            return (
+                "Do not write generated source code to requirements files. "
+                "Use a .py/.js/etc. source file for code, or write only dependency specifiers to requirements.txt."
+            )
         if "unknown tool" in lowered:
             return "Select a registered tool from the available tools list."
         if "missing required" in lowered or "requires" in lowered:

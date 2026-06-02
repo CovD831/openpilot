@@ -6,19 +6,23 @@ import ast
 import hashlib
 import os
 import re
+import signal
 import shlex
+import socket
 import subprocess
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable
 
 from autonomous_iteration.improvement_context import ImprovementContextHelper
 from autonomous_iteration.models import EvaluationResult
-from metadata import ProductIntentMetadata, ValidationIssueMetadata, WarningCheckResultMetadata
+from metadata import ProductIntentMetadata, ValidationIssueMetadata, WarningCheckResultMetadata, WarningItemMetadata
 from tools.terminal_smoke import (
     looks_like_terminal_python_source,
     run_terminal_command,
 )
+from utils.json_utils import safe_parse_json
 
 
 class ProjectEvaluatorAgent:
@@ -106,9 +110,15 @@ class ProjectEvaluatorAgent:
     ) -> EvaluationResult:
         """Run deterministic hard validation."""
         project = Path(project_path).expanduser()
-        files = [Path(path).expanduser() for path in written_files]
         readme = Path(readme_path).expanduser() if readme_path else project / "README.md"
         static_review = static_review or {}
+        readme_text = self._read_text(readme)
+        effective_run_command = (run_command or self._extract_run_command(readme_text)).strip()
+        files = self._augment_files_with_run_command_context(
+            project,
+            [Path(path).expanduser() for path in written_files],
+            effective_run_command,
+        )
         product_intent = ImprovementContextHelper().infer_product_intent(
             original_goal=goal,
             project_path=project,
@@ -148,12 +158,10 @@ class ProjectEvaluatorAgent:
             )
 
         code_text = "\n\n".join(self._read_text(path) for path in existing_files if path.suffix == ".py")
-        readme_text = self._read_text(readme)
-        effective_run_command = (run_command or self._extract_run_command(readme_text)).strip()
         product_intent = ImprovementContextHelper().infer_product_intent(
             original_goal=goal,
             project_path=project,
-            written_files=written_files,
+            written_files=[str(path) for path in existing_files],
             current_code=code_text,
         )
         target_files = [str(path) for path in existing_files]
@@ -252,12 +260,32 @@ class ProjectEvaluatorAgent:
                     )
                 )
 
+        direct_startup_issues: list[ValidationIssueMetadata] = []
         if effective_run_command and not any(error.lower().startswith("syntax error") for error in errors):
+            direct_startup_issues = self._direct_startup_validation_issues(
+                project=project,
+                run_command=effective_run_command,
+                files=existing_files,
+                code_text=code_text,
+                product_intent=product_intent,
+            )
+            for issue in direct_startup_issues:
+                errors.append(issue.message)
+                if issue.recommended_action:
+                    actions.append(issue.recommended_action)
+                validation_issues.append(issue)
+
+        if (
+            effective_run_command
+            and not direct_startup_issues
+            and not any(error.lower().startswith("syntax error") for error in errors)
+        ):
             smoke = self._smoke_test(project, effective_run_command, existing_files)
             warning_check_result = smoke.get("warning_check_result") or warning_check_result
             if not smoke["passed"]:
                 errors.append(smoke["message"])
-                if warning_check_result and warning_check_result.requires_fix:
+                smoke_category = str(smoke.get("category") or "")
+                if warning_check_result and warning_check_result.requires_fix and not smoke_category:
                     actions.append("Fix the runtime warning reported by the smoke test.")
                     validation_issues.append(
                         self._issue(
@@ -274,12 +302,12 @@ class ProjectEvaluatorAgent:
                         )
                     )
                 else:
-                    actions.append("Fix the runtime error reported by the smoke test.")
+                    actions.append(smoke.get("recommended_action") or "Fix the runtime error reported by the smoke test.")
                     validation_issues.append(
                         self._issue(
-                            category="runtime_error",
+                            category=smoke_category or "runtime_error",
                             message=smoke["message"],
-                            recommended_action=smoke.get("recommended_action") or actions[-1],
+                            recommended_action=actions[-1],
                             product_intent=product_intent,
                             target_files=self._target_files_from_smoke_message(
                                 project,
@@ -287,6 +315,7 @@ class ProjectEvaluatorAgent:
                                 effective_run_command,
                                 existing_files,
                             ),
+                            recommended_repair_kind=str(smoke.get("recommended_repair_kind") or ""),
                         )
                     )
             elif smoke["warning"]:
@@ -647,6 +676,15 @@ class ProjectEvaluatorAgent:
             )
             if warning_check and warning_check.requires_fix:
                 return self._warning_fix_failure(warning_check)
+            system_check = self._assess_runtime_system_output(
+                command=run_command,
+                cwd=project_path,
+                stdout=str(exc.stdout or ""),
+                stderr=str(exc.stderr or ""),
+                returncode=None,
+            )
+            if system_check and system_check.requires_fix:
+                return self._system_output_fix_failure(system_check)
             return {
                 "passed": True,
                 "warning": True,
@@ -663,6 +701,15 @@ class ProjectEvaluatorAgent:
         )
         if warning_check and warning_check.requires_fix and result.returncode == 0 and not self._looks_like_traceback(combined_output):
             return self._warning_fix_failure(warning_check)
+        system_check = self._assess_runtime_system_output(
+            command=run_command,
+            cwd=project_path,
+            stdout=result.stdout or "",
+            stderr=result.stderr or "",
+            returncode=result.returncode,
+        )
+        if system_check and system_check.requires_fix:
+            return self._system_output_fix_failure(system_check)
         if self._is_interactive_environment_error(combined_output):
             return {
                 "passed": True,
@@ -777,6 +824,894 @@ class ProjectEvaluatorAgent:
                 )
         return self._dedupe(risks)
 
+    def _direct_startup_validation_issues(
+        self,
+        *,
+        project: Path,
+        run_command: str,
+        files: list[Path],
+        code_text: str,
+        product_intent: ProductIntentMetadata | None,
+    ) -> list[ValidationIssueMetadata]:
+        """Catch problems a user hits by copying README's run command directly."""
+        issues: list[ValidationIssueMetadata] = []
+        secret_issue = self._required_secret_startup_issue(
+            project=project,
+            run_command=run_command,
+            files=files,
+            code_text=code_text,
+            product_intent=product_intent,
+        )
+        if secret_issue is not None:
+            issues.append(secret_issue)
+            return issues
+        port_issue = self._port_conflict_startup_issue(
+            project=project,
+            run_command=run_command,
+            files=files,
+            code_text=code_text,
+            product_intent=product_intent,
+        )
+        if port_issue is not None:
+            issues.append(port_issue)
+            return issues
+        runtime_issue = self._runtime_startup_failure_issue(
+            project=project,
+            run_command=run_command,
+            files=files,
+            code_text=code_text,
+            product_intent=product_intent,
+        )
+        if runtime_issue is not None:
+            issues.append(runtime_issue)
+        return issues
+
+    def _runtime_startup_failure_issue(
+        self,
+        *,
+        project: Path,
+        run_command: str,
+        files: list[Path],
+        code_text: str,
+        product_intent: ProductIntentMetadata | None,
+    ) -> ValidationIssueMetadata | None:
+        del code_text
+        try:
+            args = self._normalize_python_args(project, shlex.split(run_command))
+        except ValueError:
+            return None
+        if not args:
+            return None
+        if self._looks_terminal_interactive_python_project(files, args) or self._looks_interactive_python_project(files, args):
+            return None
+        secret_names = self._secret_env_names_in_source("\n".join(self._read_text(path) for path in files if path.suffix == ".py"))
+        try:
+            result = self._run_startup_command(
+                args,
+                project=project,
+                timeout=max(1, self.smoke_timeout_seconds),
+                env=self._smoke_env_with_placeholder_secrets(project, secret_names),
+            )
+        except FileNotFoundError:
+            return None
+        output = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}"
+        if result.get("returncode") == 0 or result.get("timed_out"):
+            return None
+        if self._output_indicates_port_in_use(output) or self._output_indicates_missing_secret(output, secret_names):
+            return None
+        if not self._output_indicates_startup_runtime_failure(output):
+            return None
+
+        target_files = self._target_files_from_runtime_failure_output(project, output, args, files)
+        observed = self._short_error("Observed startup error", output)
+        message = (
+            "Direct startup failed with a Python import/runtime contract error before the app became usable. "
+            f"{observed}"
+        )
+        action = (
+            "Align the documented entry point with the actual local module API: update imports, exported function names, "
+            "or call sites so the run command starts without import/runtime failure."
+        )
+        return self._issue(
+            category="runtime_error",
+            message=message,
+            recommended_action=action,
+            product_intent=product_intent,
+            target_files=target_files,
+            evidence_spans=self._runtime_failure_evidence_spans(project, output, target_files),
+            syntax_context="direct_startup_runtime_failure",
+            issue_fingerprint=self._issue_fingerprint("direct_startup_runtime_failure", None, output),
+            recommended_repair_kind="fix_startup_import_contract",
+        )
+
+    def _required_secret_startup_issue(
+        self,
+        *,
+        project: Path,
+        run_command: str,
+        files: list[Path],
+        code_text: str,
+        product_intent: ProductIntentMetadata | None,
+    ) -> ValidationIssueMetadata | None:
+        secret_names = self._secret_env_names_in_source(code_text)
+        if not secret_names:
+            return None
+        try:
+            args = self._normalize_python_args(project, shlex.split(run_command))
+        except ValueError:
+            return None
+        if not args:
+            return None
+        try:
+            result = self._run_startup_command(
+                args,
+                project=project,
+                timeout=max(1, self.smoke_timeout_seconds),
+                env=self._smoke_env_without_user_secrets(project, secret_names),
+            )
+        except FileNotFoundError:
+            return None
+        if result.get("returncode") == 0:
+            return None
+        output = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}"
+        if not self._output_indicates_missing_secret(output, secret_names):
+            return None
+
+        target_files = self._source_files_containing_terms(files, secret_names)
+        if not target_files:
+            entry = self._entry_module_from_args(project, args, files)
+            target_files = [str(entry.resolve())] if entry is not None and entry.exists() else []
+        names = ", ".join(secret_names[:4])
+        if len(secret_names) > 4:
+            names += ", ..."
+        observed = self._short_error("Observed startup error", output)
+        message = (
+            "Direct run fails before the app opens when required runtime secret(s) are missing: "
+            f"{names}. Startup should not raise an unhandled exception for missing user configuration. "
+            f"{observed}"
+        )
+        action = (
+            "Defer secret validation until the feature that uses it, let the app/UI start with a visible "
+            "configuration warning or a clear endpoint-level error, and document exact shell syntax such as "
+            '`export OPENAI_API_KEY="..."` with no spaces around `=`.'
+        )
+        return self._issue(
+            category="configuration",
+            message=message,
+            recommended_action=action,
+            product_intent=product_intent,
+            target_files=target_files,
+            evidence_spans=self._evidence_spans_for_terms(files, secret_names, "startup_secret"),
+            syntax_context="direct_startup_missing_secret",
+            issue_fingerprint=self._issue_fingerprint("direct_startup_missing_secret", None, output or names),
+            recommended_repair_kind="defer_required_secret_validation",
+        )
+
+    def _port_conflict_startup_issue(
+        self,
+        *,
+        project: Path,
+        run_command: str,
+        files: list[Path],
+        code_text: str,
+        product_intent: ProductIntentMetadata | None,
+    ) -> ValidationIssueMetadata | None:
+        if not self._looks_like_python_web_server(code_text):
+            return None
+        try:
+            args = self._normalize_python_args(project, shlex.split(run_command))
+        except ValueError:
+            return None
+        if not args:
+            return None
+        secret_names = self._secret_env_names_in_source(code_text)
+        env = self._smoke_env_with_placeholder_secrets(project, secret_names)
+        for candidate in self._web_startup_port_candidates(files):
+            port = int(candidate.get("port") or 0)
+            if port <= 0 or port > 65535:
+                continue
+            with self._occupied_tcp_port(port) as occupied:
+                if not occupied:
+                    # The user's machine already has the candidate port occupied,
+                    # so the following real startup run exercises that failure path.
+                    pass
+                try:
+                    result = self._run_startup_command(
+                        args,
+                        project=project,
+                        timeout=max(1, self.smoke_timeout_seconds),
+                        env=env,
+                    )
+                except FileNotFoundError:
+                    return None
+            output = f"{result.get('stdout') or ''}\n{result.get('stderr') or ''}"
+            if not self._output_indicates_port_in_use(output):
+                continue
+            system_check = self._assess_runtime_system_output(
+                command=run_command,
+                cwd=project,
+                stdout=str(result.get("stdout") or ""),
+                stderr=str(result.get("stderr") or ""),
+                returncode=result.get("returncode") if isinstance(result.get("returncode"), int) else None,
+            )
+            if not system_check or not system_check.requires_fix:
+                continue
+            path = Path(str(candidate.get("file_path") or ""))
+            line_no = int(candidate.get("line") or 1)
+            observed = self._short_error("Observed startup error", output)
+            reason = system_check.reason or "Port conflict prevents the generated web app from starting."
+            fix = system_check.recommended_fix or (
+                "Choose an available port at startup or retry from the requested/default port, print the actual local URL, "
+                "and keep PORT as an explicit override."
+            )
+            message = (
+                f"Direct startup was executed with port {port} unavailable and failed with an address-in-use error. "
+                f"{reason} "
+                f"{observed}"
+            )
+            action = (
+                f"{fix} If startup still cannot bind, show a concise command such as "
+                "`PORT=<free-port> .venv/bin/python app.py` based on the real run command."
+            )
+            return self._issue(
+                category="environment",
+                message=message,
+                recommended_action=action,
+                product_intent=product_intent,
+                target_files=[str(path.resolve())] if path.exists() else [],
+                evidence_spans=[self._line_evidence_span(path, line_no, "startup_port_conflict")] if path.exists() else [],
+                syntax_context=f"{candidate.get('framework', 'web')}_port_conflict_probe",
+                issue_fingerprint=self._issue_fingerprint("port_conflict_probe", path if path.exists() else None, output or str(port)),
+                recommended_repair_kind="make_web_port_configurable",
+            )
+        return None
+
+    def _secret_env_names_in_source(self, source: str) -> list[str]:
+        names: set[str] = set()
+        known_names = {
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+            "SERPAPI_API_KEY",
+            "TOGETHER_API_KEY",
+            "MISTRAL_API_KEY",
+            "COHERE_API_KEY",
+        }
+        for name in known_names:
+            if name in source:
+                names.add(name)
+        pattern = re.compile(
+            r"""['"]([A-Z][A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|ACCESS_KEY)[A-Z0-9_]*)['"]"""
+        )
+        names.update(match.group(1) for match in pattern.finditer(source or ""))
+        return sorted(names)
+
+    def _smoke_env_without_user_secrets(self, project_path: Path, secret_names: list[str]) -> dict[str, str]:
+        env = self._smoke_env(project_path)
+        explicit = {name.upper() for name in secret_names}
+        for key in list(env):
+            if key.upper() in explicit or self._looks_like_runtime_secret_env_name(key):
+                env.pop(key, None)
+        return env
+
+    def _smoke_env_with_placeholder_secrets(self, project_path: Path, secret_names: list[str]) -> dict[str, str]:
+        env = self._smoke_env(project_path)
+        for name in secret_names:
+            upper_name = name.upper()
+            if upper_name.endswith("API_KEY"):
+                env[name] = "sk-openpilot-startup-probe"
+            else:
+                env[name] = "openpilot-startup-probe"
+        return env
+
+    def _looks_like_runtime_secret_env_name(self, name: str) -> bool:
+        return bool(re.search(r"(API[_-]?KEY|TOKEN|SECRET|PASSWORD|ACCESS[_-]?KEY)", name or "", re.IGNORECASE))
+
+    def _output_indicates_missing_secret(self, output: str, secret_names: list[str]) -> bool:
+        lower = self._strip_ansi(output).lower()
+        if not lower:
+            return False
+        has_secret_context = any(name.lower() in lower for name in secret_names) or any(
+            marker in lower for marker in ("api key", "token", "secret", "credential")
+        )
+        has_missing_context = any(
+            marker in lower
+            for marker in (
+                "not found",
+                "not set",
+                "missing",
+                "required",
+                "not configured",
+                "environment variable",
+                "set ",
+            )
+        )
+        return has_secret_context and has_missing_context
+
+    def _output_indicates_port_in_use(self, output: str) -> bool:
+        lower = self._strip_ansi(output).lower()
+        return any(
+            marker in lower
+            for marker in (
+                "address already in use",
+                "port is in use",
+                "eaddrinuse",
+                "errno 48",
+                "errno 98",
+                "only one usage of each socket address",
+            )
+        ) or bool(re.search(r"\bport\s+\d+\s+is\s+in\s+use\b", lower))
+
+    def _output_indicates_startup_runtime_failure(self, output: str) -> bool:
+        lower = self._strip_ansi(output).lower()
+        return any(
+            marker in lower
+            for marker in (
+                "traceback",
+                "fatal: cannot import",
+                "cannot import name",
+                "importerror",
+                "modulenotfounderror",
+                "no module named",
+                "syntaxerror",
+                "nameerror",
+                "runtimeerror",
+                "attributeerror",
+                "typeerror",
+                "valueerror",
+            )
+        )
+
+    def _looks_like_runtime_system_message(self, output: str) -> bool:
+        lower = self._strip_ansi(output).lower()
+        return any(
+            marker in lower
+            for marker in (
+                "address already in use",
+                "port is in use",
+                "eaddrinuse",
+                "airplay receiver",
+                "system settings",
+                "on macos",
+                "no available video device",
+                "cannot open display",
+                "not a tty",
+                "inappropriate ioctl",
+                "permission denied",
+            )
+        ) or bool(re.search(r"\bport\s+\d+\s+is\s+in\s+use\b", lower))
+
+    def _assess_runtime_system_output(
+        self,
+        *,
+        command: str,
+        cwd: Path,
+        stdout: str,
+        stderr: str,
+        returncode: int | None,
+    ) -> WarningCheckResultMetadata | None:
+        combined = f"{stdout}\n{stderr}".strip()
+        if not combined or not self._looks_like_runtime_system_message(combined):
+            return None
+        decision = self._llm_runtime_system_output_decision(
+            command=command,
+            cwd=cwd,
+            stdout=stdout,
+            stderr=stderr,
+            returncode=returncode,
+        )
+        if decision is None:
+            decision = self._fallback_runtime_system_output_decision(
+                command=command,
+                cwd=cwd,
+                stdout=stdout,
+                stderr=stderr,
+                returncode=returncode,
+            )
+        if decision is None:
+            return None
+
+        requires_fix = bool(decision.get("requires_fix"))
+        category = str(decision.get("category") or "runtime_system_output")
+        reason = str(decision.get("reason") or "")
+        recommended_fix = str(decision.get("recommended_fix") or "")
+        severity = "fix_required" if requires_fix else "info"
+        item = WarningItemMetadata(
+            warning_text=self._short_error("Runtime system output", combined),
+            warning_source="runtime_system_output",
+            category=category,
+            severity=severity,
+            affects_user_experience=requires_fix,
+            requires_fix=requires_fix,
+            reason=reason,
+        )
+        return WarningCheckResultMetadata(
+            command=command,
+            cwd=str(cwd),
+            warnings=[item] if requires_fix else [],
+            ignored_warnings=[] if requires_fix else [item],
+            requires_fix=requires_fix,
+            reason=reason,
+            recommended_fix=recommended_fix,
+        )
+
+    def _llm_runtime_system_output_decision(
+        self,
+        *,
+        command: str,
+        cwd: Path,
+        stdout: str,
+        stderr: str,
+        returncode: int | None,
+    ) -> dict[str, Any] | None:
+        if self.llm_client is None:
+            return None
+        prompt = (
+            "Decide whether this generated project's runtime system output is a bug that OpenPilot should repair.\n"
+            "Return JSON only with keys: requires_fix (boolean), category (short snake_case), "
+            "reason (short), recommended_fix (short imperative), recommended_repair_kind (short snake_case).\n"
+            "Treat output that prevents a normal user from starting or using the generated app as requires_fix=true. "
+            "Treat harmless platform notices as requires_fix=false.\n\n"
+            f"Command: {command}\n"
+            f"Working directory: {cwd}\n"
+            f"Exit code: {returncode}\n"
+            f"STDOUT:\n{stdout[-2000:]}\n\n"
+            f"STDERR:\n{stderr[-2000:]}\n"
+        )
+        try:
+            raw = self._call_llm_text(prompt)
+        except Exception:
+            return None
+        payload = safe_parse_json(raw, default=None)
+        if not isinstance(payload, dict):
+            match = re.search(r"\{.*\}", raw or "", flags=re.DOTALL)
+            payload = safe_parse_json(match.group(0), default=None) if match else None
+        if not isinstance(payload, dict):
+            return None
+        return {
+            "requires_fix": bool(payload.get("requires_fix")),
+            "category": str(payload.get("category") or "runtime_system_output"),
+            "reason": str(payload.get("reason") or ""),
+            "recommended_fix": str(payload.get("recommended_fix") or ""),
+            "recommended_repair_kind": str(payload.get("recommended_repair_kind") or ""),
+        }
+
+    def _call_llm_text(self, prompt: str) -> str:
+        client = self.llm_client
+        if client is None:
+            return ""
+        if hasattr(client, "complete"):
+            from core.llm import LLMMessage, LLMRequest
+
+            request = LLMRequest(
+                messages=[LLMMessage(role="user", content=prompt)],
+                response_format="json_object",
+                temperature=0.0,
+                max_tokens=300,
+                timeout_seconds=10,
+                transport_retries=0,
+            )
+            try:
+                response = client.complete(request, max_retries=1, use_cache=False)
+            except TypeError:
+                response = client.complete(request)
+            return str(getattr(response, "content", response))
+        if hasattr(client, "generate"):
+            return str(client.generate(prompt))
+        if hasattr(client, "chat"):
+            return str(client.chat([{"role": "user", "content": prompt}]))
+        if callable(client):
+            return str(client(prompt))
+        return ""
+
+    def _fallback_runtime_system_output_decision(
+        self,
+        *,
+        command: str,
+        cwd: Path,
+        stdout: str,
+        stderr: str,
+        returncode: int | None,
+    ) -> dict[str, Any] | None:
+        del command, cwd
+        combined = f"{stdout}\n{stderr}"
+        if self._output_indicates_port_in_use(combined):
+            return {
+                "requires_fix": True,
+                "category": "port_conflict",
+                "reason": "The generated web app cannot start because its selected port is already in use.",
+                "recommended_fix": (
+                    "Handle occupied ports by selecting an available fallback port, printing the actual local URL, "
+                    "and keeping PORT as an explicit override."
+                ),
+                "recommended_repair_kind": "make_web_port_configurable",
+            }
+        if returncode == 0 and "airplay receiver" in self._strip_ansi(combined).lower():
+            return {
+                "requires_fix": False,
+                "category": "macos_system_hint",
+                "reason": "macOS system hint does not indicate a generated-project bug by itself.",
+                "recommended_fix": "",
+                "recommended_repair_kind": "",
+            }
+        return None
+
+    def _run_startup_command(
+        self,
+        args: list[str],
+        *,
+        project: Path,
+        timeout: int | float,
+        env: dict[str, str],
+    ) -> dict[str, Any]:
+        popen_kwargs: dict[str, Any] = {
+            "cwd": project,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "env": env,
+        }
+        if os.name != "nt":
+            popen_kwargs["start_new_session"] = True
+        process = subprocess.Popen(args, **popen_kwargs)
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+            return {
+                "returncode": process.returncode,
+                "stdout": stdout or "",
+                "stderr": stderr or "",
+                "timed_out": False,
+            }
+        except subprocess.TimeoutExpired:
+            self._terminate_process(process)
+            try:
+                stdout, stderr = process.communicate(timeout=1)
+            except subprocess.TimeoutExpired:
+                stdout, stderr = "", ""
+            return {
+                "returncode": process.returncode,
+                "stdout": stdout or "",
+                "stderr": stderr or "",
+                "timed_out": True,
+            }
+
+    def _terminate_process(self, process: subprocess.Popen[str]) -> None:
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+            process.wait(timeout=1)
+            return
+        except Exception:
+            pass
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except Exception:
+            pass
+
+    @contextmanager
+    def _occupied_tcp_port(self, port: int):
+        sock: socket.socket | None = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind(("0.0.0.0", port))
+            sock.listen(1)
+            yield True
+        except OSError:
+            if sock is not None:
+                sock.close()
+                sock = None
+            yield False
+        finally:
+            if sock is not None:
+                sock.close()
+
+    def _looks_like_python_web_server(self, source: str) -> bool:
+        lower = (source or "").lower()
+        return any(
+            marker in lower
+            for marker in (
+                "from flask import",
+                "import flask",
+                "flask(",
+                "app.run(",
+                "uvicorn.run(",
+                "from fastapi import",
+                "import fastapi",
+            )
+        )
+
+    def _python_web_framework(self, source: str) -> str:
+        lower = (source or "").lower()
+        if "from flask import" in lower or "import flask" in lower or "flask(" in lower:
+            return "flask"
+        if "uvicorn.run(" in lower or "from fastapi import" in lower or "import fastapi" in lower:
+            return "uvicorn"
+        return ""
+
+    def _web_startup_port_candidates(self, files: list[Path]) -> list[dict[str, Any]]:
+        candidates: list[dict[str, Any]] = []
+        seen: set[tuple[str, int, int]] = set()
+        for path in files:
+            if path.suffix != ".py":
+                continue
+            source = self._read_text(path)
+            framework = self._python_web_framework(source)
+            if not framework:
+                continue
+            try:
+                tree = ast.parse(source)
+            except SyntaxError:
+                continue
+            constant_ports = self._constant_port_assignments(tree)
+            env_port_defaults = self._env_port_default_assignments(tree)
+            flask_app_names = self._flask_app_variable_names(tree) if framework == "flask" else set()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not self._is_web_server_run_call(node, framework, flask_app_names):
+                    continue
+                port = self._run_call_port_value(
+                    node,
+                    framework=framework,
+                    constant_ports=constant_ports,
+                    env_port_defaults=env_port_defaults,
+                )
+                if port is None:
+                    continue
+                line_no = int(getattr(node, "lineno", 1) or 1)
+                key = (str(path.resolve()), line_no, port)
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(
+                    {
+                        "file_path": str(path.resolve()),
+                        "line": line_no,
+                        "port": port,
+                        "framework": framework,
+                    }
+                )
+        return candidates
+
+    def _constant_port_assignments(self, tree: ast.AST) -> dict[str, int]:
+        ports: dict[str, int] = {}
+        for node in ast.walk(tree):
+            value: ast.AST | None = None
+            targets: list[ast.AST] = []
+            if isinstance(node, ast.Assign):
+                value = node.value
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                value = node.value
+                targets = [node.target]
+            if value is None:
+                continue
+            port = self._literal_port_value(value)
+            if port is None:
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    ports[target.id] = port
+        return ports
+
+    def _env_port_default_assignments(self, tree: ast.AST) -> dict[str, int]:
+        defaults: dict[str, int] = {}
+        for node in ast.walk(tree):
+            value: ast.AST | None = None
+            targets: list[ast.AST] = []
+            if isinstance(node, ast.Assign):
+                value = node.value
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                value = node.value
+                targets = [node.target]
+            if value is None or not self._ast_uses_port_env(value):
+                continue
+            port = self._port_default_from_env_expr(value)
+            if port is None:
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    defaults[target.id] = port
+        return defaults
+
+    def _run_call_port_value(
+        self,
+        node: ast.Call,
+        *,
+        framework: str,
+        constant_ports: dict[str, int],
+        env_port_defaults: dict[str, int],
+    ) -> int | None:
+        for keyword in node.keywords:
+            if keyword.arg == "port":
+                return self._resolve_port_value(keyword.value, constant_ports, env_port_defaults)
+        return 5000 if framework == "flask" else 8000 if framework == "uvicorn" else None
+
+    def _resolve_port_value(
+        self,
+        node: ast.AST,
+        constant_ports: dict[str, int],
+        env_port_defaults: dict[str, int],
+    ) -> int | None:
+        literal = self._literal_port_value(node)
+        if literal is not None:
+            return literal
+        if isinstance(node, ast.Name):
+            return env_port_defaults.get(node.id) or constant_ports.get(node.id)
+        if isinstance(node, ast.Call) and node.args:
+            name = self._call_name(node.func)
+            if name in {"int", "builtins.int"}:
+                return self._resolve_port_value(node.args[0], constant_ports, env_port_defaults)
+        if self._ast_uses_port_env(node):
+            return self._port_default_from_env_expr(node)
+        return None
+
+    def _literal_port_value(self, node: ast.AST) -> int | None:
+        if isinstance(node, ast.Constant):
+            value = node.value
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+        return None
+
+    def _port_default_from_env_expr(self, node: ast.AST) -> int | None:
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call):
+                continue
+            if not self._call_name(child.func).endswith(("get", "getenv")):
+                continue
+            if not child.args:
+                continue
+            first = child.args[0]
+            if not (isinstance(first, ast.Constant) and isinstance(first.value, str) and first.value.upper() == "PORT"):
+                continue
+            if len(child.args) >= 2:
+                return self._literal_port_value(child.args[1])
+            for keyword in child.keywords:
+                if keyword.arg == "default":
+                    return self._literal_port_value(keyword.value)
+        return None
+
+    def _env_port_variable_names(self, tree: ast.AST) -> set[str]:
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            value: ast.AST | None = None
+            targets: list[ast.AST] = []
+            if isinstance(node, ast.Assign):
+                value = node.value
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                value = node.value
+                targets = [node.target]
+            if value is None:
+                continue
+            if not (self._ast_uses_port_env(value) or self._ast_uses_free_port_helper(value)):
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        return names
+
+    def _flask_app_variable_names(self, tree: ast.AST) -> set[str]:
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            value: ast.AST | None = None
+            targets: list[ast.AST] = []
+            if isinstance(node, ast.Assign):
+                value = node.value
+                targets = list(node.targets)
+            elif isinstance(node, ast.AnnAssign):
+                value = node.value
+                targets = [node.target]
+            if not isinstance(value, ast.Call) or not self._call_name(value.func).endswith("Flask"):
+                continue
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+        return names
+
+    def _is_web_server_run_call(self, node: ast.Call, framework: str, flask_app_names: set[str] | None = None) -> bool:
+        name = self._call_name(node.func)
+        if framework == "flask":
+            app_names = flask_app_names or {"app", "application", "server"}
+            return name in {f"{app_name}.run" for app_name in app_names}
+        if framework == "uvicorn":
+            return name == "uvicorn.run"
+        return False
+
+    def _run_call_uses_runtime_port_config(self, node: ast.Call, env_port_names: set[str]) -> bool:
+        port_value = None
+        for keyword in node.keywords:
+            if keyword.arg == "port":
+                port_value = keyword.value
+                break
+        if port_value is None:
+            return False
+        if self._ast_uses_port_env(port_value) or self._ast_uses_free_port_helper(port_value):
+            return True
+        if isinstance(port_value, ast.Name) and port_value.id in env_port_names:
+            return True
+        return False
+
+    def _ast_uses_port_env(self, node: ast.AST) -> bool:
+        saw_port = False
+        saw_env = False
+        for child in ast.walk(node):
+            if isinstance(child, ast.Constant) and isinstance(child.value, str) and child.value.upper() == "PORT":
+                saw_port = True
+            elif isinstance(child, ast.Subscript) and isinstance(child.slice, ast.Constant) and child.slice.value == "PORT":
+                saw_port = True
+            elif isinstance(child, ast.Attribute) and child.attr in {"environ", "getenv"}:
+                saw_env = True
+            elif isinstance(child, ast.Name) and child.id in {"environ", "getenv"}:
+                saw_env = True
+        return saw_port and saw_env
+
+    def _ast_uses_free_port_helper(self, node: ast.AST) -> bool:
+        for child in ast.walk(node):
+            name = self._call_name(child.func) if isinstance(child, ast.Call) else self._call_name(child)
+            lowered = name.lower()
+            if any(marker in lowered for marker in ("free_port", "available_port", "open_port", "find_port")):
+                return True
+        return False
+
+    def _run_call_port_description(self, node: ast.Call, framework: str) -> str:
+        default_port = "5000" if framework == "flask" else "8000"
+        for keyword in node.keywords:
+            if keyword.arg != "port":
+                continue
+            value = keyword.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, (int, str)):
+                return f"fixed port {value.value}"
+            return "a fixed or non-runtime-configurable port"
+        return f"the default port {default_port}"
+
+    def _source_files_containing_terms(self, files: list[Path], terms: list[str]) -> list[str]:
+        targets: list[str] = []
+        for path in files:
+            if not self._is_text_project_file(path):
+                continue
+            text = self._read_text(path)
+            if any(term in text for term in terms):
+                targets.append(str(path.resolve()))
+        return self._dedupe(targets)
+
+    def _evidence_spans_for_terms(self, files: list[Path], terms: list[str], syntax_context: str) -> list[dict[str, Any]]:
+        spans: list[dict[str, Any]] = []
+        for path in files:
+            if not self._is_text_project_file(path):
+                continue
+            for line_no, line in enumerate(self._read_text(path).splitlines(), 1):
+                if any(term in line for term in terms):
+                    spans.append(
+                        {
+                            "file_path": str(path.resolve()),
+                            "line": line_no,
+                            "column": 1,
+                            "text": line.strip()[:200],
+                            "syntax_context": syntax_context,
+                        }
+                    )
+                    break
+        return spans[:5]
+
+    def _line_evidence_span(self, path: Path, line_no: int, syntax_context: str) -> dict[str, Any]:
+        lines = self._read_text(path).splitlines()
+        text = lines[line_no - 1].strip() if 0 < line_no <= len(lines) else ""
+        return {
+            "file_path": str(path.resolve()),
+            "line": line_no,
+            "column": 1,
+            "text": text[:200],
+            "syntax_context": syntax_context,
+        }
+
     def _target_files_from_smoke_message(
         self,
         project_path: Path,
@@ -805,6 +1740,75 @@ class ProjectEvaluatorAgent:
             if entry is not None and entry.exists():
                 targets.append(str(entry.resolve()))
         return self._dedupe(targets)
+
+    def _target_files_from_runtime_failure_output(
+        self,
+        project_path: Path,
+        output: str,
+        args: list[str],
+        files: list[Path],
+    ) -> list[str]:
+        targets: list[str] = []
+        targets.extend(self._target_files_from_smoke_message(project_path, output, " ".join(args), files))
+        for raw_path in re.findall(r"\(([^()]+\.py)\)", output or ""):
+            path = Path(raw_path).expanduser()
+            if not path.is_absolute():
+                path = project_path / path
+            try:
+                resolved = path.resolve()
+                resolved.relative_to(project_path.resolve())
+            except (OSError, ValueError):
+                continue
+            if resolved.exists() and resolved.is_file():
+                targets.append(str(resolved))
+        entry = self._entry_module_from_args(project_path, args, files)
+        if entry is not None and entry.exists():
+            targets.insert(0, str(entry.resolve()))
+        return self._dedupe(targets)
+
+    def _runtime_failure_evidence_spans(
+        self,
+        project_path: Path,
+        output: str,
+        target_files: list[str],
+    ) -> list[dict[str, Any]]:
+        spans: list[dict[str, Any]] = []
+        for raw_path in target_files[:5]:
+            path = Path(raw_path)
+            if not path.exists() or not path.is_file():
+                continue
+            line_no = 1
+            traceback_match = re.search(rf'File "{re.escape(str(path))}", line (\d+)', output or "")
+            if traceback_match:
+                line_no = int(traceback_match.group(1))
+            elif path.name in (output or ""):
+                line_no = self._first_relevant_runtime_line(path, output)
+            spans.append(self._line_evidence_span(path, line_no, "direct_startup_runtime_failure"))
+        if not spans:
+            spans.append(
+                {
+                    "file_path": str(project_path),
+                    "line": 1,
+                    "column": 1,
+                    "text": self._short_error("Startup output", output),
+                    "syntax_context": "direct_startup_runtime_failure",
+                }
+            )
+        return spans
+
+    def _first_relevant_runtime_line(self, path: Path, output: str) -> int:
+        text = self._read_text(path)
+        import_names = re.findall(r"cannot import name ['\"]([^'\"]+)['\"]", output or "", flags=re.IGNORECASE)
+        module_names = re.findall(r"from ['\"]([^'\"]+)['\"]", output or "", flags=re.IGNORECASE)
+        terms = [*import_names, *module_names]
+        for index, line in enumerate(text.splitlines(), 1):
+            if any(term and term in line for term in terms):
+                return index
+        for index, line in enumerate(text.splitlines(), 1):
+            lowered = line.lower()
+            if "import " in lowered or "from " in lowered:
+                return index
+        return 1
 
     def _is_text_project_file(self, path: Path) -> bool:
         if path.name.startswith(".") or path.is_dir():
@@ -962,6 +1966,28 @@ class ProjectEvaluatorAgent:
             "warning_check_result": warning_check,
         }
 
+    def _system_output_fix_failure(self, system_check: WarningCheckResultMetadata) -> dict[str, Any]:
+        reason = system_check.reason or "Runtime system output requires repair."
+        fix = system_check.recommended_fix
+        message = f"Runtime system output requires repair: {reason}"
+        if fix:
+            message += f" Recommended fix: {fix}"
+        category = system_check.warnings[0].category if system_check.warnings else "runtime_system_output"
+        return {
+            "passed": False,
+            "warning": False,
+            "message": message,
+            "recommended_action": fix,
+            "recommended_repair_kind": self._recommended_repair_kind_for_system_output(category),
+            "category": "environment" if category in {"port_conflict", "startup_port_conflict"} else "runtime_error",
+            "warning_check_result": system_check,
+        }
+
+    def _recommended_repair_kind_for_system_output(self, category: str) -> str:
+        if category in {"port_conflict", "startup_port_conflict"}:
+            return "make_web_port_configurable"
+        return "repair_runtime_system_output"
+
     def _normalize_python_args(self, project_path: Path, args: list[str]) -> list[str]:
         if not args:
             return args
@@ -1005,6 +2031,76 @@ class ProjectEvaluatorAgent:
             if candidate.exists():
                 return candidate
         return python_files[0] if python_files else None
+
+    def _augment_files_with_run_command_context(
+        self,
+        project_path: Path,
+        files: list[Path],
+        run_command: str,
+    ) -> list[Path]:
+        augmented = list(files)
+        try:
+            args = self._normalize_python_args(project_path, shlex.split(run_command))
+        except ValueError:
+            args = []
+        entry = self._entry_module_from_args(project_path, args, files) if args else None
+        if entry is not None:
+            augmented.append(entry)
+            augmented.extend(self._local_python_import_closure(project_path, entry))
+        return self._dedupe_paths(augmented)
+
+    def _local_python_import_closure(self, project_path: Path, entry: Path) -> list[Path]:
+        discovered: list[Path] = []
+        queue = [entry]
+        seen: set[Path] = set()
+        while queue and len(discovered) < 40:
+            path = queue.pop(0).resolve()
+            if path in seen or not path.exists() or path.suffix != ".py":
+                continue
+            seen.add(path)
+            for dependency in self._local_python_import_files(project_path, path):
+                resolved = dependency.resolve()
+                if resolved not in seen:
+                    discovered.append(resolved)
+                    queue.append(resolved)
+        return discovered
+
+    def _local_python_import_files(self, project_path: Path, path: Path) -> list[Path]:
+        try:
+            tree = ast.parse(self._read_text(path))
+        except SyntaxError:
+            return []
+        modules: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                modules.add(node.module.split(".", 1)[0])
+        dependencies: list[Path] = []
+        for module in sorted(modules):
+            if not module or module.startswith("_"):
+                continue
+            module_file = project_path / f"{module}.py"
+            package_init = project_path / module / "__init__.py"
+            if module_file.exists():
+                dependencies.append(module_file)
+            elif package_init.exists():
+                dependencies.append(package_init)
+        return dependencies
+
+    def _dedupe_paths(self, paths: list[Path]) -> list[Path]:
+        seen: set[str] = set()
+        result: list[Path] = []
+        for path in paths:
+            try:
+                key = str(path.resolve())
+            except OSError:
+                key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(path)
+        return result
 
     def _has_main_guard(self, path: Path) -> bool:
         try:
@@ -1120,6 +2216,7 @@ class ProjectEvaluatorAgent:
                 "modulenotfounderror",
                 "importerror",
                 "nameerror",
+                "runtimeerror",
                 "_curses.error",
             )
         )

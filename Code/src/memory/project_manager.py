@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from memory.project_index import ProjectIndexManager
+
 
 class ProjectManager:
     """Maintain per-directory sketch.json files and search them."""
@@ -16,6 +18,7 @@ class ProjectManager:
     IGNORED_DIRS = {
         ".git",
         ".mypy_cache",
+        ".openpilot",
         ".pytest_cache",
         ".venv",
         "__pycache__",
@@ -51,6 +54,7 @@ class ProjectManager:
         self.root_path = Path(root_path).expanduser()
         self.embedding_service = embedding_service
         self.max_preview_chars = max_preview_chars
+        self.index_manager = ProjectIndexManager(self.root_path, embedding_service=embedding_service)
 
     def update(self, path: str | Path | None = None) -> dict[str, Any]:
         """Update sketch files for a file's directory or a directory tree."""
@@ -118,9 +122,42 @@ class ProjectManager:
         for path in sorted(item for item in directory.iterdir() if item.is_file()):
             if path.name == self.SKETCH_NAME:
                 continue
+            if self._is_ignored(path):
+                continue
             stat = path.stat()
-            description = self._describe_file(path)
-            semantic_info = self._semantic_info(path, description)
+            try:
+                index = self.index_manager.update_file_index(path)
+                index_sections = [
+                    {
+                        "section_id": section.section_id,
+                        "title": section.title,
+                        "summary": section.summary,
+                        "section_type": section.section_type,
+                        "line_start": section.line_start,
+                        "line_end": section.line_end,
+                        "char_start": section.char_start,
+                        "char_end": section.char_end,
+                    }
+                    for section in index.sections[:24]
+                ]
+                description = self._describe_file(path, index.to_json_dict())
+                semantic_info = {
+                    "kind": "content_index",
+                    "terms": self._semantic_terms(path, description),
+                    "index_file": index.index_file,
+                    "content_sha256": index.content_sha256,
+                }
+                content_index = {
+                    "index_file": index.index_file,
+                    "content_sha256": index.content_sha256,
+                    "language": index.language,
+                    "line_count": index.line_count,
+                    "sections": index_sections,
+                }
+            except (OSError, UnicodeDecodeError, ValueError):
+                description = self._describe_file(path)
+                semantic_info = self._semantic_info(path, description)
+                content_index = {}
             item = {
                 "name": path.name,
                 "path": str(path),
@@ -128,6 +165,7 @@ class ProjectManager:
                 "description": description,
                 "function_description": description,
                 "semantic_info": semantic_info,
+                "content_index": content_index,
                 "mtime": stat.st_mtime,
                 "size": stat.st_size,
             }
@@ -136,12 +174,32 @@ class ProjectManager:
             files[path.name] = item
 
         return {
-            "version": 1,
+            "version": ProjectIndexManager.INDEX_VERSION,
             "directory": str(directory),
+            "project_root": str(self.root_path),
             "files": files,
         }
 
-    def _describe_file(self, path: Path) -> str:
+    def _describe_file(self, path: Path, index_payload: dict[str, Any] | None = None) -> str:
+        if index_payload:
+            sections = index_payload.get("sections") or []
+            titles = ", ".join(str(section.get("title") or "") for section in sections[:6] if isinstance(section, dict))
+            summaries = " ".join(
+                str(section.get("summary") or "")
+                for section in sections[:6]
+                if isinstance(section, dict) and section.get("summary")
+            )
+            language = str(index_payload.get("language") or path.suffix or "text")
+            preview = self._read_preview(path)
+            detail_parts = []
+            if titles:
+                detail_parts.append(f"sections: {titles}")
+            if summaries:
+                detail_parts.append(f"summary: {summaries}")
+            if preview:
+                detail_parts.append(f"Preview: {preview}")
+            if detail_parts:
+                return f"{language} file named {path.name}; " + ". ".join(detail_parts)
         parts = [f"{path.suffix or 'plain'} file named {path.name}"]
         preview = self._read_preview(path)
         if preview:
@@ -170,6 +228,14 @@ class ProjectManager:
             "kind": "keyword_fallback",
             "terms": seen[:24],
         }
+
+    def _semantic_terms(self, path: Path, description: str) -> list[str]:
+        terms = self._terms(f"{path.name} {path.suffix} {description}")
+        seen = []
+        for term in terms:
+            if term not in seen:
+                seen.append(term)
+        return seen[:32]
 
     def _load_sketch(self, sketch_path: Path) -> dict[str, Any]:
         try:

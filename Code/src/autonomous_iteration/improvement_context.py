@@ -58,25 +58,30 @@ class ImprovementContextHelper:
         code_context: str = "",
         mode: str = "",
     ) -> dict[str, Any]:
+        environment = self.environment_context_getter(project_path)
+        stack_preset = environment.get("stack_preset") if isinstance(environment, dict) else None
+        stack_preset = stack_preset if isinstance(stack_preset, dict) else {}
         product_judgment = self.infer_product_judgment(
             original_goal=original_goal,
             project_path=project_path,
             written_files=written_files or [],
             current_code=current_code,
+            stack_preset=stack_preset,
         )
         product_intent = self.infer_product_intent(
             original_goal=original_goal,
             project_path=project_path,
             written_files=written_files or [],
             current_code=current_code,
+            stack_preset=stack_preset,
         )
-        quality_rubric = self.quality_rubric_for_product(product_judgment)
+        quality_rubric = self.quality_rubric_for_product(product_judgment, stack_preset=stack_preset)
         project_context = {
             "project_path": str(project_path) if project_path else "",
             "target_file": str(target_file) if target_file else "",
             "written_files": written_files or [],
             "run_command": run_command,
-            "environment": self.environment_context_getter(project_path),
+            "environment": environment,
             "validation_passed": getattr(evaluation, "validation_passed", None),
             "validation_errors": getattr(evaluation, "validation_errors", [])[:3] if evaluation else [],
             "validation_issues": [
@@ -94,6 +99,8 @@ class ImprovementContextHelper:
             "product_intent": product_intent.to_json_dict(),
             "product_judgment": product_judgment,
             "quality_rubric": quality_rubric,
+            "stack_preset": stack_preset,
+            "ui_iteration_contract": self.ui_iteration_contract(stack_preset),
             "agent_instruction": agent_instruction,
             "iteration_goal": iteration_goal,
             "acceptance_criteria": acceptance_criteria or [],
@@ -109,18 +116,20 @@ class ImprovementContextHelper:
         project_path: Path | None,
         written_files: list[str],
         current_code: str = "",
+        stack_preset: dict[str, Any] | None = None,
     ) -> ProductIntentMetadata:
         judgment = self.infer_product_judgment(
             original_goal=original_goal,
             project_path=project_path,
             written_files=written_files,
             current_code=current_code,
+            stack_preset=stack_preset,
         )
         goal_text = original_goal.lower()
         code_text = current_code.lower()
         experience_type = str(judgment.get("project_type") or "general_project")
         runtime_mode = str(judgment.get("preferred_runtime") or "best_fit_for_goal")
-        delivery_surface = str(judgment.get("preferred_stack") or "project_native")
+        delivery_surface = str(judgment.get("preferred_surface") or judgment.get("preferred_stack") or "project_native")
         core_capabilities = self._core_capabilities_from_goal(goal_text)
         constraints = [
             "Repair runtime, warning, environment, and quality issues without changing the intended user experience.",
@@ -153,10 +162,13 @@ class ImprovementContextHelper:
         project_path: Path | None,
         written_files: list[str],
         current_code: str = "",
+        stack_preset: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         goal_text = original_goal.lower()
+        stack_preset = stack_preset or {}
         explicit_terminal = any(term in goal_text for term in ("terminal", "curses", "cli", "shell", "命令行", "终端", "控制台"))
         web_surface = any(term in goal_text for term in ("web", "website", "browser", "site", "网页"))
+        assistant_surface = any(term in goal_text for term in ("assistant", "助手", "planner", "tracker", "管理器", "管理系统"))
         interactive = any(term in goal_text for term in ("game", "游戏", "interactive", "交互"))
         code_text = current_code.lower()
         if not code_text and project_path:
@@ -187,6 +199,10 @@ class ImprovementContextHelper:
             preferred_runtime = "browser"
             preferred_stack = "project_native"
             recommendation = "Preserve a browser-facing delivery surface while improving diagnosed project gaps."
+        elif assistant_surface:
+            preferred_runtime = "browser"
+            preferred_stack = "frontend_backend_split"
+            recommendation = "A user-facing assistant benefits from a browser UI unless the user explicitly requested terminal-only delivery."
         elif interactive:
             preferred_runtime = "interactive"
             preferred_stack = "project_native"
@@ -195,13 +211,53 @@ class ImprovementContextHelper:
             preferred_runtime = "best_fit_for_goal"
             preferred_stack = "project_native"
             recommendation = "Choose the runtime shape that best matches the user's project category."
+        preset_surface = str(stack_preset.get("delivery_surface") or "")
+        stack_preset_update: dict[str, Any] = {}
+        if preset_surface:
+            terminal_conflicts_with_goal = preset_surface == "terminal" and assistant_surface and not explicit_terminal
+            if terminal_conflicts_with_goal:
+                preferred_runtime = "browser"
+                preferred_stack = "frontend_backend_split"
+                recommendation = (
+                    "Persisted terminal stack preset conflicts with the user-facing assistant goal; "
+                    "request a browser UI stack revision before adding more terminal-only polish."
+                )
+                stack_preset_update = {
+                    "delivery_surface": "browser",
+                    "architecture": "frontend_backend_split",
+                    "frontend_language": "html_css_javascript",
+                    "frontend_frameworks": ["vanilla_web"],
+                    "ui_strategy": "browser_application",
+                    "ui_review_required": True,
+                    "rationale": [
+                        "The original goal is a user-facing assistant and does not explicitly request a terminal-only interface.",
+                        "Generated CLI evidence should not override the user's product surface.",
+                    ],
+                }
+            else:
+                preferred_stack = str(stack_preset.get("architecture") or preferred_stack)
+                if preset_surface == "browser":
+                    preferred_runtime = "browser"
+                elif preset_surface == "terminal":
+                    preferred_runtime = "terminal"
+                elif preset_surface == "interactive_runtime":
+                    preferred_runtime = "interactive"
+                recommendation = (
+                    f"Honor persisted stack preset revision {stack_preset.get('revision', 1)}: "
+                    f"{preset_surface} via {preferred_stack}."
+                )
         result = {
-            "project_type": "interactive_software" if interactive else ("web_software" if web_surface else "general_project"),
+            "project_type": "interactive_software" if interactive else ("web_software" if web_surface or assistant_surface else "general_project"),
             "explicit_terminal_requested": explicit_terminal,
             "current_runtime": current_runtime,
             "preferred_runtime": preferred_runtime,
             "preferred_stack": preferred_stack,
+            "preferred_surface": stack_preset_update.get("delivery_surface") or preset_surface or preferred_stack,
             "recommendation": recommendation,
+            "stack_preset_revision": stack_preset.get("revision"),
+            "recommended_stack_preset_update": stack_preset_update,
+            "ui_strategy": stack_preset.get("ui_strategy"),
+            "ui_review_required": bool(stack_preset.get("ui_review_required") or stack_preset_update.get("ui_review_required")),
         }
         self._log("infer_product_judgment", {"goal": original_goal}, result)
         return result
@@ -242,7 +298,13 @@ class ImprovementContextHelper:
             disallowed.append(f"substitute_away_from_{preferred_stack}")
         return disallowed
 
-    def quality_rubric_for_product(self, product_judgment: dict[str, Any]) -> list[str]:
+    def quality_rubric_for_product(
+        self,
+        product_judgment: dict[str, Any],
+        *,
+        stack_preset: dict[str, Any] | None = None,
+    ) -> list[str]:
+        stack_preset = stack_preset or {}
         rubric = [
             "Product fit: the delivery surface must preserve the user goal and inferred project objective.",
             "Functional completeness: the observable behavior must improve a diagnosed success metric before adding low-value polish.",
@@ -251,8 +313,30 @@ class ImprovementContextHelper:
             "Technical scalability: choose maintainable changes that keep the next iteration feasible.",
             "Innovation only counts when it is relevant to user value and supported by project evidence.",
         ]
+        if stack_preset.get("ui_review_required"):
+            rubric.insert(
+                2,
+                "UI impact is mandatory: every user-facing feature change must add or update coherent controls, states, and feedback on the planned surface.",
+            )
+        if stack_preset:
+            rubric.append(
+                "Technology-stack fit: honor the persisted frontend/backend language and framework preset; revise it explicitly before changing architecture."
+            )
         self._log("quality_rubric_for_product", product_judgment, {"rubric_items": len(rubric)})
         return rubric
+
+    def ui_iteration_contract(self, stack_preset: dict[str, Any]) -> dict[str, Any]:
+        """Require every iteration to assess whether user-facing UI work is implicated."""
+        return {
+            "assessment_required": True,
+            "implementation_required_for_user_facing_change": bool(stack_preset.get("ui_review_required")),
+            "delivery_surface": str(stack_preset.get("delivery_surface") or "project_native"),
+            "ui_strategy": str(stack_preset.get("ui_strategy") or "evaluate_user_facing_ui"),
+            "instruction": (
+                "Assess UI impact for every feature addition. When the change is user-facing, implement the corresponding "
+                "controls, states, feedback, and navigation on the planned surface instead of treating UI as optional polish."
+            ),
+        }
 
     def prompt_context_layer_summary(self, prompt_context: dict[str, Any]) -> dict[str, Any]:
         product = prompt_context.get("product_judgment") or {}
@@ -263,6 +347,10 @@ class ImprovementContextHelper:
             "preferred_runtime": product.get("preferred_runtime"),
             "preferred_stack": product.get("preferred_stack"),
             "current_runtime": product.get("current_runtime"),
+            "stack_preset_revision": (prompt_context.get("stack_preset") or {}).get("revision"),
+            "ui_review_required": (prompt_context.get("ui_iteration_contract") or {}).get(
+                "implementation_required_for_user_facing_change"
+            ),
             "rubric_items": len(prompt_context.get("quality_rubric") or []),
             "tool_task_chars": len(str(prompt_context.get("tool_task") or "")),
             "code_context_chars": len(str(project_context.get("current_code_context") or "")),

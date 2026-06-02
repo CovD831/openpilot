@@ -16,6 +16,7 @@ from core.tool_contracts import (
     ToolDefinition,
     ToolFailureMode,
 )
+from tools.file_indexing import refresh_after_file_change
 
 
 README_TOOL_DEFINITION = ToolDefinition(
@@ -98,6 +99,12 @@ def readme_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadat
     created = not readme_path.exists()
     readme_path.write_text(content, encoding="utf-8")
     bytes_written = readme_path.stat().st_size
+    index_update: dict[str, Any] = {}
+    warnings: list[str] = []
+    try:
+        index_update = refresh_after_file_change(readme_path)
+    except Exception as exc:
+        warnings.append(f"File index refresh failed: {exc}")
 
     return {
         "file_path": str(readme_path.absolute()),
@@ -106,6 +113,8 @@ def readme_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadat
         "run_command": run_command,
         "setup_commands": setup_commands,
         "sections": sections,
+        "index_update": index_update,
+        "warnings": warnings,
     }
 
 

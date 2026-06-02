@@ -25,7 +25,7 @@ from metadata import (
 from tools.tool_selection import SelectionReason, ToolSelection
 
 
-WRITE_TOOLS = {"file_writer", "file_patch_writer"}
+WRITE_TOOLS = {"file_writer", "file_patch_writer", "file_delete_tool"}
 READ_TOOLS = {"file_reader", "multi_file_reader"}
 EXECUTION_TOOLS = {"command_executor", "code_executor"}
 FILE_CREATE_OPERATIONS = {"create_file", "file_create", "directory_generate"}
@@ -230,9 +230,13 @@ class ToolRouter:
         if need_type in {"bug_fix", "bug_fix_tool", "fix_bug", "repair"}:
             return "bug_fix_tool"
         operation_kind = str(need.operation_kind or need.attributes.get("operation_kind") or "").lower()
+        if need_type in {"file_delete", "delete_file", "remove_file"}:
+            return "file_delete_tool"
         if need_type in {"file_write", "write_file"}:
             if operation_kind in {"add_symbol", "modify_symbol", "code_patch", "code_unit_generate", "code_symbol_modify"}:
                 return "file_patch_writer"
+            if operation_kind in {"delete_file", "file_delete", "remove_file"}:
+                return "file_delete_tool"
             return "file_writer"
         if need_type == "code_file_create" and self._looks_like_non_executable_file_need(need):
             target_path = need.target_path or need.attributes.get("file_path")
@@ -327,6 +331,14 @@ class ToolRouter:
                 "patch_mode": need.patch_mode or attrs.get("patch_mode"),
                 **attrs,
             }
+            return ToolInputMetadata.from_mapping(tool_name, payload)
+        if tool_name == "file_delete_tool":
+            file_path = need.target_path or attrs.get("file_path")
+            if not file_path:
+                return None
+            payload = dict(attrs)
+            payload["file_path"] = file_path
+            payload["operation_kind"] = need.operation_kind or attrs.get("operation_kind") or "delete_file"
             return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "code_generator":
             task_description = attrs.get("task_description") or need.question
@@ -457,6 +469,8 @@ class ToolRouter:
             return ["static inspection", "runtime verifier"]
         if need_type in {"file_write", "write_file"}:
             return ["file_patch_writer", "edit plan", "ask user"]
+        if need_type in {"file_delete", "delete_file", "remove_file"}:
+            return ["file_reader", "edit plan", "ask user"]
         if need_type in {"code_unit_generate", "generate_code_unit", "add_symbol"}:
             return ["code_generator"]
         if need_type in {"code_symbol_modify", "code_patch", "modify_symbol"}:

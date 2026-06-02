@@ -7,7 +7,11 @@ from memory.memory_models import MemoryType
 from memory.memory_store import MemoryStore
 from metadata import ResultStatus, ToolInputMetadata
 from tools.command_tool import command_executor
-from tools.environment_fix_tool import diagnose_environment_failure, environment_fix_tool_executor
+from tools.environment_fix_tool import (
+    diagnose_environment_failure,
+    environment_fix_tool_executor,
+    summarize_environment_failure,
+)
 
 
 PIP_INVALID_REQUIREMENT_ERROR = """
@@ -21,6 +25,11 @@ ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of depe
 PIP_NO_MATCHING_DISTRIBUTION_ERROR = """
 ERROR: Could not find a version that satisfies the requirement speech_recognition (from versions: none)
 ERROR: No matching distribution found for speech_recognition
+"""
+
+PIP_NOTICE_ONLY = """
+[notice] A new release of pip is available: 25.3 -> 26.1.1
+[notice] To update, run: /tmp/project/.venv/bin/python -m pip install --upgrade pip
 """
 
 
@@ -59,6 +68,62 @@ def test_environment_fix_tool_sanitizes_invalid_requirements_line(tmp_path) -> N
     assert result.result.applied is True
     assert result.result.changed_files == [str(requirements)]
     assert requirements.read_text(encoding="utf-8") == "rich\nrequests>=2\n"
+
+
+def test_environment_fix_tool_removes_python_source_contamination_in_one_pass(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    requirements = project / "requirements.txt"
+    requirements.write_text(
+        "#!/usr/bin/env python3\n"
+        '"""\n'
+        "Reminder module\n"
+        '"""\n'
+        "import json\n"
+        "class Reminder:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    error = PIP_INVALID_REQUIREMENT_ERROR.replace("/tmp/project", str(project))
+
+    result = environment_fix_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "environment_fix_tool",
+            {"project_path": str(project), "stderr": error},
+        )
+    )
+
+    assert result.status == ResultStatus.SUCCESS
+    assert result.result.applied is True
+    assert requirements.read_text(encoding="utf-8") == (
+        "# OpenPilot removed Python source accidentally written to this requirements file.\n"
+    )
+    assert any("class Reminder:" in action for action in result.result.repair_actions)
+
+
+def test_environment_failure_diagnosis_handles_invalid_requirement_without_location(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    requirements = project / "requirements.txt"
+    requirements.write_text('"""\n', encoding="utf-8")
+
+    diagnosis = diagnose_environment_failure(
+        project,
+        "ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of dependency specifier",
+    )
+
+    assert diagnosis.error_type == "invalid_requirements_file"
+    assert diagnosis.affected_file == str(requirements)
+    assert diagnosis.line_number is None
+
+
+def test_pip_upgrade_notice_is_not_an_environment_repair_command(tmp_path) -> None:
+    diagnosis = diagnose_environment_failure(tmp_path, PIP_NOTICE_ONLY)
+
+    assert diagnosis.error_type == "environment_setup_failed"
+    assert diagnosis.pip_notices
+    assert diagnosis.suggested_command == ""
+    assert "pip notices were ignored" in summarize_environment_failure(PIP_NOTICE_ONLY)
 
 
 def test_environment_fix_tool_resolves_pypi_distribution_alias_and_remembers_fix(tmp_path) -> None:

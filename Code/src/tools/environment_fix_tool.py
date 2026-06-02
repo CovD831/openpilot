@@ -14,6 +14,7 @@ from core.python_packages import (
     replace_requirement_name,
     requirement_name,
 )
+from core.python_requirements import sanitize_requirements_content
 from core.tool_contracts import PermissionLevel, ToolCapability, ToolDefinition, ToolFailureMode
 from memory.memory_models import MemoryRecord, MemoryType
 from metadata import (
@@ -27,6 +28,7 @@ from metadata import (
     metadata_tool_result,
 )
 from tools.command_tool import command_executor
+from tools.file_indexing import refresh_after_file_change
 
 
 ENVIRONMENT_FIX_TOOL_DEFINITION = ToolDefinition(
@@ -72,6 +74,8 @@ def environment_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResu
     research_queries: list[str] = []
     research_results: list[dict[str, Any]] = []
     memory_record_ids: list[str] = []
+    index_updates: list[dict[str, Any]] = []
+    index_warnings: list[str] = []
     applied = False
 
     if diagnosis.error_type == "invalid_requirements_file" and diagnosis.affected_file:
@@ -122,6 +126,12 @@ def environment_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResu
                     if memory_record_id and memory_record_id not in memory_record_ids:
                         memory_record_ids.append(memory_record_id)
 
+    for changed_file in changed_files:
+        try:
+            index_updates.append(refresh_after_file_change(changed_file))
+        except Exception as exc:
+            index_warnings.append(f"File index refresh failed for {changed_file}: {exc}")
+
     command_executed = False
     user_declined = False
     if not applied and diagnosis.error_type == "environment_setup_failed" and diagnosis.suggested_command:
@@ -165,6 +175,8 @@ def environment_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResu
         command_executed=command_executed,
         requires_confirmation=diagnosis.requires_confirmation,
         user_declined=user_declined,
+        index_updates=index_updates,
+        index_warnings=index_warnings,
     )
     if applied:
         return ToolResultMetadata(tool_name="environment_fix_tool", status=ResultStatus.SUCCESS, result=result)
@@ -198,19 +210,26 @@ def diagnose_environment_failure(project_path: Path, error_text: str) -> Environ
     lines = [line.rstrip() for line in str(error_text or "").splitlines()]
     pip_notices = [line.strip() for line in lines if line.strip().startswith("[notice]")]
     non_notice_lines = [line for line in lines if line.strip() and not line.strip().startswith("[notice]")]
-    root_cause = _first_error_line(non_notice_lines) or "\n".join(non_notice_lines[:3]).strip() or str(error_text).strip()
+    root_cause = summarize_environment_failure(error_text)
 
     invalid_requirement = re.search(
-        r"ERROR:\s+Invalid requirement:\s+(?P<requirement>.+?)(?:\n|$).*?\(from line (?P<line>\d+) of (?P<path>[^)]+)\)",
+        r"ERROR:\s+Invalid requirement:\s+(?P<requirement>[^\n]+)",
         str(error_text),
-        flags=re.DOTALL,
     )
     if invalid_requirement:
-        affected_file = invalid_requirement.group("path").strip()
-        line_number = int(invalid_requirement.group("line"))
+        location = re.search(
+            r"\(from line (?P<line>\d+)(?: of (?P<path>[^)]+))?\)",
+            str(error_text),
+        )
+        affected_file = (
+            location.group("path").strip()
+            if location and location.group("path")
+            else _extract_existing_requirements_path(project_path, str(error_text))
+        )
+        line_number = int(location.group("line")) if location else None
         return EnvironmentFailureMetadata(
             raw_stderr=str(error_text or ""),
-            root_cause=_first_error_line(non_notice_lines) or f"Invalid requirement in {affected_file}:{line_number}",
+            root_cause=root_cause,
             error_type="invalid_requirements_file",
             affected_file=affected_file,
             line_number=line_number,
@@ -242,16 +261,25 @@ def diagnose_environment_failure(project_path: Path, error_text: str) -> Environ
             requires_confirmation=False,
         )
 
-    command_match = re.search(r"To update, run:\s*(?P<command>.+)", str(error_text))
-    suggested_command = command_match.group("command").strip() if command_match else ""
     return EnvironmentFailureMetadata(
         raw_stderr=str(error_text or ""),
         root_cause=root_cause,
         error_type="environment_setup_failed",
         affected_file=_extract_existing_requirements_path(project_path, str(error_text)),
         pip_notices=pip_notices,
-        suggested_command=suggested_command,
-        requires_confirmation=bool(suggested_command and _command_needs_confirmation(suggested_command, project_path)),
+        suggested_command="",
+        requires_confirmation=False,
+    )
+
+
+def summarize_environment_failure(error_text: str) -> str:
+    """Return a user-facing root cause without treating pip notices as failures."""
+    lines = [line.rstrip() for line in str(error_text or "").splitlines()]
+    non_notice_lines = [line for line in lines if line.strip() and not line.strip().startswith("[notice]")]
+    return (
+        _first_error_line(non_notice_lines)
+        or "\n".join(non_notice_lines[:3]).strip()
+        or "Environment setup failed without a root-cause error. pip notices were ignored."
     )
 
 
@@ -276,19 +304,8 @@ def _extract_existing_requirements_path(project_path: Path, text: str) -> str:
 
 
 def _sanitize_requirements(content: str, line_number: int | None) -> tuple[str, list[str]]:
-    lines = content.splitlines(keepends=True)
-    removed: list[str] = []
-    updated: list[str] = []
-    for index, line in enumerate(lines, start=1):
-        stripped = line.strip()
-        should_remove = stripped in {'"""', "'''", "```"} or stripped.startswith('"""') or stripped.startswith("'''")
-        if line_number is not None and index == line_number and not _looks_like_requirement(stripped):
-            should_remove = True
-        if should_remove:
-            removed.append(f"{index}: {stripped}")
-            continue
-        updated.append(line)
-    return "".join(updated), removed
+    del line_number
+    return sanitize_requirements_content(content)
 
 
 def _replace_requirement(content: str, failed_requirement: str, replacement: str) -> tuple[str, list[str]]:

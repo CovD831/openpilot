@@ -101,3 +101,46 @@ def test_project_environment_tool_maps_import_name_to_published_distribution(tmp
     detected = infer_project_dependencies(tmp_path, ["assistant.py"])
 
     assert detected == ["pyttsx3", "SpeechRecognition"]
+
+
+def test_project_environment_tool_persists_and_updates_stack_preset(tmp_path) -> None:
+    project = tmp_path / "assistant"
+    project.mkdir()
+    (project / "assistant.py").write_text("print('assistant')\n", encoding="utf-8")
+    fake_manager = FakeEnvironmentManager()
+
+    initial = project_environment_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "project_environment_tool",
+            {
+                "project_path": str(project),
+                "goal": "帮我做一个个人数字助手",
+                "written_files": ["assistant.py"],
+                "install": False,
+                "_environment_manager": fake_manager,
+            },
+        )
+    )
+    updated = project_environment_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "project_environment_tool",
+            {
+                "project_path": str(project),
+                "written_files": ["assistant.py"],
+                "install": False,
+                "stack_preset_update": {
+                    "delivery_surface": "terminal",
+                    "architecture": "terminal_application",
+                    "frontend_language": "terminal_text",
+                    "ui_strategy": "terminal_ui",
+                },
+                "_environment_manager": fake_manager,
+            },
+        )
+    )
+
+    assert initial.result.stack_preset.delivery_surface == "browser"
+    assert initial.result.stack_preset.revision == 1
+    assert updated.result.stack_preset.delivery_surface == "terminal"
+    assert updated.result.stack_preset.revision == 2
+    assert (project / ".openpilot" / "project_stack.json").exists()

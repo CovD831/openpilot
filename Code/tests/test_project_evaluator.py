@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import subprocess
 from types import SimpleNamespace
 
@@ -19,6 +20,31 @@ def _write_project(tmp_path, code: str) -> tuple[str, str]:
     app.write_text(code, encoding="utf-8")
     readme.write_text("## Run\n\n```bash\npython main.py\n```\n", encoding="utf-8")
     return str(app), str(readme)
+
+
+def _fake_port_conflict_run(expected_port: int):
+    calls = []
+
+    def fake_run(args, *, project, timeout, env):
+        calls.append({"args": args, "project": project, "timeout": timeout, "env": env})
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            try:
+                probe.bind(("127.0.0.1", expected_port))
+                occupied = False
+            except OSError:
+                occupied = True
+        finally:
+            probe.close()
+        assert occupied is True
+        return {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": f"Address already in use\nPort {expected_port} is in use by another program.",
+            "timed_out": False,
+        }
+
+    return fake_run, calls
 
 
 def test_interactive_guarded_slow_import_is_warning_not_failure(tmp_path, monkeypatch) -> None:
@@ -225,6 +251,230 @@ def test_runtime_traceback_validation_issue_targets_traceback_file(tmp_path, mon
     runtime_issue = next(issue for issue in result.validation_issues if issue.category == "runtime_error")
     assert result.validation_passed is False
     assert runtime_issue.target_files == [str(app), str(helper)]
+
+
+def test_entrypoint_import_contract_failure_is_blocking_even_when_entry_not_written_file(tmp_path) -> None:
+    server = tmp_path / "server.py"
+    helper = tmp_path / "assistant.py"
+    readme = tmp_path / "README.md"
+    server.write_text(
+        """
+import sys
+
+try:
+    from assistant import ask_question
+except ImportError as exc:
+    print(f"FATAL: cannot import assistant module - {exc}")
+    sys.exit(1)
+
+print(ask_question("hello"))
+""",
+        encoding="utf-8",
+    )
+    helper.write_text("def answer_question(question):\n    return 'ok'\n", encoding="utf-8")
+    readme.write_text("## Run\n\n```bash\npython server.py\n```\n", encoding="utf-8")
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build personal assistant",
+        project_path=tmp_path,
+        written_files=[str(helper)],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    issue = next(issue for issue in result.validation_issues if issue.recommended_repair_kind == "fix_startup_import_contract")
+    assert result.validation_passed is False
+    assert "cannot import" in issue.message
+    assert issue.category == "runtime_error"
+    assert issue.target_files == [str(server), str(helper)]
+    assert "actual local module API" in issue.recommended_action
+
+
+def test_direct_run_missing_api_key_is_blocking_even_when_parent_env_has_key(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+import os
+
+if not os.environ.get("OPENAI_API_KEY"):
+    raise RuntimeError("OpenAI API key not found. Set OPENAI_API_KEY environment variable")
+
+print("ready")
+""",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-parent-env")
+
+    result = ProjectEvaluatorAgent(smoke_timeout_seconds=1).evaluate_project(
+        goal="build personal assistant",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    issue = next(issue for issue in result.validation_issues if issue.recommended_repair_kind == "defer_required_secret_validation")
+    assert result.validation_passed is False
+    assert "OPENAI_API_KEY" in issue.message
+    assert '`export OPENAI_API_KEY="..."`' in issue.recommended_action
+    assert "no spaces" in issue.recommended_action
+    assert issue.target_files == [str(tmp_path / "main.py")]
+
+
+def test_runtime_system_output_uses_llm_decision_for_repair(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(tmp_path, "print('startup')\n")
+    calls = []
+
+    class FakeLLM:
+        def complete(self, request, **kwargs):
+            calls.append({"request": request, "kwargs": kwargs})
+            return SimpleNamespace(
+                content=json.dumps(
+                    {
+                        "requires_fix": True,
+                        "category": "port_conflict",
+                        "reason": "The app cannot start because a selected port is occupied.",
+                        "recommended_fix": "Select a free fallback port and print the actual URL.",
+                        "recommended_repair_kind": "make_web_port_configurable",
+                    }
+                )
+            )
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="Address already in use\nPort 8765 is in use by another program.",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = ProjectEvaluatorAgent(llm_client=FakeLLM(), smoke_timeout_seconds=1).evaluate_project(
+        goal="build browser app",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    issue = next(issue for issue in result.validation_issues if issue.recommended_repair_kind == "make_web_port_configurable")
+    assert calls
+    assert result.validation_passed is False
+    assert issue.category == "environment"
+    assert "selected port is occupied" in issue.message
+    assert "free fallback port" in issue.recommended_action
+
+
+def test_flask_fixed_port_conflict_probe_uses_real_run_output(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    return "ok"
+
+if __name__ == "__main__":
+    app.run(port=8765, debug=True)
+""",
+    )
+    fake_run, calls = _fake_port_conflict_run(8765)
+    agent = ProjectEvaluatorAgent(smoke_timeout_seconds=1)
+    monkeypatch.setattr(agent, "_run_startup_command", fake_run)
+
+    result = agent.evaluate_project(
+        goal="build browser app",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    issue = next(issue for issue in result.validation_issues if issue.recommended_repair_kind == "make_web_port_configurable")
+    assert calls
+    assert result.validation_passed is False
+    assert "port 8765 unavailable" in issue.message
+    assert "actual local URL" in issue.recommended_action
+    assert issue.target_files == [str(tmp_path / "main.py")]
+
+
+def test_flask_port_probe_ignores_non_server_run_helpers(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+import anyio
+from flask import Flask
+
+app = Flask(__name__)
+
+async def startup():
+    return None
+
+if __name__ == "__main__":
+    anyio.run(startup)
+    app.run(host="127.0.0.1", port=8766, debug=True)
+""",
+    )
+    fake_run, _calls = _fake_port_conflict_run(8766)
+    agent = ProjectEvaluatorAgent(smoke_timeout_seconds=1)
+    monkeypatch.setattr(agent, "_run_startup_command", fake_run)
+
+    result = agent.evaluate_project(
+        goal="build browser app",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    issue = next(issue for issue in result.validation_issues if issue.recommended_repair_kind == "make_web_port_configurable")
+    assert result.validation_passed is False
+    assert "port 8766 unavailable" in issue.message
+    assert issue.evidence_spans[0]["text"].startswith("app.run(")
+
+
+def test_flask_env_port_override_allows_direct_startup_validation(tmp_path, monkeypatch) -> None:
+    app, readme = _write_project(
+        tmp_path,
+        """
+import os
+from flask import Flask
+
+app = Flask(__name__)
+
+@app.route("/")
+def index():
+    return "ok"
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="127.0.0.1", port=port, debug=True)
+""",
+    )
+
+    def fake_run(*args, **kwargs):
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    agent = ProjectEvaluatorAgent(smoke_timeout_seconds=1)
+    monkeypatch.setattr(
+        agent,
+        "_run_startup_command",
+        lambda args, *, project, timeout, env: {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False},
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = agent.evaluate_project(
+        goal="build browser app",
+        project_path=tmp_path,
+        written_files=[app],
+        readme_path=readme,
+        static_review={"approved": True, "issues": [], "syntax_errors": []},
+    )
+
+    assert result.validation_passed is True
+    assert not any(issue.recommended_repair_kind == "make_web_port_configurable" for issue in result.validation_issues)
 
 
 def test_pygame_font_warning_requires_repair(tmp_path, monkeypatch) -> None:

@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import json
+
 from rich.console import Console
 
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
-from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskPriority, TaskStatus
+from autonomous_iteration.task_models import (
+    Task,
+    TaskDecompositionResult,
+    TaskExecutionContext,
+    TaskExecutionResult,
+    TaskPriority,
+    TaskStatus,
+)
 from core.openpilot_log import OpenPilotLogger
 from metadata import FailureMetadata, ResultStatus, TaskResultMetadata
 
@@ -20,6 +29,35 @@ class FakeTaskDecomposer:
         if self.fail_order:
             raise ValueError("cycle")
         return self.order or [task.id for task in task_graph["tasks"]]
+
+    def decompose(self, task_description, context=None, parent_task_id=None):
+        original = Task(id=parent_task_id or "original", description=task_description)
+        subtasks = [
+            Task(id="inspect", description="Inspect failed planning context", parent_id=original.id, kind="inspect"),
+            Task(
+                id="repair",
+                description="Repair by smaller tool plan",
+                parent_id=original.id,
+                kind="repair",
+                dependencies=["inspect"],
+                write_files=["app.py"],
+            ),
+            Task(
+                id="validate",
+                description="Validate repaired task",
+                parent_id=original.id,
+                kind="validate",
+                dependencies=["repair"],
+                validation_command="python -m compileall .",
+            ),
+        ]
+        return TaskDecompositionResult(
+            original_task=original,
+            subtasks=subtasks,
+            task_graph_summary="inspect -> repair -> validate",
+            decomposition_rationale="Split hard planning gap into smaller tasks.",
+            estimated_total_effort=3.0,
+        )
 
 
 class FakeEnhancedUI:
@@ -39,6 +77,7 @@ class FakeEnhancedUI:
 
 
 class FakeRuntime:
+    _execute_tasks = IntelligentAutopilot._execute_tasks
     _dashboard_task_items = IntelligentAutopilot._dashboard_task_items
     _execute_tasks_enhanced_ui = IntelligentAutopilot._execute_tasks_enhanced_ui
     _execute_tasks_standard = IntelligentAutopilot._execute_tasks_standard
@@ -59,11 +98,31 @@ class FakeRuntime:
         self.executed: list[str] = []
         self.raise_for: set[str] = set()
         self.fail_for: set[str] = set()
+        self.decompose_for: set[str] = set()
 
     def _execute_task(self, task: Task, context: TaskExecutionContext) -> TaskExecutionResult:
         self.executed.append(task.id)
         if task.id in self.raise_for:
             raise RuntimeError("boom")
+        if task.id in self.decompose_for:
+            failure = FailureMetadata(
+                error_type="DecisionNeedResolutionError",
+                error_message="Tool planning requires decomposition after empty decision_needs plan",
+                details={
+                    "failed_tool": "tool_planning_executor",
+                    "failure_stage": "Tool Planning",
+                    "problem_signal": {"category": "planning_gap", "task_id": task.id},
+                    "difficulty_assessment": {"level": "hard", "needs_decomposition": True},
+                    "resolution_plan": {"strategy": "decompose", "target_tasks": [task.id], "max_attempts": 2},
+                },
+            )
+            return TaskExecutionResult(
+                task_id=task.id,
+                status=TaskStatus.FAILED,
+                error=failure.error_message,
+                result_metadata=TaskResultMetadata(task_id=task.id, status=ResultStatus.FAIL, failure=failure),
+                duration=0.1,
+            )
         if task.id in self.fail_for:
             failure = FailureMetadata(
                 error_type="DecisionNeedValidationError",
@@ -160,9 +219,66 @@ def test_runtime_blocks_dependency_after_failed_previous_task(tmp_path) -> None:
     assert "Blocked because task a failed" in results[1].error
 
 
+def test_runtime_decomposes_hard_planning_gap_before_final_failure(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path)
+    runtime.decompose_for = {"a"}
+    tasks = [Task(id="a", description="Implement complex frontend/backend architecture")]
+
+    results = IntelligentAutopilot._execute_tasks(runtime, tasks, "goal")
+
+    assert results[0].status == TaskStatus.COMPLETED
+    assert tasks[0].status == TaskStatus.COMPLETED
+    assert runtime.executed == ["a", "inspect", "repair", "validate"]
+    assert results[0].attributes["problem_resolution"]["resolution_strategy"] == "decompose"
+    events = [
+        json.loads(line)
+        for line in (tmp_path / "runtime_task_execution.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(event["event_type"] == "task_problem_decomposition_started" for event in events)
+    assert any(
+        event["event_type"] == "task_problem_decomposition_completed" and event["payload"]["success"]
+        for event in events
+    )
+
+
 def test_runtime_dashboard_items_marks_running_task(tmp_path) -> None:
     runtime = FakeRuntime(tmp_path)
     items = IntelligentAutopilot._dashboard_task_items(runtime, _tasks(), running_task_id="a")
 
     assert items[0]["status"] == "running"
     assert items[1]["status"] == "pending"
+
+
+def test_task_graph_file_locks_serialize_same_file_writes() -> None:
+    tasks = [
+        Task(id="write-a", description="Write app", write_files=["app.py"]),
+        Task(id="write-b", description="Rewrite app", write_files=["./app.py"]),
+    ]
+
+    batches = IntelligentAutopilot._execution_batches_with_file_locks(tasks, ["write-a", "write-b"])
+
+    assert batches == [["write-a"], ["write-b"]]
+
+
+def test_task_graph_file_locks_allow_parallel_reads() -> None:
+    tasks = [
+        Task(id="read-a", description="Inspect app", read_files=["app.py"]),
+        Task(id="read-b", description="Inspect docs", read_files=["README.md"]),
+    ]
+
+    batches = IntelligentAutopilot._execution_batches_with_file_locks(tasks, ["read-a", "read-b"])
+
+    assert batches == [["read-a", "read-b"]]
+
+
+def test_task_graph_validation_waits_for_write_tasks() -> None:
+    tasks = [
+        Task(id="validate", description="Validate app", kind="validate", validation_command="pytest"),
+        Task(id="write", description="Write app", write_files=["app.py"]),
+    ]
+
+    batches = IntelligentAutopilot._execution_batches_with_file_locks(tasks, ["validate", "write"])
+    _nodes, edges = IntelligentAutopilot._task_graph_metadata(tasks)
+
+    assert batches == [["write"], ["validate"]]
+    assert any(edge.from_task == "write" and edge.to_task == "validate" and edge.edge_type == "validates" for edge in edges)

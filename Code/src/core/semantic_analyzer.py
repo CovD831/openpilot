@@ -118,7 +118,7 @@ code_execution, shell_execution, email, calendar, database, network.
 
 Allowed preferred_tool values:
 multi_file_reader, llm_summarizer, file_writer, command_executor,
-code_generator, code_unit_generator, code_editor, file_patch_writer,
+code_generator, code_unit_generator, code_editor, file_patch_writer, file_delete_tool,
 code_reviewer, code_executor, readme_tool, web_searcher,
 bug_fix_tool, warning_check_tool,
 unsupported_file_mutation.

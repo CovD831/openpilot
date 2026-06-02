@@ -9,6 +9,7 @@ from metadata import (
     ProductIntentMetadata,
     ProjectDependencyMetadata,
     ProjectDiagnosisMetadata,
+    ProjectStackPresetMetadata,
     ValidationIssueMetadata,
     WarningCheckResultMetadata,
 )
@@ -71,6 +72,7 @@ class ProjectStateSnapshot(BaseModel):
     module_summaries: list[str] = Field(default_factory=list)
     dependencies: list[ProjectDependencyMetadata] = Field(default_factory=list)
     dependency_strategy: DependencyStrategyMetadata | None = None
+    stack_preset: ProjectStackPresetMetadata | None = None
 
 
 class ImprovementGoal(BaseModel):

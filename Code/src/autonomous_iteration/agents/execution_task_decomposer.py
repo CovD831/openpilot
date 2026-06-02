@@ -148,7 +148,15 @@ class TaskDecomposer:
                 priority=TaskPriority(subtask_desc.get("priority", "medium")),
                 estimated_effort=subtask_desc.get("estimated_effort"),
                 dependencies=[],  # Will be filled in second pass
-                tags=subtask_desc.get("tags", [])
+                tags=subtask_desc.get("tags", []),
+                kind=str(subtask_desc.get("kind") or subtask_desc.get("task_kind") or "general"),
+                difficulty=str(subtask_desc.get("difficulty") or "simple"),
+                required_inputs=self._string_list(subtask_desc.get("required_inputs")),
+                expected_outputs=self._string_list(subtask_desc.get("expected_outputs")),
+                read_files=self._string_list(subtask_desc.get("read_files")),
+                write_files=self._string_list(subtask_desc.get("write_files")),
+                can_run_parallel=bool(subtask_desc.get("can_run_parallel", True)),
+                validation_command=str(subtask_desc.get("validation_command") or ""),
             )
             subtasks.append(subtask)
             subtask_indices.append((subtask, raw_deps))
@@ -159,8 +167,16 @@ class TaskDecomposer:
                 type="subtask",
                 data={
                     "description": subtask.description,
+                    "kind": subtask.kind,
+                    "difficulty": subtask.difficulty,
                     "priority": subtask.priority.value,
-                    "estimated_effort": subtask.estimated_effort
+                    "estimated_effort": subtask.estimated_effort,
+                    "required_inputs": subtask.required_inputs,
+                    "expected_outputs": subtask.expected_outputs,
+                    "read_files": subtask.read_files,
+                    "write_files": subtask.write_files,
+                    "can_run_parallel": subtask.can_run_parallel,
+                    "validation_command": subtask.validation_command,
                 }
             ))
 
@@ -231,9 +247,17 @@ class TaskDecomposer:
                 type="task",
                 data={
                     "description": task.description,
+                    "kind": task.kind,
+                    "difficulty": task.difficulty,
                     "status": task.status.value,
                     "priority": task.priority.value,
-                    "estimated_effort": task.estimated_effort
+                    "estimated_effort": task.estimated_effort,
+                    "required_inputs": task.required_inputs,
+                    "expected_outputs": task.expected_outputs,
+                    "read_files": task.read_files,
+                    "write_files": task.write_files,
+                    "can_run_parallel": task.can_run_parallel,
+                    "validation_command": task.validation_command,
                 }
             ))
 
@@ -400,9 +424,17 @@ Provide a JSON response with:
     "subtasks": [
         {{
             "description": "Subtask description",
+            "kind": "inspect|implement|repair|validate|document|general",
+            "difficulty": "trivial|simple|moderate|hard",
             "priority": "low|medium|high|critical",
             "estimated_effort": 1.0,
+            "required_inputs": [],
+            "expected_outputs": [],
+            "read_files": [],
+            "write_files": [],
             "dependencies": [],
+            "can_run_parallel": true,
+            "validation_command": "",
             "tags": []
         }}
     ]
@@ -414,6 +446,9 @@ Guidelines:
   a named file/directory, create 1-3 subtasks and prefer one implementation
   task plus one validation task.
 - Each subtask should be independently executable
+- Put concrete project files in read_files/write_files when known
+- Tasks that write the same file must depend on each other or set can_run_parallel=false
+- Validation subtasks should depend on implementation/repair subtasks and include validation_command when known
 - Dependencies should be indices (0, 1, 2, etc.) of other subtasks in the list
 - Estimate effort (1.0 = 1 unit of work)
 - Keep descriptions clear and actionable"""
@@ -456,27 +491,60 @@ Guidelines:
             "subtasks": [
                 {
                     "description": f"Analyze requirements for: {task.description}",
+                    "kind": "inspect",
+                    "difficulty": "simple",
                     "priority": "high",
                     "estimated_effort": 1.0,
+                    "required_inputs": [],
+                    "expected_outputs": ["Concrete implementation requirements"],
+                    "read_files": [],
+                    "write_files": [],
                     "dependencies": [],
+                    "can_run_parallel": True,
+                    "validation_command": "",
                     "tags": ["analysis"]
                 },
                 {
                     "description": f"Implement: {task.description}",
+                    "kind": "implement",
+                    "difficulty": "moderate",
                     "priority": "high",
                     "estimated_effort": 3.0,
-                    "dependencies": [],
+                    "required_inputs": ["Concrete implementation requirements"],
+                    "expected_outputs": ["Updated project files"],
+                    "read_files": [],
+                    "write_files": [],
+                    "dependencies": [0],
+                    "can_run_parallel": False,
+                    "validation_command": "",
                     "tags": ["implementation"]
                 },
                 {
                     "description": f"Test: {task.description}",
+                    "kind": "validate",
+                    "difficulty": "simple",
                     "priority": "medium",
                     "estimated_effort": 1.0,
-                    "dependencies": [],
+                    "required_inputs": ["Updated project files"],
+                    "expected_outputs": ["Validation result"],
+                    "read_files": [],
+                    "write_files": [],
+                    "dependencies": [1],
+                    "can_run_parallel": True,
+                    "validation_command": "",
                     "tags": ["testing"]
                 }
             ]
         }
+
+    def _string_list(self, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [str(value)]
 
     def _is_simple_code_artifact(self, task_description: str) -> bool:
         text = task_description.lower()

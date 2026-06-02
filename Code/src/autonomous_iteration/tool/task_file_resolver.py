@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,7 @@ def task_file_resolver_executor(input_metadata: ToolInputMetadata) -> ToolResult
 
     failing = _failing_file_matches(project_path, request)
     explicit = _explicit_file_matches(project_path, request)
+    planned = _planned_file_matches(project_path, request)
     query = _resolution_query(request)
     searched = _search_matches(manager, query)
     fallback = _fallback_file_matches(project_path, request) if not failing and not explicit and not searched else []
@@ -67,7 +69,7 @@ def task_file_resolver_executor(input_metadata: ToolInputMetadata) -> ToolResult
             "Validation issue target file(s) were not found in project: "
             + ", ".join(request.failing_files)
         )
-    related = _merge_related_files(failing, explicit, searched, fallback)
+    related = _merge_related_files(failing, explicit, planned, searched, fallback)
     if not related:
         raise FileNotFoundError(f"No related project file found for task: {request.task_description[:160]}")
 
@@ -165,6 +167,42 @@ def _explicit_file_matches(project_path: Path, request: TaskFileResolutionReques
     return matches
 
 
+def _planned_file_matches(project_path: Path, request: TaskFileResolutionRequestMetadata) -> list[RelatedProjectFileMetadata]:
+    matches = []
+    project_root = project_path.resolve()
+    supported_suffixes = {".html", ".css", ".js", ".jsx", ".ts", ".tsx", ".py", ".md", ".json", ".yaml", ".yml"}
+    allow_task_text_planned = _task_text_allows_planned_file(request)
+    for raw_path, source in _planned_file_hints(request):
+        if source == "task_text" and not allow_task_text_planned:
+            continue
+        path = Path(raw_path).expanduser()
+        if not path.is_absolute():
+            path = project_path / path
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(project_root)
+        except (OSError, ValueError):
+            continue
+        if resolved.exists() or resolved.suffix.lower() not in supported_suffixes:
+            continue
+        relative = resolved.relative_to(project_root)
+        specificity_bonus = 0.15 if len(relative.parts) > 1 else 0.0
+        source_bonus = 0.05 if source == "task_text" else 0.0
+        matches.append(
+            RelatedProjectFileMetadata(
+                file_path=str(resolved),
+                name=resolved.name,
+                suffix=resolved.suffix,
+                description=f"Planned new target file for task: {request.task_description[:220]}",
+                role=_role_for_path(resolved),
+                relevance_score=0.95 + specificity_bonus + source_bonus,
+                evidence=[f"{source} planned target file", request.task_description[:220]],
+                relation_source="planned_target",
+            )
+        )
+    return matches
+
+
 def _fallback_file_matches(project_path: Path, request: TaskFileResolutionRequestMetadata) -> list[RelatedProjectFileMetadata]:
     matches = []
     for raw_path in request.fallback_files:
@@ -229,10 +267,20 @@ def _merge_related_files(*groups: list[RelatedProjectFileMetadata]) -> list[Rela
                 merged[key] = item
             elif previous is not None:
                 previous.evidence = _dedupe([*previous.evidence, *item.evidence])
-    source_priority = {"validation_issue": 4, "target_hint": 3, "sketch": 2, "written_files_fallback": 1}
+    source_priority = {
+        "validation_issue": 5,
+        "target_hint": 4,
+        "planned_target": 3,
+        "sketch": 2,
+        "written_files_fallback": 1,
+    }
     return sorted(
         merged.values(),
-        key=lambda item: (source_priority.get(item.relation_source, 0), item.relevance_score),
+        key=lambda item: (
+            source_priority.get(item.relation_source, 0),
+            item.relevance_score,
+            len(Path(item.file_path).parts),
+        ),
         reverse=True,
     )
 
@@ -246,6 +294,82 @@ def _resolution_query(request: TaskFileResolutionRequestMetadata) -> str:
         str(request.selected_candidate.get("rationale") or ""),
     ]
     return " ".join(chunk for chunk in chunks if chunk).strip()
+
+
+def _planned_file_hints(request: TaskFileResolutionRequestMetadata) -> list[tuple[str, str]]:
+    hints: list[tuple[str, str]] = [(path, "target_hint") for path in request.target_file_hints]
+    text_chunks = [
+        request.task_description,
+        request.goal,
+        " ".join(request.acceptance_criteria),
+        str(request.selected_candidate.get("title") or ""),
+        str(request.selected_candidate.get("rationale") or ""),
+    ]
+    for chunk in text_chunks:
+        for path in _extract_file_paths_from_text(chunk):
+            hints.append((path, "task_text"))
+    seen = set()
+    result: list[tuple[str, str]] = []
+    for path, source in hints:
+        key = path.strip()
+        if key and key not in seen:
+            result.append((key, source))
+            seen.add(key)
+    return result
+
+
+def _extract_file_paths_from_text(text: str) -> list[str]:
+    if not text:
+        return []
+    supported_suffixes = r"(?:html|css|js|jsx|ts|tsx|py|md|json|ya?ml)"
+    pattern = re.compile(
+        rf"(?<![\w.-])([A-Za-z0-9_./-]+\.{supported_suffixes})(?![\w.-])",
+        flags=re.IGNORECASE,
+    )
+    paths = []
+    for match in pattern.finditer(str(text)):
+        candidate = match.group(1).strip("`'\"()[]{}<>,;:")
+        if not candidate or candidate.startswith(("http://", "https://")):
+            continue
+        if ".." in Path(candidate).parts:
+            continue
+        paths.append(candidate)
+    return _dedupe(paths)
+
+
+def _task_text_allows_planned_file(request: TaskFileResolutionRequestMetadata) -> bool:
+    text = " ".join(
+        str(item or "")
+        for item in [
+            request.task_description,
+            request.goal,
+            " ".join(request.acceptance_criteria),
+            str(request.selected_candidate.get("title") or ""),
+            str(request.selected_candidate.get("rationale") or ""),
+        ]
+    ).lower()
+    return any(
+        marker in text
+        for marker in (
+            "create",
+            "add",
+            "new file",
+            "planned",
+            "implement",
+            "build",
+            "frontend",
+            "template",
+            "browser",
+            "ui",
+            "user interface",
+            "页面",
+            "前端",
+            "模板",
+            "界面",
+            "新建",
+            "创建",
+        )
+    )
 
 
 def _edit_kind(file_path: str) -> str:

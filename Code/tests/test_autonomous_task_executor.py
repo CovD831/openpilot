@@ -37,6 +37,7 @@ class FakeRuntime:
         self.environment_success = True
         self.environment_failures_before_success = 0
         self.environment_error = "env failed"
+        self.environment_errors: list[str] = []
         self.review_result = {"success": True, "result": {"approved": True}}
         self.review_results: list[dict] = []
         self.readme_result = {"success": True, "result": {"file_path": str(tmp_path / "README.md")}}
@@ -72,6 +73,12 @@ class FakeRuntime:
 
     def _sync_project_environment(self, **kwargs):
         self.calls.append({"tool": "project_environment_tool", **kwargs})
+        if self.environment_errors:
+            return _tool_envelope(
+                "project_environment_tool",
+                {"success": False, "error": self.environment_errors.pop(0)},
+                kwargs.get("input_metadata"),
+            )
         if self.environment_failures_before_success > 0:
             self.environment_failures_before_success -= 1
             return _tool_envelope("project_environment_tool", {"success": False, "error": self.environment_error}, kwargs.get("input_metadata"))
@@ -296,6 +303,51 @@ def test_autonomous_task_executor_routes_readme_task_to_documentation_writer(tmp
     tool_names = [call["tool_name"] if "tool_name" in call else call["tool"] for call in runtime.calls]
     assert tool_names == ["file_writer"]
     assert runtime.calls[0]["input_metadata"].file_path == str(readme)
+
+
+def test_autonomous_task_executor_creates_planned_frontend_file(tmp_path) -> None:
+    app = tmp_path / "assistant.py"
+    app.write_text("print('assistant')\n", encoding="utf-8")
+    runtime = FakeRuntime(tmp_path)
+
+    result = AutonomousTaskExecutor(runtime).execute_improvement(
+        goal="Build personal assistant",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        run_command="",
+        readme_path=tmp_path / "README.md",
+        iteration=1,
+        evaluation=_evaluation(),
+        actions=["Create the browser interface"],
+        improvement_report={
+            "summary": "Browser UI is missing.",
+            "must_implement_next": ["Expose reminder controls in the browser UI."],
+            "designed_tasks": [
+                {
+                    "description": "Create the planned browser user interface",
+                    "target_files": ["index.html"],
+                    "acceptance_criteria": ["Expose reminder controls in the browser UI."],
+                }
+            ],
+            "stack_preset": {
+                "delivery_surface": "browser",
+                "frontend_language": "html_css_javascript",
+                "backend_language": "python",
+            },
+            "ui_iteration_contract": {
+                "assessment_required": True,
+                "implementation_required_for_user_facing_change": True,
+            },
+        },
+        is_repair=False,
+    )
+
+    assert result.success is True
+    assert result.changed_files == [str(tmp_path / "index.html")]
+    writer = runtime.calls[0]
+    assert writer["tool_name"] == "file_writer"
+    assert writer["input_metadata"].file_path == str(tmp_path / "index.html")
+    assert "<!doctype html>" in writer["input_metadata"].content
 
 
 def test_autonomous_task_executor_scopes_repair_to_designed_validation_target(tmp_path) -> None:
@@ -527,6 +579,44 @@ def test_autonomous_task_executor_repairs_environment_before_failing(tmp_path) -
     assert len([call for call in runtime.calls if call.get("tool") == "project_environment_tool"]) == 2
 
 
+def test_autonomous_task_executor_iterates_environment_repairs_until_sync_succeeds(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    app.write_text("print('old')\n", encoding="utf-8")
+    requirements = tmp_path / "requirements.txt"
+    secondary_requirements = tmp_path / "requirements-dev.txt"
+    requirements.write_text('rich\n"""\n', encoding="utf-8")
+    secondary_requirements.write_text('pytest\n"""\n', encoding="utf-8")
+    runtime = FakeRuntime(tmp_path)
+    runtime.environment_errors = [
+        (
+            f"ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of dependency specifier\n"
+            f"    ^ (from line 2 of {requirements})\n"
+        ),
+        (
+            f"ERROR: Invalid requirement: '\"\"\"': Expected package name at the start of dependency specifier\n"
+            f"    ^ (from line 2 of {secondary_requirements})\n"
+        ),
+    ]
+
+    result = AutonomousTaskExecutor(runtime).execute_improvement(
+        goal="Improve project",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        run_command="",
+        readme_path=tmp_path / "README.md",
+        iteration=1,
+        evaluation=_evaluation(),
+        actions=["Improve app.py"],
+        improvement_report={},
+        is_repair=False,
+    )
+
+    assert result.success is True
+    assert requirements.read_text(encoding="utf-8") == "rich\n"
+    assert secondary_requirements.read_text(encoding="utf-8") == "pytest\n"
+    assert len([call for call in runtime.calls if call.get("tool") == "project_environment_tool"]) == 3
+
+
 def test_autonomous_task_executor_resolver_failure_for_missing_target(tmp_path) -> None:
     target = tmp_path / "missing.py"
     runtime = FakeRuntime(tmp_path)
@@ -547,6 +637,65 @@ def test_autonomous_task_executor_resolver_failure_for_missing_target(tmp_path) 
     assert result.success is False
     assert result.failed_tool == "task_file_resolver"
     assert "No related project file" in (result.failure_reason or "")
+
+
+def test_autonomous_task_executor_creates_nested_planned_frontend_file(tmp_path) -> None:
+    app = tmp_path / "assistant.py"
+    app.write_text("print('assistant')\n", encoding="utf-8")
+    runtime = FakeRuntime(tmp_path)
+    target = tmp_path / "templates" / "index.html"
+    runtime.write_result = {"success": True, "result": {"file_path": str(target)}}
+
+    result = AutonomousTaskExecutor(runtime).execute_improvement(
+        goal="Improve browser UI",
+        project_path=tmp_path,
+        written_files=[str(app)],
+        run_command="python assistant.py",
+        readme_path=tmp_path / "README.md",
+        iteration=3,
+        evaluation=_evaluation(),
+        actions=["Enhance the frontend template (templates/index.html) with a polished chat interface."],
+        improvement_report={
+            "designed_tasks": [
+                {
+                    "description": "Enhance the frontend template (templates/index.html) with a polished chat interface.",
+                    "acceptance_criteria": ["templates/index.html contains the browser chat UI."],
+                    "target_files": [],
+                }
+            ],
+            "must_implement_next": ["templates/index.html contains the browser chat UI."],
+        },
+        is_repair=False,
+    )
+
+    writer_call = next(call for call in runtime.calls if call.get("tool_name") == "file_writer")
+    params = writer_call["input_metadata"].to_params()
+    assert result.success is True
+    assert result.changed_files == [str(target)]
+    assert params["file_path"] == str(target)
+    assert params["create_dirs"] is True
+
+
+def test_autonomous_task_executor_routes_blocking_startup_repair_kinds_to_bug_fix(tmp_path) -> None:
+    evaluation = EvaluationResult(
+        validation_passed=False,
+        runnable=False,
+        has_blocking_bugs=True,
+        summary="Project validation failed.",
+        validation_errors=["Port conflict prevents startup."],
+        validation_issues=[
+            ValidationIssueMetadata(
+                category="environment",
+                severity="blocking",
+                message="Direct startup failed because the selected port is occupied.",
+                recommended_action="Select an available fallback port.",
+                recommended_repair_kind="make_web_port_configurable",
+                target_files=[str(tmp_path / "server.py")],
+            )
+        ],
+    )
+
+    assert AutonomousTaskExecutor(FakeRuntime(tmp_path))._should_use_bug_fix(evaluation) is True
 
 
 def test_intelligent_autopilot_apply_project_improvement_proxy_uses_task_executor(tmp_path) -> None:

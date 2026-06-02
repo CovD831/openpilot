@@ -13,11 +13,16 @@ from pydantic import ValidationError
 
 from autonomous_iteration.runtime_controller import ToolRouter
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
+from core.llm import LLMMessage, LLMRequest
 from core.tool_event_loop import ToolEventLoopRunner
 from metadata import (
     DecisionNeedMetadata,
+    DifficultyAssessmentMetadata,
     FailureMetadata,
+    ProblemJudgmentMetadata,
+    ProblemSignalMetadata,
     ResultStatus,
+    ResolutionPlanMetadata,
     RuntimeStateMetadata,
     TaskResultMetadata,
     TextArtifactMetadata,
@@ -123,6 +128,8 @@ MUTATING_OR_EXECUTING_NEED_TYPES = {
     "code_unit_generate",
     "command_check",
     "directory_generate",
+    "file_delete",
+    "delete_file",
     "documentation",
     "file_write",
     "fix_bug",
@@ -130,6 +137,7 @@ MUTATING_OR_EXECUTING_NEED_TYPES = {
     "generate_code_unit",
     "readme",
     "readme_generation",
+    "remove_file",
     "repair",
     "smoke_test",
     "test",
@@ -140,6 +148,14 @@ MUTATING_OR_EXECUTING_NEED_TYPES = {
 
 class DecisionNeedValidationError(ValueError):
     """Raised when an LLM decision need cannot be normalized into metadata."""
+
+    def __init__(self, message: str, details: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.details = details
+
+
+class DecisionNeedResolutionError(ValueError):
+    """Raised when planning recovery needs task decomposition instead of another empty plan."""
 
     def __init__(self, message: str, details: dict[str, Any]) -> None:
         super().__init__(message)
@@ -167,6 +183,7 @@ class ToolPlanningTaskExecutor:
             goal = context.parent_context.get("goal", "")
             self._active_goal = goal
             self._active_context = context
+            self._empty_plan_retry_attempted = False
             tools_description = self.runtime._format_tools_for_llm(self.runtime.tool_registry.list_all())
             prompt = self._build_tool_plan_prompt(task.description, goal, tools_description, context)
 
@@ -328,7 +345,7 @@ Output ONLY valid JSON in this format:
 }}
 
 Allowed need_type values:
-file_read, project_structure, web_search, command_check, file_write, code_file_create,
+file_read, project_structure, web_search, command_check, file_write, file_delete, code_file_create,
 directory_generate, code_unit_generate, code_symbol_modify, code_patch, code_generation,
 code_execution, readme_generation.
 
@@ -345,6 +362,7 @@ Important:
 - For new code files or generated project files, emit code_file_create or directory_generate, then file_write with operation_kind create_file.
 - For adding a function/class to an existing file, emit file_read, then code_unit_generate with operation_kind add_symbol, then file_write with operation_kind add_symbol so ToolRouter uses file_patch_writer.
 - For modifying an existing function/class, emit file_read, then code_symbol_modify or code_patch with operation_kind modify_symbol, then file_write with operation_kind modify_symbol so ToolRouter uses file_patch_writer.
+- For deleting an existing file, emit file_read or project_structure first for evidence, then file_delete with operation_kind delete_file so ToolRouter uses file_delete_tool.
 - Do not plan code_generator + file_writer for edits to existing functions/classes.
 - code_generator only supports executable code languages: python, shell, bash. Never use language "text"
 - For design, outline, planning, or prose-only tasks, either return planning metadata through an appropriate text/documentation tool or write Markdown/text with file_writer/readme_tool
@@ -392,6 +410,20 @@ Important:
             fallback_requests = self._fallback_tool_requests(plan_data=plan_data)
             if fallback_requests:
                 return fallback_requests
+            signal = self._problem_signal_for_empty_plan(plan_data)
+            judgment = self._judge_problem(signal)
+            difficulty = self._assess_problem_difficulty(signal, judgment)
+            resolution = self._resolution_plan_for_problem(signal, judgment, difficulty)
+            self._log_problem_resolution(signal, judgment, difficulty, resolution)
+            retry_requests = self._retry_empty_decision_plan(
+                plan_data=plan_data,
+                signal=signal,
+                judgment=judgment,
+                difficulty=difficulty,
+                resolution=resolution,
+            )
+            if retry_requests:
+                return retry_requests
             self._log(
                 "decision_need_empty_plan",
                 input_summary={
@@ -399,10 +431,20 @@ Important:
                     "decision_need_count": len(plan_data.get("decision_needs", [])) if isinstance(plan_data, dict) else 0,
                 },
                 success=False,
-                error="LLM generated empty decision_needs plan",
+                error="Tool planning requires decomposition after empty decision_needs plan",
                 level="ERROR",
             )
-            raise ValueError("LLM generated empty decision_needs plan")
+            raise DecisionNeedResolutionError(
+                "Tool planning requires decomposition after empty decision_needs plan",
+                {
+                    "failed_tool": "tool_planning_executor",
+                    "failure_stage": "Tool Planning",
+                    "problem_signal": signal.to_json_dict(),
+                    "problem_judgment": judgment.to_json_dict(),
+                    "difficulty_assessment": difficulty.to_json_dict(),
+                    "resolution_plan": resolution.to_json_dict(),
+                },
+            )
         return tool_requests
 
     def _fallback_tool_requests(
@@ -433,6 +475,205 @@ Important:
         )
         return fallback_requests
 
+    def _problem_signal_for_empty_plan(self, plan_data: dict[str, Any]) -> ProblemSignalMetadata:
+        task_description = str(getattr(self, "_active_task_description", "") or "")
+        goal = str(getattr(self, "_active_goal", "") or "")
+        raw_needs = plan_data.get("decision_needs", []) if isinstance(plan_data, dict) else []
+        category = "planning_gap" if raw_needs == [] else "tool_contract"
+        evidence = [
+            f"task:{task_description[:500]}",
+            f"goal:{goal[:500]}",
+            f"decision_needs_count:{len(raw_needs) if isinstance(raw_needs, list) else 'invalid'}",
+        ]
+        if isinstance(plan_data, dict) and "tool_calls" in plan_data:
+            evidence.append("old_tool_calls_protocol_present")
+            category = "tool_contract"
+        return ProblemSignalMetadata(
+            source="tool_planning",
+            category=category,
+            message="LLM returned no routable decision_needs for an actionable task.",
+            evidence=evidence,
+            task_id=str(getattr(self, "_active_task_id", "") or ""),
+            tool_name="tool_planning_executor",
+            target_files=[str(path) for path in [self._infer_target_file(task_description, goal, None)] if path is not None],
+            raw_payload=plan_data if isinstance(plan_data, dict) else {"raw": str(plan_data)},
+        )
+
+    def _judge_problem(self, signal: ProblemSignalMetadata) -> ProblemJudgmentMetadata:
+        user_visible = self._looks_actionable(str(getattr(self, "_active_task_description", "") or ""))
+        return ProblemJudgmentMetadata(
+            is_problem=True,
+            severity="blocking" if user_visible else "warning",
+            requires_fix=True,
+            user_visible=user_visible,
+            recommended_repair_kind="recover_tool_plan" if signal.category == "planning_gap" else "repair_tool_protocol",
+            confidence=0.86 if user_visible else 0.68,
+            reason="A task cannot execute without at least one routable decision_need.",
+        )
+
+    def _assess_problem_difficulty(
+        self,
+        signal: ProblemSignalMetadata,
+        judgment: ProblemJudgmentMetadata,
+    ) -> DifficultyAssessmentMetadata:
+        task_description = str(getattr(self, "_active_task_description", "") or "")
+        goal = str(getattr(self, "_active_goal", "") or "")
+        factors: list[str] = []
+        level = "simple"
+        recommended_task_count = 1
+        if self._looks_like_validation_task(task_description):
+            factors.append("validation task can use deterministic command fallback")
+            level = "simple"
+        elif signal.target_files:
+            factors.append("target file is known")
+            level = "simple"
+        else:
+            level = "moderate"
+            recommended_task_count = 2
+            factors.append("no target file or project path was confidently inferred")
+        if any(term in f"{task_description}\n{goal}".lower() for term in ("frontend", "backend", "multi-file", "architecture", "全栈", "前后端")):
+            level = "hard"
+            recommended_task_count = 3
+            factors.append("multi-surface or architecture-level wording")
+        needs_decomposition = level in {"moderate", "hard"} and not self._looks_like_validation_task(task_description)
+        return DifficultyAssessmentMetadata(
+            level=level,
+            needs_decomposition=needs_decomposition,
+            blocking_factors=factors,
+            recommended_task_count=recommended_task_count,
+        )
+
+    def _resolution_plan_for_problem(
+        self,
+        signal: ProblemSignalMetadata,
+        judgment: ProblemJudgmentMetadata,
+        difficulty: DifficultyAssessmentMetadata,
+    ) -> ResolutionPlanMetadata:
+        task_description = str(getattr(self, "_active_task_description", "") or "")
+        if self._looks_like_validation_task(task_description) and signal.category == "planning_gap":
+            strategy = "deterministic_fallback"
+            acceptance_check = "A command_executor validation command is produced."
+        elif difficulty.needs_decomposition:
+            strategy = "decompose"
+            acceptance_check = "A smaller task graph is produced for inspection, repair, and validation."
+        else:
+            strategy = "direct_retry"
+            acceptance_check = "A retry produces at least one routable decision_need."
+        return ResolutionPlanMetadata(
+            strategy=strategy,
+            target_tasks=[signal.task_id] if signal.task_id else [],
+            max_attempts=2,
+            acceptance_check=acceptance_check,
+        )
+
+    def _log_problem_resolution(
+        self,
+        signal: ProblemSignalMetadata,
+        judgment: ProblemJudgmentMetadata,
+        difficulty: DifficultyAssessmentMetadata,
+        resolution: ResolutionPlanMetadata,
+    ) -> None:
+        self._log(
+            "problem_resolution_planned",
+            input_summary={"signal": signal.to_json_dict()},
+            output_summary={
+                "judgment": judgment.to_json_dict(),
+                "difficulty": difficulty.to_json_dict(),
+                "resolution": resolution.to_json_dict(),
+            },
+            success=True,
+            level="WARNING",
+        )
+
+    def _retry_empty_decision_plan(
+        self,
+        *,
+        plan_data: dict[str, Any],
+        signal: ProblemSignalMetadata,
+        judgment: ProblemJudgmentMetadata,
+        difficulty: DifficultyAssessmentMetadata,
+        resolution: ResolutionPlanMetadata,
+    ) -> list[dict[str, Any]]:
+        del judgment
+        if resolution.strategy == "deterministic_fallback":
+            return []
+        if getattr(self, "_empty_plan_retry_attempted", False):
+            return []
+        self._empty_plan_retry_attempted = True
+        prompt = self._empty_plan_retry_prompt(plan_data, signal, difficulty, resolution)
+        try:
+            response = self.runtime.llm_client.complete(
+                LLMRequest(
+                    messages=[LLMMessage(role="user", content=prompt)],
+                    response_format="json_object",
+                    temperature=0.0,
+                    max_tokens=2000,
+                    timeout_seconds=30.0,
+                    transport_retries=0,
+                )
+            )
+            retry_data = (
+                response.parsed_json
+                if isinstance(getattr(response, "parsed_json", None), dict)
+                else json.loads(str(getattr(response, "content", "")))
+            )
+        except Exception as exc:
+            self._log(
+                "decision_need_empty_plan_retry_failed",
+                input_summary={"task_id": signal.task_id, "reason": str(exc)},
+                success=False,
+                error=str(exc),
+                level="WARNING",
+            )
+            return []
+        try:
+            requests = self._route_decision_needs(retry_data)
+        except Exception as exc:
+            self._log(
+                "decision_need_empty_plan_retry_unroutable",
+                input_summary={"task_id": signal.task_id, "reason": str(exc)},
+                success=False,
+                error=str(exc),
+                level="WARNING",
+            )
+            return []
+        if requests:
+            self._log(
+                "decision_need_empty_plan_retry_recovered",
+                input_summary={"task_id": signal.task_id},
+                output_summary={"tool_request_count": len(requests)},
+                success=True,
+                level="WARNING",
+            )
+            return requests
+        fallback = self._fallback_tool_requests(plan_data=retry_data, reason="empty decision_needs retry was unroutable")
+        return fallback
+
+    def _empty_plan_retry_prompt(
+        self,
+        plan_data: dict[str, Any],
+        signal: ProblemSignalMetadata,
+        difficulty: DifficultyAssessmentMetadata,
+        resolution: ResolutionPlanMetadata,
+    ) -> str:
+        task_description = str(getattr(self, "_active_task_description", "") or "")
+        goal = str(getattr(self, "_active_goal", "") or "")
+        return (
+            "The previous tool-planning response was empty or unroutable. "
+            "Return JSON only with a non-empty decision_needs array.\n\n"
+            f"Task: {task_description}\n"
+            f"Goal: {goal}\n"
+            f"Problem signal: {json.dumps(signal.to_json_dict(), ensure_ascii=False)}\n"
+            f"Difficulty: {json.dumps(difficulty.to_json_dict(), ensure_ascii=False)}\n"
+            f"Resolution strategy: {resolution.strategy}\n"
+            f"Previous plan: {json.dumps(plan_data, ensure_ascii=False, default=str)[:4000]}\n\n"
+            "Minimum acceptable decision_needs examples:\n"
+            "- For validation: [{\"need_type\":\"command_check\",\"question\":\"run validation\",\"command\":\"python -m compileall <project>\"}]\n"
+            "- For implementation: code_generation then file_write then command_check.\n"
+            "- For inspection: project_structure or file_read with a concrete target_path.\n"
+            "Do not return tool_calls. Do not return an empty decision_needs array."
+        )
+
     def _fallback_decision_plan(self, plan_data: dict[str, Any]) -> dict[str, Any] | None:
         """Build a conservative tool plan when the LLM plan is actionable but unroutable."""
         if not isinstance(plan_data, dict) or not self._should_generate_fallback_plan(plan_data):
@@ -447,18 +688,19 @@ Important:
         if self._looks_like_validation_task(task_description):
             if project_path is None:
                 return None
-            command = f"python -m compileall {project_path}"
-            needs.append(
-                {
-                    "need_type": "command_check",
-                    "question": f"Validate Python files under {project_path}",
-                    "command": command,
-                    "attributes": {
-                        "mode": "automatic",
-                        "test_command": command,
-                    },
-                }
-            )
+            for command in self._fallback_validation_commands(project_path):
+                needs.append(
+                    {
+                        "need_type": "command_check",
+                        "question": f"Validate project with: {command}",
+                        "command": command,
+                        "attributes": {
+                            "mode": "automatic",
+                            "test_command": command,
+                            "timeout": 30,
+                        },
+                    }
+                )
             return {"decision_needs": needs, "goal": goal}
 
         if self._looks_like_documentation_only_task(task_description):
@@ -521,6 +763,31 @@ Important:
             }
         )
         return {"decision_needs": needs, "goal": goal}
+
+    def _fallback_validation_commands(self, project_path: Path) -> list[str]:
+        commands: list[str] = []
+        context = getattr(self, "_active_context", None)
+        containers: list[dict[str, Any]] = []
+        if context is not None:
+            for raw in (getattr(context, "parent_context", {}), getattr(context, "shared_state", {})):
+                if isinstance(raw, dict):
+                    containers.append(raw)
+                    validation_context = raw.get("validation_context")
+                    if isinstance(validation_context, dict):
+                        containers.append(validation_context)
+        for container in containers:
+            for key in ("run_command", "test_command", "validation_command"):
+                raw = container.get(key)
+                if raw and str(raw).strip():
+                    commands.append(str(raw).strip())
+        environment = (getattr(self.runtime, "_project_environments", {}) or {}).get(str(project_path))
+        if isinstance(environment, dict):
+            for key in ("run_command", "test_command"):
+                raw = environment.get(key)
+                if raw and str(raw).strip():
+                    commands.append(str(raw).strip())
+        commands.append(f"python -m compileall {project_path}")
+        return list(dict.fromkeys(commands))[:2]
 
     def _should_generate_fallback_plan(self, plan_data: dict[str, Any]) -> bool:
         task_description = str(getattr(self, "_active_task_description", "") or "")
