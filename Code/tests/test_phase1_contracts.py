@@ -1442,6 +1442,99 @@ def test_multi_file_reader_scans_directory_with_glob(tmp_path) -> None:
     assert "ignored" not in result.output_metadata.result["content"]
 
 
+def test_multi_file_reader_creates_sketch_for_empty_directory(tmp_path) -> None:
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="read-empty-directory",
+                tool_name="multi_file_reader",
+                reason="capability_match",
+                input_metadata={
+                    "directory_path": str(tmp_path),
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    sketch_path = tmp_path / "sketch.json"
+    sketch_payload = json.loads(sketch_path.read_text(encoding="utf-8"))
+    assert result.success
+    assert sketch_path.exists()
+    assert sketch_payload["files"] == {}
+    assert result.output_metadata.result["count"] == 0
+    assert result.output_metadata.result["sketch_files"] == [str(sketch_path)]
+    assert result.output_metadata.result["sketch_refreshed"] is True
+
+
+def test_multi_file_reader_skips_binary_files_and_keeps_directory_sketch(tmp_path) -> None:
+    source = tmp_path / "app.py"
+    binary = tmp_path / "asset.bin"
+    source.write_text("print('ok')\n", encoding="utf-8")
+    binary.write_bytes(b"\x00\xf6\x00not-text")
+
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="read-directory-with-binary",
+                tool_name="multi_file_reader",
+                reason="capability_match",
+                input_metadata={
+                    "directory_path": str(tmp_path),
+                    "pattern": "*",
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert (tmp_path / "sketch.json").exists()
+    assert str(source) in result.output_metadata.result["files"]
+    assert str(binary) not in result.output_metadata.result["files"]
+    assert "print('ok')" in result.output_metadata.result["content"]
+    skipped_files = result.output_metadata.result["skipped_files"]
+    assert skipped_files == [
+        {
+            "path": str(binary),
+            "reason": "binary_file",
+            "size_bytes": binary.stat().st_size,
+            "mime_type": "application/octet-stream",
+        }
+    ]
+
+
+def test_multi_file_reader_refreshes_parent_sketch_for_explicit_files(tmp_path) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_text("remember this\n", encoding="utf-8")
+
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="read-explicit-file",
+                tool_name="multi_file_reader",
+                reason="capability_match",
+                input_metadata={
+                    "file_paths": [str(source)],
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    sketch_path = tmp_path / "sketch.json"
+    assert result.success
+    assert sketch_path.exists()
+    assert result.output_metadata.result["files"] == [str(source)]
+    assert result.output_metadata.result["sketch_files"] == [str(sketch_path)]
+
+
 def test_code_reviewer_does_not_reject_specific_stack_judgment_without_product_intent() -> None:
     result = code_reviewer_executor(
         {

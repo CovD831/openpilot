@@ -1,5 +1,30 @@
+# Generated / local data
 data
 plan
+Plan
 results
 references
+
+# Secrets — never commit real keys
 .env
+**/.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# OS / editor junk
+.DS_Store
+*.swp
+
+# LaTeX build artifacts
+*.aux
+*.log
+*.out
+*.synctex.gz
+*.toc
