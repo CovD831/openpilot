@@ -4,7 +4,15 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from metadata import ProductIntentMetadata, ProjectDiagnosisMetadata, ValidationIssueMetadata, WarningCheckResultMetadata
+from metadata import (
+    DependencyStrategyMetadata,
+    ProductIntentMetadata,
+    ProjectDependencyMetadata,
+    ProjectDiagnosisMetadata,
+    ProjectStackPresetMetadata,
+    ValidationIssueMetadata,
+    WarningCheckResultMetadata,
+)
 
 
 class EvaluationResult(BaseModel):
@@ -62,6 +70,9 @@ class ProjectStateSnapshot(BaseModel):
     runtime_evidence: list[str] = Field(default_factory=list)
     test_evidence: list[str] = Field(default_factory=list)
     module_summaries: list[str] = Field(default_factory=list)
+    dependencies: list[ProjectDependencyMetadata] = Field(default_factory=list)
+    dependency_strategy: DependencyStrategyMetadata | None = None
+    stack_preset: ProjectStackPresetMetadata | None = None
 
 
 class ImprovementGoal(BaseModel):

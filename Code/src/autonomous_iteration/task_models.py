@@ -41,6 +41,14 @@ class Task(BaseModel):
     estimated_effort: float | None = None  # Estimated effort in arbitrary units
     actual_effort: float | None = None
     assigned_agent: str | None = None
+    kind: str = "general"
+    difficulty: str = "simple"
+    required_inputs: list[str] = Field(default_factory=list)
+    expected_outputs: list[str] = Field(default_factory=list)
+    read_files: list[str] = Field(default_factory=list)
+    write_files: list[str] = Field(default_factory=list)
+    can_run_parallel: bool = True
+    validation_command: str = ""
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     started_at: str | None = None
     completed_at: str | None = None

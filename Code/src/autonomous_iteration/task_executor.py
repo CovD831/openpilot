@@ -5,16 +5,29 @@ from __future__ import annotations
 import ast
 import json
 import uuid
+from html import escape
 from pathlib import Path
 from typing import Any
 
 from autonomous_iteration.models import EvaluationResult, IterationResult
 from autonomous_iteration.task_models import Task, TaskPriority
-from metadata import ToolExecutionEnvelopeMetadata, ToolInputMetadata
+from memory.agents.git_manager_agent import GitManagerAgent, GitManagerError
+from metadata import (
+    FailureMetadata,
+    GitSnapshotMetadata,
+    ResultStatus,
+    TaskFileResolutionMetadata,
+    TaskFileResolutionRequestMetadata,
+    ToolExecutionEnvelopeMetadata,
+    ToolInputMetadata,
+)
+from tools.environment_fix_tool import environment_fix_tool_executor, summarize_environment_failure
 
 
 class AutonomousTaskExecutor:
     """Execute instruction-defined autonomous iteration subtasks."""
+
+    MAX_ENVIRONMENT_REPAIR_ATTEMPTS = 3
 
     def __init__(self, runtime: Any) -> None:
         self.runtime = runtime
@@ -39,17 +52,6 @@ class AutonomousTaskExecutor:
             {"iteration": iteration, "actions": actions[:3]},
             {"project_path": str(project_path)},
         )
-        target_file = self.runtime._select_iteration_target_file(written_files, actions)
-        if target_file is None:
-            reason = "No safe target file could be selected for automatic improvement."
-            return self._failure(iteration, actions, reason, "file_selector")
-
-        try:
-            current_code = target_file.read_text(encoding="utf-8")
-        except OSError as exc:
-            reason = f"Failed to read {target_file}: {exc}"
-            return self._failure(iteration, actions, reason, "file_reader")
-
         task = Task(
             id=str(uuid.uuid4()),
             description=f"Improve project iteration {iteration}",
@@ -65,6 +67,32 @@ class AutonomousTaskExecutor:
             )
 
         improvement_report = improvement_report or {}
+        resolution = self._resolve_task_files(
+            task=task,
+            iteration=iteration,
+            goal=goal,
+            project_path=project_path,
+            written_files=written_files,
+            actions=actions,
+            improvement_report=improvement_report,
+            evaluation=evaluation,
+        )
+        if isinstance(resolution, str):
+            return self._failure(iteration, actions, resolution, "task_file_resolver")
+        if resolution.primary_file is None:
+            return self._failure(iteration, actions, "Task file resolver did not select a primary file.", "task_file_resolver")
+
+        target_file = Path(resolution.primary_file.file_path).expanduser()
+        edit_kind = resolution.recommended_edit_kind
+        try:
+            current_content = target_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            if resolution.primary_file.relation_source == "planned_target" and not target_file.exists():
+                current_content = ""
+            else:
+                reason = f"Failed to read {target_file}: {exc}"
+                return self._failure(iteration, actions, reason, "file_reader")
+
         if is_repair and self._should_use_bug_fix(evaluation):
             return self._execute_bug_fix(
                 task=task,
@@ -75,12 +103,26 @@ class AutonomousTaskExecutor:
                 actions=actions,
             )
 
+        if not self._uses_python_code_pipeline(target_file, edit_kind):
+            return self._execute_text_file_improvement(
+                task=task,
+                iteration=iteration,
+                goal=goal,
+                project_path=project_path,
+                target_file=target_file,
+                current_text=current_content,
+                edit_kind=edit_kind,
+                evaluation=evaluation,
+                actions=actions,
+                improvement_report=improvement_report,
+            )
+
         code_result, retry_history = self.run_code_generation_retry_pipeline(
             task=task,
             iteration=iteration,
             goal=goal,
             target_file=target_file,
-            current_code=current_code,
+            current_code=current_content,
             evaluation=evaluation,
             actions=actions,
             improvement_report=improvement_report,
@@ -101,7 +143,7 @@ class AutonomousTaskExecutor:
                 actions=actions,
                 error=failure_reason,
                 prompt_length=retry_history[0].get("prompt_length", 0) if retry_history else 0,
-                current_code_length=len(current_code),
+                current_code_length=len(current_content),
                 retry_attempted=retry_attempted,
                 tool_result=code_result,
                 retry_history=retry_history,
@@ -116,7 +158,7 @@ class AutonomousTaskExecutor:
             )
 
         improved_code = str(code_result.output.get("code", ""))
-        if improved_code.strip() == current_code.strip():
+        if improved_code.strip() == current_content.strip():
             reason = "Generated improvement did not change the target file."
             return self._failure(
                 iteration,
@@ -126,30 +168,55 @@ class AutonomousTaskExecutor:
                 retry_attempted=retry_attempted,
                 retry_history=retry_history,
             )
-        try:
-            ast.parse(improved_code)
-        except SyntaxError as exc:
-            reason = f"Generated improvement has syntax error on line {exc.lineno}: {exc.msg}"
-            return self._failure(
-                iteration,
-                actions,
-                reason,
-                "code_generator",
-                retry_attempted=retry_attempted,
-                retry_history=retry_history,
-            )
+        if code_result.tool_name != "code_editor":
+            try:
+                ast.parse(improved_code)
+            except SyntaxError as exc:
+                reason = f"Generated improvement has syntax error on line {exc.lineno}: {exc.msg}"
+                return self._failure(
+                    iteration,
+                    actions,
+                    reason,
+                    "code_generator",
+                    retry_attempted=retry_attempted,
+                    retry_history=retry_history,
+                )
 
+        pre_write_snapshot = self._create_git_snapshot(
+            project_path=project_path,
+            iteration=iteration,
+            reason="source_file_write",
+            target_files=[str(target_file)],
+            stage_key="execution",
+        )
+        output_attrs = getattr(code_result.output, "attributes", {}) if code_result.output is not None else {}
+        use_patch_writer = code_result.tool_name == "code_editor" or output_attrs.get("operation_kind") == "modify_symbol"
+        writer_tool = "file_patch_writer" if use_patch_writer else "file_writer"
+        writer_payload = {
+            "file_path": str(target_file),
+            "encoding": "utf-8",
+            "create_dirs": True,
+            "overwrite": True,
+        }
+        if use_patch_writer:
+            writer_payload.update(
+                {
+                    "operation_kind": "modify_symbol",
+                    "replacement_text": improved_code,
+                    "symbol_name": output_attrs.get("symbol_name"),
+                    "symbol_type": output_attrs.get("symbol_type"),
+                    "line_start": output_attrs.get("line_start"),
+                    "line_end": output_attrs.get("line_end"),
+                    "patch": output_attrs.get("patch") if isinstance(output_attrs.get("patch"), dict) else None,
+                }
+            )
+        else:
+            writer_payload.update({"content": improved_code, "operation_kind": "file_replace"})
         write_result = self.runtime._execute_fast_tool(
             task=task,
-            step_id=f"iteration_{iteration}_file_writer",
-            tool_name="file_writer",
-            input_metadata=ToolInputMetadata.from_mapping("file_writer", {
-                "file_path": str(target_file),
-                "content": improved_code,
-                "encoding": "utf-8",
-                "create_dirs": True,
-                "overwrite": True,
-            }),
+            step_id=f"iteration_{iteration}_{writer_tool}",
+            tool_name=writer_tool,
+            input_metadata=ToolInputMetadata.from_mapping(writer_tool, writer_payload),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         self._log_agent(
@@ -177,6 +244,12 @@ class AutonomousTaskExecutor:
             written_files=[str(target_file)],
             entry_files=[str(target_file)],
             run_command=run_command,
+            goal=goal,
+            stack_preset_update=(
+                improvement_report.get("stack_preset_update")
+                if isinstance(improvement_report.get("stack_preset_update"), dict)
+                else None
+            ),
             parent_task_id=self.runtime._dashboard_stage_id("environment"),
         )
         self._log_agent(
@@ -186,8 +259,48 @@ class AutonomousTaskExecutor:
             success=environment_result.success,
             error=environment_result.error_message,
         )
+        if not environment_result.success:
+            repair_results: list[ToolExecutionEnvelopeMetadata] = []
+            for repair_attempt in range(1, self.MAX_ENVIRONMENT_REPAIR_ATTEMPTS + 1):
+                repair_result = self._attempt_environment_repair(
+                    task=task,
+                    project_path=project_path,
+                    environment_result=environment_result,
+                    repair_attempt=repair_attempt,
+                )
+                if repair_result is not None:
+                    repair_results.append(repair_result)
+                repair_payload = repair_result.output if repair_result else None
+                if not repair_result or not repair_result.success or not getattr(repair_payload, "applied", False):
+                    break
+                environment_result = self.runtime._sync_project_environment(
+                    task=task,
+                    step_id=f"iteration_{iteration}_repaired_project_environment_tool_{repair_attempt}",
+                    project_path=project_path,
+                    written_files=[str(target_file)],
+                    entry_files=[str(target_file)],
+                    run_command=run_command,
+                    goal=goal,
+                    parent_task_id=self.runtime._dashboard_stage_id("environment"),
+                )
+                self._log_agent(
+                    "environment_sync_retried_after_repair",
+                    {
+                        "iteration": iteration,
+                        "project_path": str(project_path),
+                        "repair_attempt": repair_attempt,
+                    },
+                    {"success": environment_result.success},
+                    success=environment_result.success,
+                    error=environment_result.error_message,
+                )
+                if environment_result.success:
+                    break
+            environment_result = self._with_environment_repair_details(environment_result, repair_results)
         if not environment_result.success or environment_result.output is None:
             reason = environment_result.error_message or "Project environment sync failed."
+            if environment_result.failure and isinstance(environment_result.failure.details, dict):
+                reason = str(environment_result.failure.details.get("root_cause") or reason)
             return IterationResult(
                 iteration=iteration,
                 validation_passed=False,
@@ -205,6 +318,26 @@ class AutonomousTaskExecutor:
         environment_payload = environment_result.output
         run_command = str(environment_payload.get("run_command") or run_command)
 
+        review_prompt_context = self.runtime._build_prompt_context(
+            original_goal=goal,
+            project_path=project_path,
+            written_files=[str(target_file)],
+            run_command=run_command,
+            evaluation=evaluation,
+            iteration_goal=str(improvement_report.get("next_iteration_goal") or (actions[0] if actions else "")),
+            acceptance_criteria=improvement_report.get("must_implement_next") or actions[:2],
+            tool_task="Review generated code against safety, correctness, and product-fit rubric.",
+            agent_instruction="Code Reviewer context: reject changes that pass syntax but fail the product-fit rubric.",
+            target_file=target_file,
+            current_code=improved_code,
+            code_context=self.budget_code_context(improved_code, max_chars=3000),
+            mode="review",
+        )
+        review_prompt_context["git_safety_context"] = self._git_safety_context(
+            project_path=project_path,
+            snapshot=pre_write_snapshot,
+            target_files=[str(target_file)],
+        )
         review_result = self.runtime._execute_fast_tool(
             task=task,
             step_id=f"iteration_{iteration}_code_reviewer",
@@ -212,21 +345,7 @@ class AutonomousTaskExecutor:
             input_metadata=ToolInputMetadata.from_mapping("code_reviewer", {
                 "code": improved_code,
                 "language": "python",
-                "prompt_context": self.runtime._build_prompt_context(
-                    original_goal=goal,
-                    project_path=project_path,
-                    written_files=[str(target_file)],
-                    run_command=run_command,
-                    evaluation=evaluation,
-                    iteration_goal=str(improvement_report.get("next_iteration_goal") or (actions[0] if actions else "")),
-                    acceptance_criteria=improvement_report.get("must_implement_next") or actions[:2],
-                    tool_task="Review generated code against safety, correctness, and product-fit rubric.",
-                    agent_instruction="Code Reviewer context: reject changes that pass syntax but fail the product-fit rubric.",
-                    target_file=target_file,
-                    current_code=improved_code,
-                    code_context=self.budget_code_context(improved_code, max_chars=3000),
-                    mode="review",
-                ),
+                "prompt_context": review_prompt_context,
             }),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
@@ -346,6 +465,382 @@ class AutonomousTaskExecutor:
             retry_history=retry_history,
         )
 
+    def _resolve_task_files(
+        self,
+        *,
+        task: Task,
+        iteration: int,
+        goal: str,
+        project_path: Path,
+        written_files: list[str],
+        actions: list[str],
+        improvement_report: dict[str, Any],
+        evaluation: EvaluationResult,
+    ) -> TaskFileResolutionMetadata | str:
+        from autonomous_iteration.tool.task_file_resolver import task_file_resolver_executor
+
+        designed_task = self._primary_designed_task(improvement_report)
+        description = str((designed_task or {}).get("description") or (actions[0] if actions else ""))
+        validation_issues = [
+            issue.to_json_dict() if hasattr(issue, "to_json_dict") else issue
+            for issue in (getattr(evaluation, "validation_issues", []) or [])
+        ]
+        failing_files = self._validation_issue_target_files(evaluation)
+        designed_targets = self._string_list((designed_task or {}).get("target_files"))
+        scoped_failing_files = self._scope_failing_files_to_task(failing_files, designed_targets)
+        if scoped_failing_files:
+            failing_files = scoped_failing_files
+        self._append_validation_targets_to_dashboard(iteration, failing_files)
+        target_hints = self._target_file_hints(designed_task, improvement_report, written_files, failing_files)
+        primary_issue = self._primary_bug_fix_issue(evaluation)
+        request = TaskFileResolutionRequestMetadata(
+            project_path=str(project_path),
+            task_description=description,
+            acceptance_criteria=self._string_list((designed_task or {}).get("acceptance_criteria") or improvement_report.get("must_implement_next")),
+            target_file_hints=target_hints,
+            fallback_files=self._string_list(written_files),
+            failing_files=failing_files,
+            validation_issues=validation_issues,
+            issue_category=str(getattr(primary_issue, "category", "") or ""),
+            diagnosis=improvement_report.get("diagnosis") if isinstance(improvement_report.get("diagnosis"), dict) else {},
+            selected_candidate=improvement_report.get("selected_candidate") if isinstance(improvement_report.get("selected_candidate"), dict) else {},
+            goal=goal,
+        )
+        input_metadata = ToolInputMetadata.from_mapping(
+            "task_file_resolver",
+            {
+                "project_path": str(project_path),
+                "task_description": description,
+                "goal": goal,
+                "file_paths": target_hints,
+                "written_files": written_files,
+                "prompt_context": {
+                    "acceptance_criteria": request.acceptance_criteria,
+                    "failing_files": failing_files,
+                    "validation_issues": validation_issues,
+                    "issue_category": request.issue_category,
+                    "diagnosis": request.diagnosis,
+                    "selected_candidate": request.selected_candidate,
+                    "improvement_report": improvement_report,
+                },
+                "attributes": {"request_metadata": request.to_json_dict()},
+            },
+        )
+        try:
+            if hasattr(self.runtime, "_execute_module_owned_tool"):
+                envelope = self.runtime._execute_module_owned_tool(
+                    task=task,
+                    step_id=f"iteration_{iteration}_task_file_resolver",
+                    tool_name="task_file_resolver",
+                    input_metadata=input_metadata,
+                    executor=task_file_resolver_executor,
+                    parent_task_id=self.runtime._dashboard_stage_id("execution"),
+                )
+                if not envelope.success or envelope.output is None:
+                    return envelope.error_message or "Task file resolver failed."
+                resolution = envelope.output
+            else:
+                result = task_file_resolver_executor(input_metadata)
+                resolution = result.result
+        except Exception as exc:
+            return str(exc)
+        if not isinstance(resolution, TaskFileResolutionMetadata):
+            try:
+                resolution = TaskFileResolutionMetadata.model_validate(resolution)
+            except Exception:
+                return "Task file resolver returned invalid metadata."
+        self._append_resolved_file_to_dashboard(iteration, resolution)
+        return resolution
+
+    def _execute_text_file_improvement(
+        self,
+        *,
+        task: Task,
+        iteration: int,
+        goal: str,
+        project_path: Path,
+        target_file: Path,
+        current_text: str,
+        edit_kind: str,
+        evaluation: EvaluationResult,
+        actions: list[str],
+        improvement_report: dict[str, Any],
+    ) -> IterationResult:
+        generated = self._generate_text_file_content(
+            goal=goal,
+            target_file=target_file,
+            current_text=current_text,
+            edit_kind=edit_kind,
+            evaluation=evaluation,
+            actions=actions,
+            improvement_report=improvement_report,
+        )
+        if generated.strip() == current_text.strip():
+            return self._failure(iteration, actions, "Generated file content did not change the target file.", "file_content_generator")
+        validation_error = self._validate_text_file_content(target_file, generated, edit_kind)
+        if validation_error:
+            return self._failure(iteration, actions, validation_error, "file_content_generator")
+        self._create_git_snapshot(
+            project_path=project_path,
+            iteration=iteration,
+            reason=f"{edit_kind}_file_write",
+            target_files=[str(target_file)],
+            stage_key="execution",
+        )
+        write_result = self.runtime._execute_fast_tool(
+            task=task,
+            step_id=f"iteration_{iteration}_file_writer",
+            tool_name="file_writer",
+            input_metadata=ToolInputMetadata.from_mapping(
+                "file_writer",
+                {
+                    "file_path": str(target_file),
+                    "content": generated,
+                    "encoding": "utf-8",
+                    "create_dirs": True,
+                    "overwrite": True,
+                    "operation_kind": "file_replace",
+                },
+            ),
+            parent_task_id=self.runtime._dashboard_stage_id("execution"),
+        )
+        if not write_result.success:
+            reason = write_result.error_message or "Failed to write generated file content."
+            return self._failure(iteration, actions, reason, "file_writer")
+        if self.runtime.enhanced_ui:
+            self.runtime._set_dashboard_task_status(self.runtime._dashboard_stage_id("execution"), "completed")
+        self.runtime._project_improvement_actions = (getattr(self.runtime, "_project_improvement_actions", []) or []) + actions
+        return IterationResult(
+            iteration=iteration,
+            validation_passed=True,
+            completed_successful_iteration=False,
+            applied_actions=actions,
+            changed_files=[str(target_file)],
+            success=True,
+            failure_stage=None,
+            failed_tool=None,
+        )
+
+    def _generate_text_file_content(
+        self,
+        *,
+        goal: str,
+        target_file: Path,
+        current_text: str,
+        edit_kind: str,
+        evaluation: EvaluationResult,
+        actions: list[str],
+        improvement_report: dict[str, Any],
+    ) -> str:
+        llm_client = getattr(self.runtime, "llm_client", None)
+        if llm_client and hasattr(llm_client, "complete"):
+            try:
+                from core.llm import LLMMessage, LLMRequest
+
+                response = llm_client.complete(
+                    LLMRequest(
+                        messages=[
+                            LLMMessage(
+                                role="user",
+                                content=(
+                                    "You are editing a project file for OpenPilot autonomous iteration.\n"
+                                    "Return ONLY the complete replacement file content. Do not include explanations.\n"
+                                    f"Original goal: {goal}\n"
+                                    f"Target file: {target_file.name}\n"
+                                    f"Edit kind: {edit_kind}\n"
+                                    f"Validation summary: {evaluation.summary}\n"
+                                    f"Actions: {actions}\n"
+                                    f"Acceptance criteria: {improvement_report.get('must_implement_next') or []}\n\n"
+                                    f"Persisted stack preset: {improvement_report.get('stack_preset') or {}}\n"
+                                    f"UI iteration contract: {improvement_report.get('ui_iteration_contract') or {}}\n\n"
+                                    f"Current file content:\n{current_text}"
+                                ),
+                            )
+                        ],
+                        temperature=0.2,
+                    ),
+                    max_retries=1,
+                    use_cache=False,
+                )
+                content = self._strip_outer_fence(str(response.content or ""))
+                if content.strip():
+                    return content
+            except Exception:
+                pass
+        return self._fallback_text_file_content(target_file, current_text, actions, improvement_report)
+
+    def _fallback_text_file_content(
+        self,
+        target_file: Path,
+        current_text: str,
+        actions: list[str],
+        improvement_report: dict[str, Any],
+    ) -> str:
+        criteria = self._string_list(improvement_report.get("must_implement_next"))
+        heading = "Iteration Update"
+        if target_file.suffix.lower() in {".md", ".markdown"}:
+            lines = [current_text.rstrip(), "", f"## {heading}"]
+            lines.extend(f"- {item}" for item in (criteria or actions))
+            return "\n".join(lines).rstrip() + "\n"
+        if target_file.suffix.lower() == ".html":
+            items = "\n".join(f"      <li>{escape(str(item))}</li>" for item in (criteria or actions))
+            return (
+                "<!doctype html>\n"
+                '<html lang="en">\n'
+                "  <head>\n"
+                '    <meta charset="utf-8">\n'
+                '    <meta name="viewport" content="width=device-width, initial-scale=1">\n'
+                "    <title>Application</title>\n"
+                "  </head>\n"
+                "  <body>\n"
+                "    <main>\n"
+                "      <h1>Application</h1>\n"
+                "      <ul>\n"
+                f"{items}\n"
+                "      </ul>\n"
+                "    </main>\n"
+                "  </body>\n"
+                "</html>\n"
+            )
+        return current_text.rstrip() + "\n\n" + "\n".join(str(item) for item in (criteria or actions)) + "\n"
+
+    def _validate_text_file_content(self, target_file: Path, content: str, edit_kind: str) -> str:
+        suffix = target_file.suffix.lower()
+        if suffix == ".json" or edit_kind == "config" and suffix == ".json":
+            try:
+                json.loads(content)
+            except json.JSONDecodeError as exc:
+                return f"Generated config has JSON syntax error on line {exc.lineno}: {exc.msg}"
+        return ""
+
+    def _append_resolved_file_to_dashboard(self, iteration: int, resolution: TaskFileResolutionMetadata) -> None:
+        if not getattr(self.runtime, "enhanced_ui", None) or resolution.primary_file is None:
+            return
+        if not hasattr(self.runtime, "_append_dashboard_stage_child"):
+            return
+        self.runtime._append_dashboard_stage_child(
+            "execution",
+            child_id=f"resolved_file_{iteration}",
+            description=f"Resolved file: {Path(resolution.primary_file.file_path).name} ({resolution.recommended_edit_kind})",
+            kind="result",
+        )
+
+    def _append_validation_targets_to_dashboard(self, iteration: int, target_files: list[str]) -> None:
+        if not target_files or not getattr(self.runtime, "enhanced_ui", None):
+            return
+        if not hasattr(self.runtime, "_append_dashboard_stage_child"):
+            return
+        labels = ", ".join(Path(path).name for path in target_files[:5])
+        self.runtime._append_dashboard_stage_child(
+            "execution",
+            child_id=f"validation_issue_targets_{iteration}",
+            description=f"Validation issue target: {labels}",
+            kind="result",
+        )
+
+    def _uses_python_code_pipeline(self, target_file: Path, edit_kind: str) -> bool:
+        return edit_kind == "source_code" and target_file.suffix.lower() == ".py"
+
+    def _primary_designed_task(self, improvement_report: dict[str, Any]) -> dict[str, Any]:
+        tasks = improvement_report.get("designed_tasks")
+        if isinstance(tasks, list):
+            for task in tasks:
+                if isinstance(task, dict):
+                    return task
+        return {}
+
+    def _target_file_hints(
+        self,
+        designed_task: dict[str, Any] | None,
+        improvement_report: dict[str, Any],
+        written_files: list[str],
+        failing_files: list[str] | None = None,
+    ) -> list[str]:
+        hints = []
+        hints.extend(self._string_list(failing_files))
+        if isinstance(designed_task, dict):
+            hints.extend(self._string_list(designed_task.get("target_files")))
+        selected_goal = improvement_report.get("selected_goal")
+        if isinstance(selected_goal, dict):
+            hints.extend(self._string_list(selected_goal.get("target_files")))
+        return self._dedupe_text(hints)
+
+    def _validation_issue_target_files(self, evaluation: EvaluationResult) -> list[str]:
+        primary_issue = self._primary_bug_fix_issue(evaluation)
+        ordered_issues = []
+        if primary_issue is not None:
+            ordered_issues.append(primary_issue)
+        ordered_issues.extend(
+            issue
+            for issue in (getattr(evaluation, "validation_issues", []) or [])
+            if issue is not primary_issue
+        )
+        targets: list[str] = []
+        for issue in ordered_issues:
+            if getattr(issue, "severity", "blocking") != "blocking":
+                continue
+            targets.extend(self._string_list(getattr(issue, "target_files", []) or []))
+        return self._dedupe_text(targets)
+
+    def _scope_failing_files_to_task(self, failing_files: list[str], task_targets: list[str]) -> list[str]:
+        if not failing_files or not task_targets:
+            return []
+        normalized_targets = {self._normalize_path_key(path) for path in task_targets}
+        scoped = [
+            path for path in failing_files
+            if self._normalize_path_key(path) in normalized_targets
+        ]
+        return self._dedupe_text(scoped)
+
+    @staticmethod
+    def _normalize_path_key(path: str) -> str:
+        text = str(path or "").strip()
+        if not text:
+            return ""
+        candidate = Path(text).expanduser()
+        try:
+            return str(candidate.resolve())
+        except OSError:
+            return candidate.as_posix()
+
+    @staticmethod
+    def _strip_outer_fence(text: str) -> str:
+        stripped = text.strip()
+        if not stripped.startswith("```") or not stripped.endswith("```"):
+            return text
+        lines = stripped.splitlines()
+        if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].strip() == "```":
+            return "\n".join(lines[1:-1]).strip() + "\n"
+        return text
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        if isinstance(value, list):
+            result = []
+            for item in value:
+                if isinstance(item, dict):
+                    item = item.get("file_path") or item.get("path") or item.get("name")
+                text = str(item or "").strip()
+                if text:
+                    result.append(text)
+            return result
+        return [str(value)]
+
+    @staticmethod
+    def _dedupe_text(items: list[str]) -> list[str]:
+        seen = set()
+        result = []
+        for item in items:
+            text = str(item or "").strip()
+            if text and text not in seen:
+                result.append(text)
+                seen.add(text)
+        return result
+
     def _is_product_intent_rejection(self, review_payload: Any) -> bool:
         if not hasattr(review_payload, "get"):
             return False
@@ -418,6 +913,13 @@ class AutonomousTaskExecutor:
             ast.parse(retry_code)
         except SyntaxError:
             return {"success": False}, history
+        pre_retry_snapshot = self._create_git_snapshot(
+            project_path=target_file.parent,
+            iteration=iteration,
+            reason="product_intent_retry_write",
+            target_files=[str(target_file)],
+            stage_key="execution",
+        )
         write_result = self.runtime._execute_fast_tool(
             task=task,
             step_id=f"iteration_{iteration}_product_intent_retry_file_writer",
@@ -428,11 +930,20 @@ class AutonomousTaskExecutor:
                 "encoding": "utf-8",
                 "create_dirs": True,
                 "overwrite": True,
+                "operation_kind": "file_replace",
             }),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         if not write_result.success:
             return {"success": False, "write_result": write_result}, history
+        retry_prompt_context = {
+            **prompt_context,
+            "git_safety_context": self._git_safety_context(
+                project_path=target_file.parent,
+                snapshot=pre_retry_snapshot,
+                target_files=[str(target_file)],
+            ),
+        }
         review_result = self.runtime._execute_fast_tool(
             task=task,
             step_id=f"iteration_{iteration}_product_intent_retry_code_reviewer",
@@ -440,7 +951,7 @@ class AutonomousTaskExecutor:
             input_metadata=ToolInputMetadata.from_mapping("code_reviewer", {
                 "code": retry_code,
                 "language": "python",
-                "prompt_context": prompt_context,
+                "prompt_context": retry_prompt_context,
             }),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
@@ -456,10 +967,91 @@ class AutonomousTaskExecutor:
         if warning_check and warning_check.requires_fix:
             return True
         issues = list(getattr(evaluation, "validation_issues", []) or [])
-        return any(
-            getattr(issue, "severity", "blocking") == "blocking"
-            and getattr(issue, "category", "") in {"runtime_error", "runtime_warning"}
-            for issue in issues
+        return any(self._issue_is_bug_fixable(issue) for issue in issues)
+
+    def _issue_is_bug_fixable(self, issue: Any) -> bool:
+        if getattr(issue, "severity", "blocking") != "blocking":
+            return False
+        category = str(getattr(issue, "category", "") or "")
+        if category in {"runtime_error", "runtime_warning"}:
+            return True
+        repair_kind = str(getattr(issue, "recommended_repair_kind", "") or "")
+        return category in {"environment", "configuration"} and repair_kind in {
+            "fix_startup_import_contract",
+            "repair_runtime_system_output",
+            "make_web_port_configurable",
+            "defer_required_secret_validation",
+        }
+
+    def _attempt_environment_repair(
+        self,
+        *,
+        task: Task,
+        project_path: Path,
+        environment_result: ToolExecutionEnvelopeMetadata,
+        repair_attempt: int,
+    ) -> ToolExecutionEnvelopeMetadata | None:
+        error_message = environment_result.error_message or "Project environment sync failed."
+        input_metadata = ToolInputMetadata.from_mapping(
+            "environment_fix_tool",
+            {
+                "project_path": str(project_path),
+                "stderr": error_message,
+                "context": error_message,
+                "_memory_store": getattr(self.runtime, "memory_store", None),
+            },
+        )
+        execute_fix = getattr(self.runtime, "_execute_environment_fix_agent_tool", None)
+        if callable(execute_fix):
+            return execute_fix(
+                task=task,
+                step_id=f"iteration_environment_fix_tool_{repair_attempt}",
+                input_metadata=input_metadata,
+                parent_task_id=self.runtime._dashboard_stage_id("environment"),
+            )
+        output_metadata = environment_fix_tool_executor(input_metadata)
+        success = output_metadata.status == ResultStatus.SUCCESS
+        return ToolExecutionEnvelopeMetadata(
+            tool_name="environment_fix_tool",
+            step_id=f"iteration_environment_fix_tool_{repair_attempt}",
+            status=output_metadata.status,
+            success=success,
+            input_metadata=input_metadata,
+            output_metadata=output_metadata,
+            failure=None if success else output_metadata.failure,
+        )
+
+    def _with_environment_repair_details(
+        self,
+        result: ToolExecutionEnvelopeMetadata,
+        repair_results: list[ToolExecutionEnvelopeMetadata],
+    ) -> ToolExecutionEnvelopeMetadata:
+        if not repair_results:
+            return result
+        repair_outputs = [repair.output.to_json_dict() if repair.output else None for repair in repair_results]
+        retry_history = list(result.retry_history)
+        retry_history.extend({"environment_repair": output, "success": result.success} for output in repair_outputs)
+        if result.success:
+            return result.model_copy(update={"retry_history": retry_history})
+        failure = result.failure or FailureMetadata(
+            error_type="EnvironmentSetupFailed",
+            error_message=result.error_message or "Project environment sync failed.",
+        )
+        details = dict(failure.details or {})
+        details["environment_repairs"] = repair_outputs
+        details["environment_repair_attempts"] = len(repair_outputs)
+        details["root_cause"] = summarize_environment_failure(result.error_message or "")
+        last_repair_output = repair_outputs[-1]
+        if isinstance(last_repair_output, dict):
+            environment_failure = last_repair_output.get("environment_failure") or {}
+            if isinstance(environment_failure, dict):
+                details["affected_file"] = environment_failure.get("affected_file")
+                details["pip_notices"] = environment_failure.get("pip_notices")
+        return result.model_copy(
+            update={
+                "failure": failure.model_copy(update={"details": details}),
+                "retry_history": retry_history,
+            }
         )
 
     def _execute_bug_fix(
@@ -485,6 +1077,14 @@ class AutonomousTaskExecutor:
         if warning_check:
             fix_instruction += f"\nWarning reason: {warning_check.reason}"
             fix_instruction += f"\nRecommended fix: {warning_check.recommended_fix}"
+        issue_target_files = self._validation_issue_target_files(evaluation) or [str(target_file)]
+        snapshot = self._create_git_snapshot(
+            project_path=target_file.parent,
+            iteration=iteration,
+            reason="bug_fix_tool",
+            target_files=issue_target_files,
+            stage_key="execution",
+        )
         result = self.runtime._execute_fast_tool(
             task=task,
             step_id=f"iteration_{iteration}_bug_fix_tool",
@@ -494,23 +1094,31 @@ class AutonomousTaskExecutor:
                 {
                     "command": run_command,
                     "cwd": str(target_file.parent),
-                    "file_paths": [str(target_file)],
+                    "file_paths": issue_target_files,
                     "timeout": 30,
                     "warning_check_required": bool(warning_check and warning_check.requires_fix),
                     "warning_check_result": warning_check.to_json_dict() if warning_check else None,
                     "fix_instruction": fix_instruction,
+                    "attributes": {
+                        "git_safety_context": self._git_safety_context(
+                            project_path=target_file.parent,
+                            snapshot=snapshot,
+                            target_files=issue_target_files,
+                        ),
+                    },
                     "_llm_client": getattr(self.runtime, "llm_client", None),
                 },
             ),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         if result.success:
+            changed_files = self._bug_fix_changed_files(result.output) or issue_target_files or [str(target_file)]
             return IterationResult(
                 iteration=iteration,
                 validation_passed=True,
                 completed_successful_iteration=False,
                 applied_actions=actions,
-                changed_files=[str(target_file)],
+                changed_files=changed_files,
                 success=True,
                 failure_stage=None,
                 failed_tool=None,
@@ -522,10 +1130,17 @@ class AutonomousTaskExecutor:
         issues = [
             issue
             for issue in (getattr(evaluation, "validation_issues", []) or [])
-            if getattr(issue, "category", "") in {"runtime_error", "runtime_warning"}
+            if self._issue_is_bug_fixable(issue)
         ]
         blocking = [issue for issue in issues if getattr(issue, "severity", "blocking") == "blocking"]
         return (blocking or issues or [None])[0]
+
+    def _bug_fix_changed_files(self, output: Any) -> list[str]:
+        attempts = getattr(output, "attempts", []) or []
+        changed: list[str] = []
+        for attempt in attempts:
+            changed.extend(self._string_list(getattr(attempt, "modified_files", []) or []))
+        return self._dedupe_text(changed)
 
     def run_code_generation_retry_pipeline(
         self,
@@ -721,6 +1336,11 @@ class AutonomousTaskExecutor:
         }
         if isinstance(improvement_report.get("diagnosis"), dict):
             prompt_context["diagnosis"] = improvement_report["diagnosis"]
+            diagnosis = improvement_report["diagnosis"]
+            if isinstance(diagnosis.get("dependencies"), list):
+                prompt_context["dependencies"] = diagnosis["dependencies"]
+            if isinstance(diagnosis.get("dependency_strategy"), dict):
+                prompt_context["dependency_strategy"] = diagnosis["dependency_strategy"]
         if isinstance(improvement_report.get("selected_candidate"), dict):
             prompt_context["selected_candidate"] = improvement_report["selected_candidate"]
         return prompt_context
@@ -879,28 +1499,77 @@ class AutonomousTaskExecutor:
     ) -> ToolExecutionEnvelopeMetadata:
         mode = mode or ("compact" if simplified else "full")
         step_prefix = "" if mode == "full" else f"{mode}_"
+        prompt_context = prompt_context or {}
+        current_code = str(prompt_context.get("current_code") or "")
+        symbol_name = self._infer_target_symbol(current_code, prompt_context)
+        tool_name = "code_editor" if symbol_name else "code_generator"
         input_metadata_payload = {
             "task_description": improvement_prompt,
             "language": "python",
             "context": f"Improve {target_file} ({mode} retry mode)",
         }
+        if symbol_name:
+            input_metadata_payload.update(
+                {
+                    "file_path": str(target_file),
+                    "operation_kind": "modify_symbol",
+                    "target_scope": "symbol",
+                    "symbol_name": symbol_name,
+                    "code": current_code,
+                }
+            )
+            prompt_context = {**prompt_context, "operation_kind": "modify_symbol", "symbol_name": symbol_name}
+        else:
+            input_metadata_payload["operation_kind"] = "file_replace"
         if prompt_context:
             input_metadata_payload["prompt_context"] = prompt_context
         result = self.runtime._execute_fast_tool(
             task=task,
-            step_id=f"iteration_{iteration}_{step_prefix}code_generator",
-            tool_name="code_generator",
-            input_metadata=ToolInputMetadata.from_mapping("code_generator", input_metadata_payload),
+            step_id=f"iteration_{iteration}_{step_prefix}{tool_name}",
+            tool_name=tool_name,
+            input_metadata=ToolInputMetadata.from_mapping(tool_name, input_metadata_payload),
             parent_task_id=self.runtime._dashboard_stage_id("execution"),
         )
         self._log_agent(
             "code_generation_completed",
-            {"iteration": iteration, "mode": mode, "target_file": str(target_file)},
+            {"iteration": iteration, "mode": mode, "target_file": str(target_file), "tool": tool_name},
             {"success": result.success, "status": result.status},
             success=result.success,
             error=result.error_message,
         )
         return result
+
+    def _infer_target_symbol(self, current_code: str, prompt_context: dict[str, Any]) -> str | None:
+        if not current_code.strip():
+            return None
+        explicit = prompt_context.get("symbol_name")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit.strip()
+        try:
+            tree = ast.parse(current_code)
+        except SyntaxError:
+            return None
+        symbols = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        if not symbols:
+            return None
+        haystack = " ".join(
+            str(item)
+            for item in (
+                prompt_context.get("tool_task"),
+                prompt_context.get("iteration_goal"),
+                prompt_context.get("agent_instruction"),
+                prompt_context.get("acceptance_criteria"),
+                prompt_context.get("improvement_report_summary"),
+            )
+        ).lower()
+        for symbol in symbols:
+            if symbol.lower() in haystack:
+                return symbol
+        return None
 
     def is_timeout_tool_result(self, result: ToolExecutionEnvelopeMetadata) -> bool:
         if result.success:
@@ -1059,6 +1728,68 @@ class AutonomousTaskExecutor:
             retry_attempted=retry_attempted,
             retry_history=retry_history or [],
         )
+
+    def _create_git_snapshot(
+        self,
+        *,
+        project_path: Path,
+        iteration: int,
+        reason: str,
+        target_files: list[str],
+        stage_key: str = "execution",
+    ) -> GitSnapshotMetadata | None:
+        try:
+            snapshot = GitManagerAgent().snapshot(
+                project_path,
+                reason=f"iteration_{iteration}_{reason}",
+                target_files=target_files,
+            )
+        except GitManagerError as exc:
+            self._log_agent(
+                "git_snapshot_unavailable",
+                {"iteration": iteration, "project_path": str(project_path), "reason": reason},
+                {"error": str(exc)},
+                success=False,
+                error=str(exc),
+            )
+            return None
+        self.runtime._last_git_snapshot = snapshot.to_json_dict()
+        if getattr(self.runtime, "enhanced_ui", None):
+            status = "created" if snapshot.created else "skipped"
+            suffix = f": {snapshot.commit_hash}" if snapshot.commit_hash else ""
+            self.runtime._append_dashboard_stage_child(
+                stage_key,
+                child_id=f"git_snapshot_{iteration}_{reason}",
+                description=f"Safety snapshot {status}{suffix}",
+                kind="note",
+            )
+        return snapshot
+
+    def _git_safety_context(
+        self,
+        *,
+        project_path: Path,
+        snapshot: GitSnapshotMetadata | None,
+        target_files: list[str],
+    ) -> dict[str, Any]:
+        context: dict[str, Any] = {
+            "project_path": str(project_path),
+            "snapshot_available": bool(snapshot and (snapshot.created or snapshot.skipped) and snapshot.commit_hash),
+            "target_files": target_files,
+        }
+        if snapshot is not None:
+            context["snapshot"] = snapshot.to_json_dict()
+        try:
+            diff_context = GitManagerAgent().diff_context(
+                project_path,
+                base_ref=snapshot.commit_hash if snapshot and snapshot.commit_hash else "HEAD",
+                target_files=target_files,
+            )
+            context["diff_context"] = diff_context.to_json_dict()
+            self.runtime._last_git_diff_context = diff_context.to_json_dict()
+        except GitManagerError as exc:
+            context["warnings"] = [f"Git diff context unavailable: {exc}"]
+        return context
 
     def _log_agent(
         self,

@@ -41,13 +41,16 @@ class OpenPilotLogger:
         *,
         session_id: str,
         turn_id: int,
+        level: str | None = None,
     ) -> None:
         """Write one event without storing secrets or environment values."""
+        event_level = self._normalize_level(level) or self._infer_level(event_type, payload)
 
         event = {
             "timestamp": datetime.now(UTC).isoformat(),
             "session_id": session_id,
             "turn_id": turn_id,
+            "level": event_level,
             "event_type": event_type,
             "payload": payload,
         }
@@ -56,7 +59,7 @@ class OpenPilotLogger:
         append_jsonl(self.log_file, event)
 
         # If this is an error event, add to error buffer
-        if event_type in ("error", "exception", "failure"):
+        if event_type in ("error", "exception", "failure") or event_level in {"ERROR", "CRITICAL"}:
             self._error_buffer.add(event)
 
         # Periodically truncate log file to prevent unbounded growth
@@ -79,12 +82,18 @@ class OpenPilotLogger:
         output_summary: Any | None = None,
         error: str | None = None,
         annotations: dict[str, Any] | None = None,
+        level: str | None = None,
     ) -> None:
         """Write a normalized event while preserving the legacy log_event API."""
+        event_level = self._normalize_level(level) or self._infer_level(
+            event_type,
+            {"success": success, "error": error},
+        )
         payload = {
             "source_type": source_type,
             "source_name": source_name,
             "phase": phase,
+            "level": event_level,
             "success": success,
             "duration_ms": duration_ms,
             "input_summary": input_summary,
@@ -98,7 +107,32 @@ class OpenPilotLogger:
             payload,
             session_id=session_id,
             turn_id=turn_id,
+            level=event_level,
         )
+
+    def _normalize_level(self, level: str | None) -> str | None:
+        if not level:
+            return None
+        normalized = str(level).upper()
+        if normalized in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            return normalized
+        if normalized == "WARN":
+            return "WARNING"
+        return "INFO"
+
+    def _infer_level(self, event_type: str, payload: dict[str, Any]) -> str:
+        event_lower = event_type.lower()
+        if payload.get("error") or payload.get("success") is False:
+            if "recoverable" in event_lower or "retry" in event_lower or "warning" in event_lower:
+                return "WARNING"
+            return "ERROR"
+        if any(token in event_lower for token in ("debug", "trace")):
+            return "DEBUG"
+        if any(token in event_lower for token in ("warning", "retry", "recoverable")):
+            return "WARNING"
+        if any(token in event_lower for token in ("error", "failed", "failure", "terminal")):
+            return "ERROR"
+        return "INFO"
 
     def _truncate_if_needed(self) -> None:
         """Truncate log file if it exceeds max lines."""

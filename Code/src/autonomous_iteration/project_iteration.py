@@ -24,6 +24,14 @@ class ProjectIterationHelper:
             "python_version": environment_payload.get("python_version"),
             "dependencies": ", ".join(packages) if packages else "No third-party Python packages detected",
         }
+        stack_preset = environment_payload.get("stack_preset")
+        if isinstance(stack_preset, dict):
+            result["stack_preset"] = (
+                f"r{stack_preset.get('revision', 1)} {stack_preset.get('architecture', 'project_native')}; "
+                f"frontend={stack_preset.get('frontend_language', 'best_fit_for_surface')}; "
+                f"backend={stack_preset.get('backend_language', 'python')}; "
+                f"ui={stack_preset.get('ui_strategy', 'evaluate_user_facing_ui')}"
+            )
         self._log("readme_environment_context", {"has_payload": True}, {"dependencies": result["dependencies"]})
         return result
 

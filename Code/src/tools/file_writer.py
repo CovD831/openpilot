@@ -7,12 +7,14 @@ from typing import Any
 
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 
+from core.python_requirements import invalid_requirement_lines, is_requirements_file
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
     ToolFailureMode,
 )
+from tools.file_indexing import refresh_after_file_change
 
 
 FILE_WRITER_DEFINITION = ToolDefinition(
@@ -27,7 +29,7 @@ FILE_WRITER_DEFINITION = ToolDefinition(
         input_metadata_type="ToolInputMetadata",
         output_metadata_type="ToolResultMetadata",
         required_input_fields=['file_path', 'content'],
-        input_defaults={'encoding': 'utf-8', 'create_dirs': True, 'overwrite': True},
+        input_defaults={'encoding': 'utf-8', 'create_dirs': True, 'overwrite': True, 'operation_kind': 'create_file'},
     ),
     timeout_seconds=30,
     max_retries=2,
@@ -75,12 +77,28 @@ def file_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadat
     encoding = params.get("encoding", "utf-8")
     create_dirs = params.get("create_dirs", True)
     overwrite = params.get("overwrite", True)
+    operation_kind = str(params.get("operation_kind") or "create_file").lower()
+
+    if is_requirements_file(file_path):
+        invalid_lines = invalid_requirement_lines(str(content))
+        if invalid_lines:
+            preview = ", ".join(invalid_lines[:3])
+            raise ValueError(
+                "file_writer rejected malformed requirements content. "
+                "A requirements file may contain dependency specifiers, pip directives, comments, and blank lines only. "
+                f"Invalid line(s): {preview}"
+            )
 
     # Check if file exists
     file_existed = file_path.exists()
     if file_existed and not overwrite:
         raise FileExistsError(
             f"File exists and overwrite=False: {file_path}"
+        )
+    if file_existed and operation_kind not in {"file_replace", "full_file_replace", "replace_file"}:
+        raise FileExistsError(
+            "file_writer refuses to overwrite an existing file without "
+            f"operation_kind=file_replace: {file_path}"
         )
 
     # Create parent directories if needed
@@ -104,8 +122,18 @@ def file_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadat
         # Could be disk full or other OS error
         raise OSError(f"Failed to write file: {e}") from e
 
+    index_update: dict[str, Any] = {}
+    warnings: list[str] = []
+    try:
+        index_update = refresh_after_file_change(file_path)
+    except Exception as exc:
+        warnings.append(f"File index refresh failed: {exc}")
+
     return {
         "file_path": str(file_path.absolute()),
         "bytes_written": bytes_written,
-        "created": not file_existed
+        "created": not file_existed,
+        "operation_kind": operation_kind,
+        "index_update": index_update,
+        "warnings": warnings,
     }

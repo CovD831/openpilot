@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from memory.context_builder import MemoryContextBuilder
 from memory.memory_models import MemoryRecord, MemoryType
@@ -30,6 +31,16 @@ def test_project_manager_updates_sketch_and_searches_by_content(tmp_path) -> Non
     assert "app.py" in sketch_payload["files"]
     assert "function_description" in sketch_payload["files"]["app.py"]
     assert "semantic_info" in sketch_payload["files"]["app.py"]
+    content_index = sketch_payload["files"]["app.py"]["content_index"]
+    assert content_index["language"] == "python"
+    assert content_index["sections"][0]["title"] == "function render_dashboard"
+    assert content_index["sections"][0]["line_start"] == 1
+    assert content_index["sections"][0]["line_end"] == 2
+    index_file = content_index["index_file"]
+    index_payload = json.loads(Path(index_file).read_text(encoding="utf-8"))
+    assert index_payload["kind"] == "file_content_index"
+    assert index_payload["relative_path"] == "app.py"
+    assert index_payload["sections"][0]["embedding"]
     assert update_result["file_count"] == 1
     assert results[0]["name"] == "app.py"
     assert "pineapple project dashboard" in results[0]["description"]

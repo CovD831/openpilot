@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 
+from core.exceptions import OpenPilotError
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
@@ -18,6 +19,9 @@ from core.tool_contracts import (
     ToolFailureMode,
 )
 from tools.code_models import CodeGenerationRequest, CodeLanguage, GeneratedCode
+
+
+CODE_GENERATION_LLM_TIMEOUT_SECONDS = 90.0
 
 
 CODE_GENERATOR_DEFINITION = ToolDefinition(
@@ -76,6 +80,13 @@ def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMeta
     language_str = params["language"].lower()
     context = params.get("context", "")
     prompt_context = params.get("prompt_context") or {}
+    operation_kind = str(params.get("operation_kind") or "file_create")
+    if isinstance(prompt_context, dict):
+        prompt_context = {**prompt_context, "operation_kind": operation_kind}
+    use_local_fallback = bool(
+        isinstance(prompt_context, dict)
+        and prompt_context.get("local_fallback_after_provider_failure")
+    )
 
     # Map language string to CodeLanguage enum
     language_map = {
@@ -96,7 +107,7 @@ def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMeta
             settings = LLMSettings()
             llm_client = LLMClient(settings)
 
-        generator = CodeGenerator(llm_client)
+        generator = CodeGenerator(None if use_local_fallback else llm_client)
 
         # Create request
         request = CodeGenerationRequest(
@@ -111,15 +122,25 @@ def code_generator_executor(input_metadata: ToolInputMetadata) -> ToolResultMeta
         # Generate code
         result = generator.generate_code(request)
 
-        return {
+        output = {
             "code": result.code,
             "language": result.language.value,
             "explanation": f"Generated {result.line_count} lines of {result.language.value} code",
             "imports": result.imports,
-            "functions": result.functions
+            "functions": result.functions,
+            "generation_mode": "local_fallback" if use_local_fallback else "llm",
         }
-    except Exception as e:
-        raise Exception(f"Code generation failed: {e}") from e
+        if use_local_fallback:
+            output["warning"] = (
+                "Remote code generation remained unavailable after bounded retries; "
+                "emitted a deterministic local fallback scaffold."
+            )
+        return output
+    except OpenPilotError as exc:
+        exc.context.setdefault("tool_name", "code_generator")
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"Code generation failed ({type(exc).__name__}): {exc}") from exc
 
 
 class CodeGenerator:
@@ -276,6 +297,8 @@ class CodeGenerator:
 
         intent_constraints = product_intent.get("non_regression_constraints") or []
         disallowed_substitutions = product_intent.get("disallowed_substitutions") or []
+        dependency_guidance = self._dependency_guidance(prompt_context)
+        stack_guidance = self._stack_preset_guidance(prompt_context)
         intent_guidance = ""
         if product_intent:
             intent_guidance = (
@@ -300,16 +323,70 @@ TOOL TASK:
 PRODUCT QUALITY RUBRIC:
 {rubric_text}
 {intent_guidance}
+{dependency_guidance}
+{stack_guidance}
 
 TOOL OUTPUT REQUIREMENTS:
-1. Generate complete, executable {request.language.value} code for the target file.
-2. Return the full replacement source code, not a patch.
+1. Generate complete, executable {request.language.value} code only when operation_kind is file_create, directory_generate, or file_replace.
+2. Do not use this tool for symbol-level edits. For add_symbol use code_unit_generator; for modify_symbol/code_patch use code_editor.
+2a. Return full replacement source code only when operation_kind is explicitly file_replace/full_file_replace or the target file is new.
 3. Keep existing useful behavior unless the Prompt Context explicitly asks to replace it for product fit.
+3a. Preserve existing useful third-party packages from the dependency strategy. Do not replace them with stdlib-only or lower-capability substitutes unless the strategy explicitly approves the replacement.
 4. Include necessary imports, entry point, and concise comments for non-obvious logic.
 5. Improve the selected diagnosis candidate with observable acceptance-criteria evidence.
+5a. For every user-facing feature, implement the corresponding UI controls, visible states, feedback, and navigation required by the UI iteration contract.
+5b. Honor the persisted frontend/backend language and framework preset. Do not silently change architecture; a stack change requires an explicit preset revision.
+5c. Direct-run startup must be user-friendly: missing API keys, tokens, credentials, or config values must not raise an unhandled traceback before the app opens. Defer validation to the feature that needs the secret, show a visible warning or endpoint-level error, and document exact shell syntax such as `export OPENAI_API_KEY="..."` with no spaces around `=`.
+5d. Web servers must not hardcode a single port. Read `PORT` from the environment, fall back to a sensible default, recover from address-in-use failures by selecting an available fallback port when possible, and print the actual local URL.
 6. Return only code in a fenced code block; do not include explanations outside the code block.
 {constraints}
 """
+
+    def _dependency_guidance(self, prompt_context: dict[str, Any]) -> str:
+        strategy = prompt_context.get("dependency_strategy")
+        if not isinstance(strategy, dict):
+            diagnosis = prompt_context.get("diagnosis")
+            if isinstance(diagnosis, dict):
+                strategy = diagnosis.get("dependency_strategy")
+        if not isinstance(strategy, dict):
+            return ""
+        preserve = [str(item) for item in strategy.get("preserve_packages") or [] if str(item)]
+        recommended = [str(item) for item in strategy.get("recommended_packages") or [] if str(item)]
+        replaceable = [str(item) for item in strategy.get("replaceable_packages") or [] if str(item)]
+        rationale = [str(item) for item in strategy.get("rationale") or [] if str(item)]
+        lines = ["\nDependency strategy:"]
+        if preserve:
+            lines.append("- Preserve useful existing packages: " + ", ".join(preserve[:8]))
+        if recommended:
+            lines.append("- Recommended packages are available if environment sync installs them first: " + ", ".join(recommended[:6]))
+        if replaceable:
+            lines.append("- Approved replaceable packages: " + ", ".join(replaceable[:6]))
+        if rationale:
+            lines.append("- Rationale: " + " | ".join(rationale[:4]))
+        return "\n".join(lines)
+
+    def _stack_preset_guidance(self, prompt_context: dict[str, Any]) -> str:
+        preset = prompt_context.get("stack_preset")
+        if not isinstance(preset, dict):
+            return ""
+        ui_contract = prompt_context.get("ui_iteration_contract")
+        ui_contract = ui_contract if isinstance(ui_contract, dict) else {}
+        lines = [
+            "\nPersisted project stack preset:",
+            f"- Revision: {preset.get('revision', 1)}",
+            f"- Delivery surface: {preset.get('delivery_surface', 'project_native')}",
+            f"- Architecture: {preset.get('architecture', 'single_runtime')}",
+            f"- Frontend: {preset.get('frontend_language', 'best_fit_for_surface')} "
+            f"({', '.join(str(item) for item in preset.get('frontend_frameworks') or []) or 'no framework forced'})",
+            f"- Backend: {preset.get('backend_language', 'python')} "
+            f"({', '.join(str(item) for item in preset.get('backend_frameworks') or []) or 'no framework forced'})",
+            f"- UI strategy: {preset.get('ui_strategy', 'evaluate_user_facing_ui')}",
+        ]
+        if ui_contract.get("assessment_required"):
+            lines.append("- Assess UI impact for this iteration even when the selected goal starts as a backend feature.")
+        if ui_contract.get("implementation_required_for_user_facing_change"):
+            lines.append("- UI implementation is required for user-facing behavior changes; it is not optional polish.")
+        return "\n".join(lines)
 
     def _constraint_lines(self, request: CodeGenerationRequest) -> str:
         constraints = []
@@ -340,7 +417,9 @@ TOOL OUTPUT REQUIREMENTS:
             request = LLMRequest(
                 messages=[LLMMessage(role="user", content=prompt)],
                 response_format="text",
-                temperature=0.7
+                temperature=0.7,
+                timeout_seconds=CODE_GENERATION_LLM_TIMEOUT_SECONDS,
+                transport_retries=0,
             )
             response = self.llm_client.complete(request)
             return response.content

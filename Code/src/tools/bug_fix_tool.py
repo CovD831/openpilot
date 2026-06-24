@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
+from core.command_approval import CommandApprovalGate
 from core.llm import LLMClient, LLMMessage, LLMRequest
 from core.tool_contracts import PermissionLevel, ToolCapability, ToolDefinition, ToolFailureMode
 from metadata import (
@@ -19,6 +21,7 @@ from metadata import (
     ToolResultMetadata,
     WarningCheckResultMetadata,
 )
+from memory.agents.git_manager_agent import GitManagerAgent, GitManagerError
 from tools.command_tool import command_executor
 from tools.file_reader import file_reader_executor
 from tools.file_writer import file_writer_executor
@@ -98,12 +101,21 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
             f"{warning_check_context.reason}. {warning_check_context.recommended_fix}"
         )
     ask_user_to_continue = params.get("_ask_user_to_continue")
+    command_approval_callback = params.get("_command_approval_callback")
+    progress_callback = params.get("_bug_fix_progress_callback")
 
     allowed_files = _resolve_allowed_files(input_metadata.file_paths, cwd)
     use_terminal_smoke = _should_use_terminal_smoke(allowed_files)
     attempts: list[BugFixAttemptMetadata] = []
 
-    initial_command = _run_command(command, cwd, timeout, env, terminal_smoke=use_terminal_smoke)
+    initial_command = _run_command(
+        command,
+        cwd,
+        timeout,
+        env,
+        terminal_smoke=use_terminal_smoke,
+        command_approval_callback=command_approval_callback,
+    )
     attempts.append(_attempt(iteration=0, command_result=initial_command, modified_files=[], rationale="initial validation"))
     initial_warning_check = _check_command_warnings(
         command_result=initial_command,
@@ -112,6 +124,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
         warning_check_required=warning_check_required,
     )
     last_warning_check = initial_warning_check
+    _emit_progress(
+        progress_callback,
+        event="initial_validation",
+        iteration=0,
+        budget=max_iterations,
+        success=initial_command.success and not _warning_requires_fix(initial_warning_check),
+        error_summary=_command_error_summary(initial_command),
+    )
     if initial_command.success and not _warning_requires_fix(initial_warning_check):
         result = _bug_fix_result(
             command=command,
@@ -134,6 +154,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
     while True:
         while iteration < budget:
             iteration += 1
+            _emit_progress(
+                progress_callback,
+                event="iteration_started",
+                iteration=iteration,
+                budget=budget,
+                success=False,
+                error_summary=_command_error_summary(last_command_result),
+            )
             file_contents = _read_allowed_files(allowed_files)
             fix_payload = _request_fix(
                 llm_client=llm_client,
@@ -160,6 +188,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                         llm_payload=fix_payload if isinstance(fix_payload, dict) else {"raw": str(fix_payload)},
                     )
                 )
+                _emit_progress(
+                    progress_callback,
+                    event="iteration_completed",
+                    iteration=iteration,
+                    budget=budget,
+                    success=False,
+                    error_summary=str(exc),
+                )
                 result = _bug_fix_result(
                     command=command,
                     cwd=cwd,
@@ -184,7 +220,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                 )
 
             modified_files = _write_changes(changes)
-            last_command_result = _run_command(command, cwd, timeout, env, terminal_smoke=use_terminal_smoke)
+            last_command_result = _run_command(
+                command,
+                cwd,
+                timeout,
+                env,
+                terminal_smoke=use_terminal_smoke,
+                command_approval_callback=command_approval_callback,
+            )
             latest_warning_check = _check_command_warnings(
                 command_result=last_command_result,
                 command=command,
@@ -200,6 +243,15 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                     rationale=rationale,
                     llm_payload=fix_payload,
                 )
+            )
+            _emit_progress(
+                progress_callback,
+                event="iteration_completed",
+                iteration=iteration,
+                budget=budget,
+                success=last_command_result.success and not _warning_requires_fix(latest_warning_check),
+                modified_files=modified_files,
+                error_summary=_command_error_summary(last_command_result),
             )
             if last_command_result.success and not _warning_requires_fix(latest_warning_check):
                 result = _bug_fix_result(
@@ -228,12 +280,34 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
             requires_user_decision=True,
         )
         if callable(ask_user_to_continue):
+            _emit_progress(
+                progress_callback,
+                event="continuation_requested",
+                iteration=iteration,
+                budget=budget,
+                success=False,
+                error_summary=_command_error_summary(last_command_result),
+            )
             if _should_continue(ask_user_to_continue, result):
                 result.requires_user_decision = False
                 budget += continuation_iterations
+                _emit_progress(
+                    progress_callback,
+                    event="continuation_approved",
+                    iteration=iteration,
+                    budget=budget,
+                    success=False,
+                )
                 continue
             result.requires_user_decision = False
             result.user_terminated = True
+            _emit_progress(
+                progress_callback,
+                event="terminated",
+                iteration=iteration,
+                budget=budget,
+                success=False,
+            )
             return ToolResultMetadata(
                 tool_name="bug_fix_tool",
                 status=ResultStatus.FAIL,
@@ -246,6 +320,14 @@ def bug_fix_tool_executor(input_metadata: ToolInputMetadata) -> ToolResultMetada
                 ),
             )
 
+        _emit_progress(
+            progress_callback,
+            event="iteration_limit_reached",
+            iteration=iteration,
+            budget=budget,
+            success=False,
+            error_summary=_command_error_summary(last_command_result),
+        )
         return ToolResultMetadata(
             tool_name="bug_fix_tool",
             status=ResultStatus.FAIL,
@@ -272,6 +354,15 @@ def _positive_int(value: Any, *, default: int) -> int:
     return parsed if parsed > 0 else default
 
 
+def _emit_progress(callback: Any, **event: Any) -> None:
+    if not callable(callback):
+        return
+    try:
+        callback(event)
+    except Exception:
+        return
+
+
 def _resolve_allowed_files(file_paths: list[str], cwd: str) -> dict[str, Path]:
     base = Path(cwd).expanduser() if cwd else Path.cwd()
     allowed: dict[str, Path] = {}
@@ -296,8 +387,10 @@ def _run_command(
     env: dict[str, str] | None = None,
     *,
     terminal_smoke: bool = False,
+    command_approval_callback=None,
 ) -> CommandArtifactMetadata:
     if terminal_smoke:
+        CommandApprovalGate().approve(command, cwd=cwd, approval_callback=command_approval_callback)
         smoke = run_terminal_command(
             command,
             cwd=cwd or None,
@@ -320,6 +413,7 @@ def _run_command(
                 "timeout": timeout,
                 "cwd": cwd or None,
                 "env": env,
+                "_command_approval_callback": command_approval_callback,
             },
         )
     )
@@ -494,6 +588,16 @@ def _allowed_path(raw_path: str, allowed_files: dict[str, Path]) -> Path | None:
 
 def _write_changes(changes: dict[Path, str]) -> list[str]:
     modified_files: list[str] = []
+    if changes:
+        project_path = _common_project_path(list(changes))
+        try:
+            GitManagerAgent().snapshot(
+                project_path,
+                reason="bug_fix_tool_internal_write",
+                target_files=[str(path) for path in changes],
+            )
+        except GitManagerError:
+            pass
     for path, content in changes.items():
         file_writer_executor(
             ToolInputMetadata.from_mapping(
@@ -504,11 +608,22 @@ def _write_changes(changes: dict[Path, str]) -> list[str]:
                     "encoding": "utf-8",
                     "create_dirs": False,
                     "overwrite": True,
+                    "operation_kind": "file_replace",
                 },
             )
         )
         modified_files.append(str(path))
     return modified_files
+
+
+def _common_project_path(paths: list[Path]) -> Path:
+    if not paths:
+        return Path.cwd()
+    parents = [path.expanduser().resolve().parent for path in paths]
+    try:
+        return Path(os.path.commonpath([str(parent) for parent in parents]))
+    except ValueError:
+        return parents[0]
 
 
 def _attempt(

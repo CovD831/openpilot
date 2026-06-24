@@ -9,7 +9,13 @@ from typing import Any
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 
 from core.llm import LLMMessage, LLMRequest
+from core.project_stack import load_project_stack_preset
 from memory.memory_models import MemoryType
+from memory.agents.project_environment_tool import (
+    build_dependency_strategy,
+    build_project_dependency_context,
+    infer_project_dependencies,
+)
 from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
@@ -161,12 +167,23 @@ def project_state_reader_executor(input_metadata: ToolInputMetadata) -> ToolResu
                 "preview": text[:1200],
             }
         )
-        if path.suffix in {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".md"}:
-            safe_target_files.append(str(path))
+        safe_target_files.append(str(path))
 
     validation_errors = validation_context.get("validation_errors") if isinstance(validation_context, dict) else []
     validation_warnings = validation_context.get("warnings") if isinstance(validation_context, dict) else []
     suffixes = sorted({str(item.get("suffix") or "") for item in file_summaries if item.get("suffix")})
+    installed_packages = _latest_environment_packages(memory_records)
+    detected_packages = infer_project_dependencies(project_path, [str(path) for path in resolved_files])
+    dependencies = build_project_dependency_context(
+        project_path=project_path,
+        files=[str(path) for path in resolved_files],
+        detected_packages=detected_packages,
+        installed_packages=installed_packages,
+        dependency_source="project_state_reader",
+        readme_text=readme_text,
+    )
+    dependency_strategy = build_dependency_strategy(dependencies)
+    stack_preset = load_project_stack_preset(project_path)
     return {
         "project_path": str(project_path),
         "goal": goal,
@@ -188,6 +205,9 @@ def project_state_reader_executor(input_metadata: ToolInputMetadata) -> ToolResu
         "runtime_evidence": [str(item) for item in [run_command, *(validation_errors or []), *(validation_warnings or [])] if str(item)],
         "test_evidence": [str(item) for item in validation_errors or [] if "test" in str(item).lower() or "smoke" in str(item).lower()],
         "module_summaries": [f"{item['name']} ({item['suffix']}, {item['chars']} chars)" for item in file_summaries[:8]],
+        "dependencies": [dependency.to_json_dict() for dependency in dependencies],
+        "dependency_strategy": dependency_strategy.to_json_dict(),
+        "stack_preset": stack_preset.to_json_dict() if stack_preset else None,
     }
 
 
@@ -214,10 +234,14 @@ def project_improvement_tool_executor(input_metadata: ToolInputMetadata) -> Tool
     readme_preview = _truncate_text(_read_text(readme_path), README_PREVIEW_LIMIT)
     product_judgment = prompt_context.get("product_judgment") or {}
     quality_rubric = prompt_context.get("quality_rubric") or []
+    stack_preset = prompt_context.get("stack_preset") or {}
+    ui_iteration_contract = prompt_context.get("ui_iteration_contract") or {}
     product_rubric_text = _truncate_text(json.dumps(
         {
             "product_judgment": product_judgment,
             "quality_rubric": quality_rubric,
+            "stack_preset": stack_preset,
+            "ui_iteration_contract": ui_iteration_contract,
         },
         ensure_ascii=False,
         default=str,
@@ -254,11 +278,15 @@ Evaluate improvement space comprehensively across:
 - documentation, setup, and run instructions
 - installation/runtime environment risks
 - product fit: runtime shape, target platform, and whether the result matches normal expectations for this project type
+- UI impact: whether each user-facing capability has coherent controls, visible states, feedback, and navigation on the planned surface
+- technology-stack fit: whether frontend/backend languages and frameworks still match the persisted project stack preset
 
 Product-fit rule:
 - Treat the parent project objective, success metrics, and diagnosed evidence as the source of truth.
 - Prefer improvements with clear user or maintainer value over low-signal polish.
 - Do not replace the delivery surface or interaction model just because another implementation is easier.
+- Treat UI as part of a user-facing feature, not as optional polish after backend behavior is complete.
+- If the best next improvement changes delivery surface, frontend/backend languages, or frameworks, state that the project stack preset must be explicitly revised.
 
 Return JSON with exactly these keys:
 {{
@@ -267,7 +295,8 @@ Return JSON with exactly these keys:
   "recommended_actions": ["prioritized concrete action"],
   "next_iteration_goal": "one focused goal for the next implementation iteration",
   "must_implement_next": ["observable acceptance point for the next implementation"],
-  "blocking_risks": ["risk or empty"]
+  "blocking_risks": ["risk or empty"],
+  "stack_preset_update": {{"optional_field": "only include when an explicit architecture, language, framework, or UI-surface revision is necessary"}}
 }}
 """
 
@@ -291,6 +320,12 @@ Return JSON with exactly these keys:
         except (TypeError, json.JSONDecodeError):
             return _mark_fallback(fallback, "LLM improvement analysis returned non-JSON content.")
 
+    deterministic_stack_update = (
+        product_judgment.get("recommended_stack_preset_update")
+        if isinstance(product_judgment, dict) and isinstance(product_judgment.get("recommended_stack_preset_update"), dict)
+        else {}
+    )
+    llm_stack_update = payload.get("stack_preset_update") if isinstance(payload.get("stack_preset_update"), dict) else {}
     report = {
         "summary": str(payload.get("summary") or fallback["summary"]),
         "improvement_opportunities": _coerce_string_list(payload.get("improvement_opportunities")) or fallback["improvement_opportunities"],
@@ -298,6 +333,7 @@ Return JSON with exactly these keys:
         "next_iteration_goal": str(payload.get("next_iteration_goal") or fallback["next_iteration_goal"]),
         "must_implement_next": _coerce_string_list(payload.get("must_implement_next")) or fallback["must_implement_next"],
         "blocking_risks": _coerce_string_list(payload.get("blocking_risks")) or fallback["blocking_risks"],
+        "stack_preset_update": llm_stack_update or deterministic_stack_update,
         "source": "llm",
     }
     report = _attach_prompt_context(report, prompt_context)
@@ -318,16 +354,27 @@ def _fallback_report(goal: str, validation_result: Any) -> dict[str, Any]:
         "next_iteration_goal": str(next_goal),
         "must_implement_next": actions[:2] or ["The next version should include at least one visible behavior improvement."],
         "blocking_risks": errors,
+        "stack_preset_update": {},
     }
 
 
 def _attach_prompt_context(report: dict[str, Any], prompt_context: dict[str, Any]) -> dict[str, Any]:
     if not prompt_context:
         return report
+    product_judgment = prompt_context.get("product_judgment") if isinstance(prompt_context.get("product_judgment"), dict) else {}
+    deterministic_stack_update = (
+        product_judgment.get("recommended_stack_preset_update")
+        if isinstance(product_judgment.get("recommended_stack_preset_update"), dict)
+        else {}
+    )
+    stack_preset_update = report.get("stack_preset_update") if isinstance(report.get("stack_preset_update"), dict) else {}
     return {
         **report,
         "prompt_context": prompt_context,
-        "product_judgment": prompt_context.get("product_judgment") or report.get("product_judgment") or {},
+        "product_judgment": product_judgment or report.get("product_judgment") or {},
+        "stack_preset": prompt_context.get("stack_preset") or report.get("stack_preset") or {},
+        "stack_preset_update": stack_preset_update or deterministic_stack_update,
+        "ui_iteration_contract": prompt_context.get("ui_iteration_contract") or report.get("ui_iteration_contract") or {},
     }
 
 
@@ -421,6 +468,18 @@ def _coerce_string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [str(value)]
+
+
+def _latest_environment_packages(memory_records: list[dict[str, Any]]) -> list[str]:
+    packages: list[str] = []
+    for record in memory_records:
+        attributes = record.get("attributes") if isinstance(record, dict) else None
+        if not isinstance(attributes, dict):
+            continue
+        candidate = attributes.get("installed_packages") or attributes.get("detected_packages")
+        if isinstance(candidate, list) and candidate:
+            packages = [str(item) for item in candidate if str(item)]
+    return packages
 
 
 def _sanitize_public_report(report: dict[str, Any]) -> dict[str, Any]:

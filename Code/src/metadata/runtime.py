@@ -8,7 +8,7 @@ from pydantic import Field
 
 from metadata.base import JsonValue, MetadataBase, MetadataKind
 from metadata.results import FailureMetadata, ResultStatus, TaskResultMetadata, ToolResultMetadata
-from metadata.tooling import ToolInputMetadata
+from metadata.tooling import ToolContextMetadata, ToolEventMetadata, ToolInputMetadata
 
 
 class LLMRequestMetadata(MetadataBase):
@@ -67,6 +67,9 @@ class ToolExecutionEnvelopeMetadata(MetadataBase):
     attempts_used: int = 1
     retry_count: int = 0
     retry_history: list[dict[str, JsonValue]] = Field(default_factory=list)
+    call_id: str | None = None
+    tool_context: ToolContextMetadata | None = None
+    tool_events: list[ToolEventMetadata] = Field(default_factory=list)
 
     @property
     def output(self) -> MetadataBase | None:
@@ -85,7 +88,7 @@ class AgentExecutionMetadata(MetadataBase):
     result_metadata: TaskResultMetadata | MetadataBase | None = None
     failure: FailureMetadata | None = None
     duration_seconds: float = 0.0
-    tool_calls: list[ToolExecutionEnvelopeMetadata] = Field(default_factory=list)
+    tool_invocations: list[ToolExecutionEnvelopeMetadata] = Field(default_factory=list)
 
 
 class ModuleExecutionMetadata(MetadataBase):

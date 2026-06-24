@@ -44,6 +44,8 @@ class EnhancedUI:
         self._append_task_graph_enabled = False
         self._append_task_graph_seen: dict[str, tuple[str, str, str]] = {}
         self._append_task_graph_goal: str | None = None
+        self._tool_event_states: dict[str, dict[str, Any]] = {}
+        self._tool_event_history_seen: set[str] = set()
         self.task_graph_state: dict[str, Any] = {
             "goal": "",
             "stages": [],
@@ -458,6 +460,124 @@ class EnhancedUI:
     def _reset_append_task_graph(self) -> None:
         self._append_task_graph_seen = {}
         self._append_task_graph_goal = None
+        self._tool_event_states = {}
+        self._tool_event_history_seen = set()
+
+    def append_tool_event(self, event: Any) -> None:
+        """Consume a tool lifecycle event for append/live UI rendering."""
+        payload = self._tool_event_payload(event)
+        call_id = str(payload.get("call_id") or "")
+        if not call_id:
+            return
+
+        event_type = str(payload.get("event_type") or payload.get("status") or "").lower()
+        status = str(payload.get("status") or event_type or "pending").lower()
+        if event_type in {"completed", "error"} or status in {"completed", "success", "failed", "error"}:
+            if self._append_task_graph_enabled:
+                self._emit_tool_event_terminal_history(payload)
+            self._tool_event_states.pop(call_id, None)
+        else:
+            self._tool_event_states[call_id] = payload
+        self._refresh_task_graph_tail()
+
+    def _tool_event_payload(self, event: Any) -> dict[str, Any]:
+        if hasattr(event, "to_json_dict"):
+            payload = event.to_json_dict()
+        elif hasattr(event, "model_dump"):
+            payload = event.model_dump(mode="json", exclude_none=True)
+        elif isinstance(event, dict):
+            payload = dict(event)
+        else:
+            payload = {
+                key: value
+                for key, value in vars(event).items()
+                if not key.startswith("_")
+            }
+        return payload if isinstance(payload, dict) else {}
+
+    def _tool_event_nested(self, payload: dict[str, Any], key: str) -> dict[str, Any]:
+        value = payload.get(key)
+        if isinstance(value, dict):
+            return value
+        if hasattr(value, "to_json_dict"):
+            nested = value.to_json_dict()
+            return nested if isinstance(nested, dict) else {}
+        if hasattr(value, "model_dump"):
+            nested = value.model_dump(mode="json", exclude_none=True)
+            return nested if isinstance(nested, dict) else {}
+        return {}
+
+    def _tool_event_reason(self, payload: dict[str, Any]) -> str:
+        tool_call = self._tool_event_nested(payload, "tool_call")
+        tool_error = self._tool_event_nested(payload, "tool_error")
+        failure = self._tool_event_nested(payload, "failure")
+        return str(
+            tool_error.get("error_message")
+            or failure.get("error_message")
+            or tool_call.get("reason")
+            or payload.get("reason")
+            or ""
+        )
+
+    def _tool_event_recovery(self, payload: dict[str, Any]) -> str:
+        tool_error = self._tool_event_nested(payload, "tool_error")
+        failure = self._tool_event_nested(payload, "failure")
+        return str(
+            tool_error.get("suggested_recovery")
+            or failure.get("recovery_strategy")
+            or ""
+        )
+
+    def _tool_event_recoverable(self, payload: dict[str, Any]) -> bool:
+        tool_error = self._tool_event_nested(payload, "tool_error")
+        if "recoverable" in tool_error:
+            return bool(tool_error.get("recoverable"))
+        return bool(payload.get("recoverable", True))
+
+    def _emit_tool_event_terminal_history(self, payload: dict[str, Any]) -> None:
+        call_id = str(payload.get("call_id") or "")
+        tool_name = str(payload.get("tool_name") or "unknown")
+        event_type = str(payload.get("event_type") or payload.get("status") or "").lower()
+        status = str(payload.get("status") or event_type or "").lower()
+        if event_type == "completed" or status in {"completed", "success"}:
+            kind = "completed"
+            icon = "✓"
+            style = "green"
+            message = "Tool completed"
+        elif event_type == "error" or status in {"failed", "error"}:
+            if self._tool_event_recoverable(payload):
+                kind = "recoverable_error"
+                icon = "!"
+                style = "yellow"
+                message = "Tool error recovered"
+            else:
+                kind = "terminal_error"
+                icon = "✗"
+                style = "red"
+                message = "Tool failed"
+        else:
+            return
+        signature = f"{call_id}:{kind}"
+        if signature in self._tool_event_history_seen:
+            return
+        self._tool_event_history_seen.add(signature)
+
+        line = Text()
+        line.append(f"{icon} ", style=style)
+        line.append(f"{message}: {tool_name} ({call_id})", style=style)
+        reason = self._tool_event_reason(payload)
+        if reason:
+            line.append(f" - {self._shorten_inline(reason, 160)}", style="dim")
+        recovery = self._tool_event_recovery(payload)
+        if recovery and recovery != reason:
+            line.append(f" | Recovery: {self._shorten_inline(recovery, 100)}", style="dim")
+        self.console.print(line)
+
+    def _shorten_inline(self, value: str, limit: int) -> str:
+        text = " ".join(str(value).split())
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 3)].rstrip() + "..."
 
     def _emit_task_graph_updates(self) -> None:
         tasks = self.task_graph_state.get("tasks") or []
@@ -520,7 +640,7 @@ class EnhancedUI:
         return previous is None or previous[0].lower() != status
 
     def create_task_graph_live_tail(self) -> Group | Text:
-        """Render the current Task Graph path plus transient LLM stream text."""
+        """Render the current Task Graph path plus transient tool/LLM stream text."""
         path = self._task_graph_running_path()
         rows: list[Text] = []
 
@@ -542,6 +662,12 @@ class EnhancedUI:
                 line.append(label, style=style)
                 rows.append(line)
 
+        tool_rows = self._tool_event_live_rows()
+        if tool_rows:
+            if rows:
+                rows.append(Text(""))
+            rows.extend(tool_rows)
+
         llm_rows = self._llm_stream_live_rows()
         if llm_rows:
             if rows:
@@ -551,6 +677,40 @@ class EnhancedUI:
         if not rows:
             return Text("")
         return Group(*rows)
+
+    def _tool_event_live_rows(self) -> list[Text]:
+        active_events = [
+            payload for payload in self._tool_event_states.values()
+            if str(payload.get("status") or payload.get("event_type") or "").lower()
+            in {"pending", "running", "in_progress"}
+        ]
+        if not active_events:
+            return []
+        payload = active_events[-1]
+        call_id = str(payload.get("call_id") or "")
+        tool_name = str(payload.get("tool_name") or "unknown")
+        status = str(payload.get("status") or payload.get("event_type") or "pending").lower()
+        short_call_id = self._short_tool_call_id(call_id)
+        icon = self._task_graph_spinner_frame if status in {"running", "in_progress"} else "•"
+        style = "yellow" if status in {"running", "in_progress"} else "dim"
+
+        rows: list[Text] = []
+        header = Text()
+        header.append(f"{icon} ", style=style)
+        header.append(f"Tool: {tool_name} ", style=style)
+        header.append(f"({short_call_id}) ", style="dim")
+        header.append(status, style="dim")
+        rows.append(header)
+        reason = self._tool_event_reason(payload)
+        if reason:
+            rows.append(Text(f"  Reason: {self._shorten_inline(reason, 140)}", style="dim"))
+        return rows
+
+    def _short_tool_call_id(self, call_id: str) -> str:
+        parts = [part for part in str(call_id).split(":") if part]
+        if len(parts) >= 2:
+            return ":".join(parts[-2:])
+        return call_id[-8:] if len(call_id) > 8 else call_id
 
     def _llm_stream_live_rows(self) -> list[Text]:
         active_llm_ops = [

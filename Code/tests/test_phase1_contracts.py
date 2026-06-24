@@ -10,6 +10,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from openai import OpenAIError
 from rich.console import Console
 
 from agent_generator.data_collector import _build_search_query, collect_data
@@ -21,7 +22,10 @@ from agent_generator.runner import _complete_empty_slots
 from agent_generator.slot_generator import generate_slots
 from core.instrumented_llm import InstrumentedLLMClient
 from core.llm import LLMClient, LLMMessage, LLMRequest
+from core.exceptions import ErrorCategory, InvalidLLMResponseError, LLMProviderError, LLMTimeoutError
 from core.openpilot_log import OpenPilotLogger
+from core.semantic_analyzer import SemanticAnalyzer
+from core.semantic_types import RiskLevel, TaskType
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker
 from metadata import (
@@ -43,6 +47,7 @@ from core.tool_contracts import (
 )
 from tools.tool_selection import ToolSelection
 from tools.tool_registry import ToolRegistry
+from utils.json_utils import safe_parse_json
 
 
 def _registered_registry() -> ToolRegistry:
@@ -210,15 +215,21 @@ def test_builtin_tools_register_expected_contracts() -> None:
     names = {tool.name for tool in registry.list_all()}
     removed_directory_tool = "directory" + "_lister"
 
-    assert len(names) == 14
+    assert len(names) == 20
     assert {
         "bug_fix_tool",
         "command_executor",
         "embedder",
+        "environment_fix_tool",
         "file_reader",
+        "file_delete_tool",
+        "file_patch_writer",
         "file_writer",
+        "code_editor",
+        "code_unit_generator",
         "multi_file_reader",
         "task_classifier",
+        "task_file_resolver",
         "warning_check_tool",
         "web_searcher",
     }.issubset(names)
@@ -228,6 +239,9 @@ def test_builtin_tools_register_expected_contracts() -> None:
     assert "memory_context" not in names
     assert "project_state_reader" not in names
     assert "project_improvement_tool" not in names
+
+    multi_file_reader = registry.get("multi_file_reader")
+    assert multi_file_reader.contract_metadata.required_any_of == [["file_paths"], ["directory_path"]]
 
 
 def test_core_imports_remain_available() -> None:
@@ -507,6 +521,210 @@ def test_llm_empty_length_response_is_not_cached(monkeypatch) -> None:
     assert len(calls) == 2
 
 
+def test_safe_parse_json_failure_cache_never_returns_sentinel_object() -> None:
+    invalid = "{not valid json"
+
+    first = safe_parse_json(invalid)
+    second = safe_parse_json(invalid)
+
+    assert first is None
+    assert second is None
+
+
+def test_llm_json_mode_treats_non_dict_list_parsed_value_as_invalid(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    calls = []
+
+    def fake_create(_openai_client, payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return _fake_chat_response('"just a string"')
+        return _fake_chat_response('{"ok": true}')
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="json")],
+            response_format="json_object",
+        )
+    )
+
+    assert response.parsed_json == {"ok": True}
+    assert len(calls) == 2
+    assert response.provider_details["json_repair_attempts"] == 2
+
+
+def test_llm_json_mode_retries_after_cached_parse_failure(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    invalid = "{not valid json"
+    assert safe_parse_json(invalid) is None
+    assert safe_parse_json(invalid) is None
+    calls = []
+
+    def fake_create(_openai_client, _payload):
+        calls.append(_payload)
+        if len(calls) == 1:
+            return _fake_chat_response(invalid)
+        return _fake_chat_response('{"repaired": true}')
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="json")],
+            response_format="json_object",
+        )
+    )
+
+    assert response.parsed_json == {"repaired": True}
+    assert len(calls) == 2
+
+
+def test_llm_json_mode_invalid_after_retries_raises_clean_error(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+
+    def fake_create(_openai_client, _payload):
+        return _fake_chat_response("<not-json>")
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    with pytest.raises(InvalidLLMResponseError) as exc:
+        client.complete(
+            LLMRequest(
+                messages=[LLMMessage(role="user", content="json")],
+                response_format="json_object",
+            ),
+            max_retries=1,
+        )
+
+    assert "LLM returned invalid JSON" in str(exc.value)
+    assert "validation errors for LLMResponse" not in str(exc.value)
+    assert exc.value.context["response_text"] == "<not-json>"
+    assert exc.value.context["response_length"] == len("<not-json>")
+    assert exc.value.context["response_preview_start"] == "<not-json>"
+    assert exc.value.context["json_repair_attempts"] == 1
+    assert "transport_retry_history" in exc.value.context
+
+
+def test_llm_transport_retries_without_env_proxy_after_network_error(monkeypatch) -> None:
+    class FakeCompletions:
+        def __init__(self, response=None, error: Exception | None = None) -> None:
+            self.response = response
+            self.error = error
+
+        def create(self, **_payload):
+            if self.error:
+                raise self.error
+            return self.response
+
+    class FakeClient:
+        def __init__(self, response=None, error: Exception | None = None) -> None:
+            self.chat = SimpleNamespace(completions=FakeCompletions(response, error))
+
+    monkeypatch.setenv("all_proxy", "http://127.0.0.1:7892")
+    client = LLMClient(FakeLLMSettings())
+    direct_response = _fake_chat_response('{"ok": true}')
+    direct_client = FakeClient(response=direct_response)
+    fallback_calls = []
+
+    def fake_make_openai_client(*, trust_env: bool = True):
+        fallback_calls.append(trust_env)
+        return direct_client
+
+    monkeypatch.setattr(client, "_make_openai_client", fake_make_openai_client)
+    monkeypatch.setattr(client, "_classify_provider_error", lambda _exc: ErrorCategory.NETWORK)
+
+    response = client._create_completion_with_transport_retry(
+        FakeClient(error=OpenAIError("Connection error.")),
+        {"model": "fake-model", "messages": []},
+    )
+
+    assert response is direct_response
+    assert fallback_calls == [False]
+    assert client._last_transport_retry_history[-1]["reason"] == "env_proxy_fallback"
+    assert client._last_transport_retry_history[-1]["trust_env"] is False
+
+
+def test_llm_transport_retries_incomplete_chunked_reads(monkeypatch) -> None:
+    class FakeCompletions:
+        def __init__(self, response) -> None:
+            self.response = response
+            self.calls = 0
+
+        def create(self, **_payload):
+            self.calls += 1
+            if self.calls == 1:
+                raise httpx.RemoteProtocolError("peer closed connection without sending complete message body")
+            return self.response
+
+    response = _fake_chat_response('{"ok": true}')
+    completions = FakeCompletions(response)
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+    client = LLMClient(FakeLLMSettings())
+    client.settings.transport_retries = 1
+
+    result = client._create_completion_with_transport_retry(
+        fake_client,
+        {"model": "fake-model", "messages": []},
+    )
+
+    assert result is response
+    assert completions.calls == 2
+    assert client._last_transport_retry_history[0]["category"] == ErrorCategory.NETWORK.value
+    assert client._last_transport_retry_history[0]["retryable"] is True
+
+
+def test_llm_openai_client_disables_sdk_level_retries(monkeypatch) -> None:
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr("core.llm.OpenAI", FakeOpenAI)
+    client = LLMClient(FakeLLMSettings())
+
+    client._make_openai_client()
+
+    assert captured["max_retries"] == 0
+
+
+def test_llm_request_can_override_timeout_and_transport_retry_budget(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    calls = []
+
+    def fake_create(_openai_client, payload, *, transport_retries=None):
+        calls.append((payload, transport_retries))
+        return _fake_chat_response('{"ok": true}')
+
+    monkeypatch.setattr(client, "_create_completion_with_transport_retry", fake_create)
+
+    response = client.complete(
+        LLMRequest(
+            messages=[LLMMessage(role="user", content="bounded")],
+            response_format="json_object",
+            timeout_seconds=4.0,
+            transport_retries=0,
+        )
+    )
+
+    assert response.parsed_json == {"ok": True}
+    assert calls[0][0]["timeout"] == 4.0
+    assert calls[0][1] == 0
+
+
+def test_semantic_analyzer_local_fallback_classifies_multilingual_code_goal() -> None:
+    analyzer = SemanticAnalyzer(SimpleNamespace())
+
+    analysis = analyzer.fallback_goal_analysis("在目标目录中做一个个人数字助手", "LLMTimeoutError")
+
+    assert analysis.task_type == TaskType.CODING
+    assert analysis.risk_level == RiskLevel.MEDIUM
+    assert "code_execution" in analysis.required_resources
+    assert "LLMTimeoutError" in analysis.reason
+
+
 def test_llm_extracts_text_from_content_parts(monkeypatch) -> None:
     client = LLMClient(FakeLLMSettings())
 
@@ -578,6 +796,61 @@ def test_llm_streaming_json_response_still_parses(monkeypatch) -> None:
     assert response.parsed_json == {"ok": True}
     assert response.content == '{"ok": true}'
     assert any(event.event_type == "delta" for event in events)
+
+
+def test_llm_streaming_uses_provider_timeout_as_default_wall_clock_deadline(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    captured = {}
+
+    def fake_stream(_client, _payload, _callback, *, wall_clock_timeout=None):
+        captured["wall_clock_timeout"] = wall_clock_timeout
+        return _fake_chat_response("done")
+
+    monkeypatch.setattr(client, "_create_streaming_completion_with_transport_retry", fake_stream)
+
+    response = client.complete(
+        LLMRequest(messages=[LLMMessage(role="user", content="bounded stream")]),
+        stream_callback=lambda _event: None,
+    )
+
+    assert response.content == "done"
+    assert captured["wall_clock_timeout"] == FakeLLMSettings.timeout_seconds
+
+
+def test_llm_streaming_wall_clock_timeout_stops_continuous_chunks(monkeypatch) -> None:
+    client = LLMClient(FakeLLMSettings())
+    clock = iter([10.0, 12.0])
+    monkeypatch.setattr("core.llm.time.monotonic", lambda: next(clock))
+
+    with pytest.raises(LLMTimeoutError, match="wall-clock timeout"):
+        client._collect_streaming_completion(
+            [_fake_stream_chunk("still streaming")],
+            lambda _event: None,
+            wall_clock_timeout=1.0,
+        )
+
+
+def test_llm_streaming_wraps_transport_errors_raised_during_iteration() -> None:
+    class BrokenStream:
+        def __iter__(self):
+            yield _fake_stream_chunk("partial")
+            raise httpx.RemoteProtocolError("incomplete chunked read")
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(
+            completions=SimpleNamespace(create=lambda **_payload: BrokenStream()),
+        )
+    )
+    client = LLMClient(FakeLLMSettings())
+
+    with pytest.raises(LLMProviderError, match="incomplete chunked read") as exc:
+        client._create_streaming_completion_with_transport_retry(
+            fake_client,
+            {"model": "fake-model", "messages": []},
+            lambda _event: None,
+        )
+
+    assert exc.value.category == ErrorCategory.NETWORK
 
 
 def test_llm_streaming_filters_reasoning_fields_from_visible_delta(monkeypatch) -> None:
@@ -1169,6 +1442,99 @@ def test_multi_file_reader_scans_directory_with_glob(tmp_path) -> None:
     assert "ignored" not in result.output_metadata.result["content"]
 
 
+def test_multi_file_reader_creates_sketch_for_empty_directory(tmp_path) -> None:
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="read-empty-directory",
+                tool_name="multi_file_reader",
+                reason="capability_match",
+                input_metadata={
+                    "directory_path": str(tmp_path),
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    sketch_path = tmp_path / "sketch.json"
+    sketch_payload = json.loads(sketch_path.read_text(encoding="utf-8"))
+    assert result.success
+    assert sketch_path.exists()
+    assert sketch_payload["files"] == {}
+    assert result.output_metadata.result["count"] == 0
+    assert result.output_metadata.result["sketch_files"] == [str(sketch_path)]
+    assert result.output_metadata.result["sketch_refreshed"] is True
+
+
+def test_multi_file_reader_skips_binary_files_and_keeps_directory_sketch(tmp_path) -> None:
+    source = tmp_path / "app.py"
+    binary = tmp_path / "asset.bin"
+    source.write_text("print('ok')\n", encoding="utf-8")
+    binary.write_bytes(b"\x00\xf6\x00not-text")
+
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="read-directory-with-binary",
+                tool_name="multi_file_reader",
+                reason="capability_match",
+                input_metadata={
+                    "directory_path": str(tmp_path),
+                    "pattern": "*",
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    assert result.success
+    assert (tmp_path / "sketch.json").exists()
+    assert str(source) in result.output_metadata.result["files"]
+    assert str(binary) not in result.output_metadata.result["files"]
+    assert "print('ok')" in result.output_metadata.result["content"]
+    skipped_files = result.output_metadata.result["skipped_files"]
+    assert skipped_files == [
+        {
+            "path": str(binary),
+            "reason": "binary_file",
+            "size_bytes": binary.stat().st_size,
+            "mime_type": "application/octet-stream",
+        }
+    ]
+
+
+def test_multi_file_reader_refreshes_parent_sketch_for_explicit_files(tmp_path) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_text("remember this\n", encoding="utf-8")
+
+    registry = _registered_registry()
+    executor = ToolExecutor(registry)
+    try:
+        result = executor.execute_single(
+            ToolSelection(
+                step_id="read-explicit-file",
+                tool_name="multi_file_reader",
+                reason="capability_match",
+                input_metadata={
+                    "file_paths": [str(source)],
+                },
+            )
+        )
+    finally:
+        executor.shutdown()
+
+    sketch_path = tmp_path / "sketch.json"
+    assert result.success
+    assert sketch_path.exists()
+    assert result.output_metadata.result["files"] == [str(source)]
+    assert result.output_metadata.result["sketch_files"] == [str(sketch_path)]
+
+
 def test_code_reviewer_does_not_reject_specific_stack_judgment_without_product_intent() -> None:
     result = code_reviewer_executor(
         {
@@ -1241,6 +1607,99 @@ def test_code_reviewer_rejects_generic_product_intent_drift() -> None:
     assert result["approved"] is False
     assert "product_intent_drift" in result["rejection_categories"]
     assert any("Product intent drift" in item for item in result["warnings"])
+
+
+def test_code_reviewer_rejects_unapproved_dependency_drift() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "import curses\n\ndef main(stdscr):\n    stdscr.addstr(0, 0, 'game')\n",
+            "language": "python",
+            "prompt_context": {
+                "dependency_strategy": {
+                    "preserve_packages": ["pygame"],
+                    "replaceable_packages": [],
+                    "rationale": ["Preserve pygame rendering/input capability."],
+                },
+                "dependencies": [
+                    {
+                        "kind": "project_dependency",
+                        "package_name": "pygame",
+                        "import_names": ["pygame"],
+                        "dependency_sources": ["installed", "import_scan"],
+                        "role": "interactive_window_rendering_input_game_loop",
+                    }
+                ],
+            },
+        }
+    )
+
+    assert result["approved"] is False
+    assert "dependency_drift" in result["rejection_categories"]
+    assert any("Dependency drift" in item for item in result["warnings"])
+
+
+def test_code_reviewer_requires_git_snapshot_for_critical_dangerous_operations() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "value = eval(user_input)\n",
+            "language": "python",
+            "prompt_context": {},
+        }
+    )
+
+    assert result["approved"] is False
+    assert "dangerous_operation" in result["rejection_categories"]
+
+
+def test_code_reviewer_allows_dangerous_operations_with_git_snapshot_context() -> None:
+    result = code_reviewer_executor(
+        {
+            "code": "value = eval(user_input)\n",
+            "language": "python",
+            "prompt_context": {
+                "git_safety_context": {
+                    "project_path": "/tmp/project",
+                    "snapshot_available": True,
+                    "snapshot": {
+                        "kind": "git_snapshot",
+                        "commit_hash": "abc123",
+                        "created": True,
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["approved"] is True
+    assert "dangerous_operation" not in result["rejection_categories"]
+    assert result["git_safety_context"]["snapshot_available"] is True
+
+
+def test_code_reviewer_rejects_out_of_scope_destructive_operation_even_with_git_snapshot(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside.txt"
+    result = code_reviewer_executor(
+        {
+            "code": f"import os\nos.remove('{outside}')\n",
+            "language": "python",
+            "prompt_context": {
+                "git_safety_context": {
+                    "project_path": str(project),
+                    "snapshot_available": True,
+                    "snapshot": {
+                        "kind": "git_snapshot",
+                        "commit_hash": "abc123",
+                        "created": True,
+                    },
+                }
+            },
+        }
+    )
+
+    assert result["approved"] is False
+    assert "safety_boundary" in result["rejection_categories"]
+    assert any("outside project" in item for item in result["warnings"])
 
 
 def test_tool_executor_uses_contract_metadata_defaults() -> None:
@@ -1540,6 +1999,38 @@ def test_web_searcher_continues_from_empty_google_to_bing_without_network() -> N
     assert result["effective_query"] == "openpilot research"
     assert [attempt["status"] for attempt in result["search_attempts"]] == ["empty", "success"]
     assert result["results"][0]["url"] == "https://example.com/bing-result"
+
+
+def test_web_searcher_continues_to_duckduckgo_and_decodes_redirect_without_network() -> None:
+    duckduckgo_html = """
+    <div class="result">
+      <a class="result__a" href="/l/?uddg=https%3A%2F%2Fpypi.org%2Fproject%2FSpeechRecognition%2F">
+        SpeechRecognition - PyPI
+      </a>
+      <a class="result__snippet">Install the published speech recognition package.</a>
+    </div>
+    """
+
+    def fake_http_get(url: str, timeout: int) -> str:
+        if "google.com/search" in url or "bing.com/search" in url:
+            return "<html><body>No results</body></html>"
+        if "html.duckduckgo.com/html/" in url:
+            return duckduckgo_html
+        raise AssertionError(f"unexpected url: {url}")
+
+    result = web_searcher_executor(
+        {
+            "query": "speech_recognition pypi",
+            "max_pages": 0,
+            "llm_cleanup": False,
+            "max_search_attempts": 3,
+            "_http_get": fake_http_get,
+        }
+    )
+
+    assert result["provider"] == "duckduckgo_html"
+    assert [attempt["status"] for attempt in result["search_attempts"]] == ["empty", "empty", "success"]
+    assert result["results"][0]["url"] == "https://pypi.org/project/SpeechRecognition/"
 
 
 def test_web_searcher_builds_short_query_variants_from_long_slot_query() -> None:
@@ -2523,7 +3014,41 @@ def test_logger_writes_legacy_and_structured_jsonl(tmp_path) -> None:
         "legacy_event",
         "structured_event",
     ]
+    assert events[0]["level"] == "INFO"
+    assert events[1]["level"] == "INFO"
+    assert events[1]["payload"]["level"] == "INFO"
     assert events[0]["payload"] == {"message": "ok"}
     assert events[1]["payload"]["source_type"] == "tool"
     assert events[1]["payload"]["source_name"] == "file_reader"
     assert events[1]["payload"]["annotations"] == {"contract": "phase1"}
+
+
+def test_logger_infers_warning_and_error_levels(tmp_path) -> None:
+    log_file = tmp_path / "openpilot.jsonl"
+    logger = OpenPilotLogger(log_file)
+
+    logger.log_structured_event(
+        source_type="agent",
+        source_name="tool_loop",
+        phase="task_execution",
+        event_type="tool_loop_recoverable_error",
+        session_id="session-1",
+        turn_id=1,
+        success=False,
+        error="missing input",
+    )
+    logger.log_event(
+        "task_failed",
+        {"success": False, "error": "boom"},
+        session_id="session-1",
+        turn_id=1,
+    )
+
+    events = [
+        json.loads(line)
+        for line in log_file.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert events[0]["level"] == "WARNING"
+    assert events[0]["payload"]["level"] == "WARNING"
+    assert events[1]["level"] == "ERROR"

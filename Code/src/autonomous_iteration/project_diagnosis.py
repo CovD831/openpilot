@@ -7,6 +7,7 @@ from typing import Any
 
 from autonomous_iteration.models import EvaluationResult, ProjectStateSnapshot
 from metadata import (
+    DependencyStrategyMetadata,
     ImprovementCandidateMetadata,
     ProjectDiagnosisMetadata,
     ProjectDimensionAssessmentMetadata,
@@ -61,11 +62,13 @@ class ProjectDiagnoser:
         objective = self.objective_override or self._infer_objective(project_state)
         metrics = list(self.metric_overrides) or self._infer_metrics(project_state, evaluation, objective)
         assessments = self._assess_dimensions(project_state, evaluation, objective, metrics)
+        dependency_strategy = self._build_dependency_strategy(project_state, objective)
         reference_insights = self._local_reference_insights(project_state)
-        candidates = self._build_candidates(project_state, evaluation, objective, metrics, assessments, analysis_seed or {})
-        if self._should_request_references(objective, candidates, project_state) and self.allow_reference_search:
-            reference_insights.extend(self._external_reference_insights(project_state, objective))
+        candidates = self._build_candidates(project_state, evaluation, objective, metrics, assessments, analysis_seed or {}, dependency_strategy)
+        if self._should_request_references(objective, candidates, project_state, dependency_strategy) and self.allow_reference_search:
+            reference_insights.extend(self._external_reference_insights(project_state, objective, dependency_strategy))
             candidates.extend(self._reference_candidates(reference_insights))
+            dependency_strategy = self._enrich_dependency_strategy_with_references(dependency_strategy, reference_insights)
         ranked = self._rank_candidates(candidates)
         selected = ranked[0] if ranked else None
         if selected is not None:
@@ -81,6 +84,9 @@ class ProjectDiagnoser:
             ranked_candidate_ids=[candidate.candidate_id for candidate in ranked],
             selected_candidate=selected,
             reference_insights=reference_insights,
+            dependencies=project_state.dependencies,
+            dependency_strategy=dependency_strategy,
+            stack_preset=project_state.stack_preset,
             summary=summary,
             candidate_shortage_reason="" if selected else "No high-value diagnosis candidate survived constraints.",
             confidence=self._diagnosis_confidence(objective, metrics, ranked, reference_insights),
@@ -92,6 +98,7 @@ class ProjectDiagnoser:
         delivery_surface = "project_native"
         target_users = ["the requester"]
         core_value = ["Satisfy the original project goal with observable software behavior."]
+        stack_preset = state.stack_preset
         if self._has_any(text, ("web", "website", "browser", "网页", ".html", "react", "frontend")):
             project_type = "web_app"
             delivery_surface = "browser"
@@ -117,6 +124,18 @@ class ProjectDiagnoser:
             delivery_surface = "interactive_runtime"
             target_users = ["people using the interactive software"]
             core_value = ["Provide the requested interactive experience with visible feedback and controls."]
+        if stack_preset is not None:
+            delivery_surface = stack_preset.delivery_surface or delivery_surface
+            if delivery_surface == "browser":
+                project_type = "web_app"
+                target_users = ["browser users"]
+                core_value = ["Deliver the requested browser workflow clearly and responsively."]
+            elif delivery_surface == "terminal":
+                project_type = "cli_tool"
+                target_users = ["terminal users"]
+            elif delivery_surface == "interactive_runtime":
+                project_type = "interactive_app"
+                target_users = ["people using the interactive software"]
         success = [
             "Core behavior from the user goal is present and testable.",
             "The documented run path works without blocking runtime failures.",
@@ -127,6 +146,11 @@ class ProjectDiagnoser:
             evidence.append(f"readme:{state.readme_summary[:220]}")
         if state.module_summaries:
             evidence.append("modules:" + "; ".join(state.module_summaries[:4]))
+        if stack_preset is not None:
+            evidence.append(
+                f"stack_preset:r{stack_preset.revision} {stack_preset.architecture} "
+                f"frontend={stack_preset.frontend_language} backend={stack_preset.backend_language}"
+            )
         confidence = 0.78 if project_type != "software_project" else (0.64 if state.readme_summary or state.file_summaries else 0.48)
         return ProjectObjectiveMetadata(
             goal=state.goal,
@@ -177,7 +201,10 @@ class ProjectDiagnoser:
                 current_assessment="README and project state need UX review.",
                 evidence=[state.readme_summary[:220]] if state.readme_summary else ["No README evidence provided."],
                 confidence=0.68 if objective.project_type != "software_project" else 0.52,
-                required=objective.project_type in {"web_app", "cli_tool", "interactive_app"},
+                required=bool(
+                    objective.project_type in {"web_app", "cli_tool", "interactive_app"}
+                    or (state.stack_preset and state.stack_preset.ui_review_required)
+                ),
             ),
             SuccessMetricMetadata(
                 metric_id="maintainable_change",
@@ -232,6 +259,10 @@ class ProjectDiagnoser:
             elif dimension == "user_experience":
                 score -= 0.12 if objective.project_type in {"interactive_app", "web_app", "cli_tool"} else 0.0
                 gaps.extend(warnings[:2])
+                ui_gap = self._ui_surface_gap(state)
+                if ui_gap:
+                    score -= 0.2
+                    gaps.append(ui_gap)
             elif dimension == "technical_scalability":
                 evidence.extend(state.module_summaries[:3])
                 if len(state.safe_target_files) <= 1:
@@ -268,10 +299,53 @@ class ProjectDiagnoser:
         metrics: list[SuccessMetricMetadata],
         assessments: list[ProjectDimensionAssessmentMetadata],
         seed: dict[str, Any],
+        dependency_strategy: DependencyStrategyMetadata | None,
     ) -> list[ImprovementCandidateMetadata]:
         if evaluation.has_blocking_bugs or not evaluation.validation_passed:
             return [self._repair_candidate(evaluation)]
         candidates: list[ImprovementCandidateMetadata] = []
+        ui_gap = self._ui_surface_gap(state)
+        if ui_gap and state.stack_preset is not None:
+            candidates.append(
+                self._candidate(
+                    candidate_id="ui_surface_completion",
+                    title=f"Implement the planned {state.stack_preset.ui_strategy} user interface",
+                    dimension="user_experience",
+                    rationale=ui_gap,
+                    criteria=[
+                        f"The project exposes its planned {state.stack_preset.delivery_surface} user-facing surface.",
+                        "New or existing user-facing capabilities are reachable through coherent UI controls and visible states.",
+                        "UI files and backend behavior follow the persisted project stack preset.",
+                    ],
+                    evidence=[ui_gap, *state.stack_preset.rationale[:2]],
+                    candidate_type="ui_surface",
+                    value=0.94,
+                    impact=0.92,
+                    difficulty=0.58,
+                    risk=0.3,
+                )
+            )
+        preserve_packages = list(dependency_strategy.preserve_packages if dependency_strategy else [])
+        if preserve_packages:
+            package_text = ", ".join(preserve_packages[:4])
+            candidates.append(
+                self._candidate(
+                    candidate_id="dependency_preserving_enhancement",
+                    title=f"Improve the project using existing dependency capabilities ({package_text})",
+                    dimension="technical_scalability",
+                    rationale="Existing third-party libraries are project capability evidence and should be preserved during iteration.",
+                    criteria=[
+                        f"Existing useful packages remain imported or intentionally used: {package_text}.",
+                        "The improvement does not replace an existing delivery surface with a lower-capability substitute.",
+                    ],
+                    evidence=(dependency_strategy.rationale[:4] if dependency_strategy else []),
+                    candidate_type="dependency_strategy",
+                    value=0.72,
+                    impact=0.7,
+                    difficulty=0.42,
+                    risk=0.25,
+                )
+            )
         seed_actions = self._text_list(seed.get("recommended_actions"))
         seed_goals = self._text_list(seed.get("must_implement_next"))
         seed_opportunities = self._text_list(seed.get("improvement_opportunities")) or evaluation.improvement_opportunities
@@ -420,14 +494,56 @@ class ProjectDiagnoser:
             )
         return insights[:3]
 
+    def _build_dependency_strategy(
+        self,
+        state: ProjectStateSnapshot,
+        objective: ProjectObjectiveMetadata,
+    ) -> DependencyStrategyMetadata:
+        if state.dependency_strategy is not None:
+            return state.dependency_strategy
+        preserve = []
+        recommended = []
+        rationale = []
+        for dependency in state.dependencies:
+            if dependency.role or dependency.import_names or "installed" in dependency.dependency_sources:
+                preserve.append(dependency.package_name)
+                role_text = f" ({dependency.role})" if dependency.role else ""
+                rationale.append(f"Preserve {dependency.package_name}{role_text}; it is current project capability evidence.")
+        if objective.project_type == "interactive_app" and not any(dep.role for dep in state.dependencies):
+            recommended.append("pygame")
+            rationale.append("Interactive projects benefit from a dedicated input/rendering/game-loop library when no equivalent dependency exists.")
+        return DependencyStrategyMetadata(
+            preserve_packages=self._dedupe(preserve),
+            recommended_packages=self._dedupe(recommended),
+            replaceable_packages=[],
+            rejected_removals=[],
+            rationale=self._dedupe(rationale),
+            confidence=0.82 if preserve else 0.55,
+        )
+
+    def _enrich_dependency_strategy_with_references(
+        self,
+        strategy: DependencyStrategyMetadata,
+        insights: list[ReferenceInsightMetadata],
+    ) -> DependencyStrategyMetadata:
+        queries = [insight.query for insight in insights if insight.query]
+        if not queries:
+            return strategy
+        return strategy.model_copy(update={"reference_queries": self._dedupe([*strategy.reference_queries, *queries])})
+
     def _external_reference_insights(
         self,
         state: ProjectStateSnapshot,
         objective: ProjectObjectiveMetadata,
+        dependency_strategy: DependencyStrategyMetadata | None = None,
     ) -> list[ReferenceInsightMetadata]:
         if self.reference_provider is None:
             return []
-        query = f"{objective.project_type} best practices for {state.goal}".strip()
+        packages = []
+        if dependency_strategy is not None:
+            packages = dependency_strategy.preserve_packages or dependency_strategy.recommended_packages
+        dependency_hint = f" using {' '.join(packages[:4])}" if packages else ""
+        query = f"{objective.project_type} best practices for {state.goal}{dependency_hint}".strip()
         try:
             raw_insights = self.reference_provider(query, state, objective)
         except Exception:
@@ -468,6 +584,7 @@ class ProjectDiagnoser:
         objective: ProjectObjectiveMetadata,
         candidates: list[ImprovementCandidateMetadata],
         state: ProjectStateSnapshot,
+        dependency_strategy: DependencyStrategyMetadata | None = None,
     ) -> bool:
         candidate_titles = {candidate.title.lower() for candidate in candidates}
         memory_titles = {
@@ -476,7 +593,14 @@ class ProjectDiagnoser:
             if isinstance(record.get("attributes"), dict)
         }
         repeated = bool(candidate_titles & {item for item in memory_titles if item})
-        return objective.confidence < 0.65 or len(candidates) < 2 or repeated
+        dependency_needs_reference = bool(
+            dependency_strategy
+            and (
+                dependency_strategy.recommended_packages
+                or (state.dependencies and objective.project_type in {"interactive_app", "web_app"} and not dependency_strategy.reference_queries)
+            )
+        )
+        return objective.confidence < 0.65 or len(candidates) < 2 or repeated or dependency_needs_reference
 
     def _gap_title(self, dimension: str, objective: ProjectObjectiveMetadata) -> str:
         labels = {
@@ -534,7 +658,28 @@ class ProjectDiagnoser:
         chunks = [state.goal, state.readme_summary]
         chunks.extend(str(item.get("name") or "") + " " + str(item.get("preview") or "") for item in state.file_summaries[:4])
         chunks.extend(state.module_summaries[:4])
+        chunks.extend(f"{dependency.package_name} {dependency.role}" for dependency in state.dependencies[:8])
         return "\n".join(chunks).lower()
+
+    def _ui_surface_gap(self, state: ProjectStateSnapshot) -> str:
+        preset = state.stack_preset
+        if preset is None or not preset.ui_review_required:
+            return ""
+        file_text = "\n".join(
+            f"{item.get('name', '')} {item.get('suffix', '')} {item.get('preview', '')}"
+            for item in state.file_summaries
+        ).lower()
+        if preset.delivery_surface == "browser" and not self._has_any(
+            file_text,
+            (".html", ".css", ".js", ".jsx", ".ts", ".tsx", "<html", "react", "vue", "svelte"),
+        ):
+            return "The persisted browser UI preset has no frontend file evidence yet."
+        if preset.delivery_surface == "interactive_runtime" and not self._has_any(
+            file_text,
+            ("pygame", "tkinter", "canvas", "window", "render", "draw"),
+        ):
+            return "The persisted interactive UI preset has no visible rendering or window evidence yet."
+        return ""
 
     @staticmethod
     def _has_any(text: str, terms: tuple[str, ...]) -> bool:
@@ -573,4 +718,3 @@ class ProjectDiagnoser:
     @staticmethod
     def _bound(value: float) -> float:
         return max(0.0, min(1.0, round(float(value), 4)))
-

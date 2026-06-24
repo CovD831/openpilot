@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from metadata import (
@@ -7,24 +9,48 @@ from metadata import (
     BugFixResultMetadata,
     CodeArtifactMetadata,
     CommandArtifactMetadata,
+    DependencyStrategyMetadata,
+    DifficultyAssessmentMetadata,
+    ExecutionStateMetadata,
     FailureMetadata,
+    GitDiffContextMetadata,
+    GitRepositoryMetadata,
+    GitSnapshotMetadata,
     MetadataKind,
     ProductIntentMetadata,
+    ProblemJudgmentMetadata,
+    ProblemSignalMetadata,
     ProjectDiagnosisMetadata,
     ProjectDimensionAssessmentMetadata,
+    ProjectDependencyMetadata,
     ProjectObjectiveMetadata,
+    ProjectStackPresetMetadata,
     ImprovementCandidateMetadata,
     ReferenceInsightMetadata,
+    RelatedProjectFileMetadata,
+    ResolutionPlanMetadata,
     ResultStatus,
+    RuntimeStateMetadata,
     SuccessMetricMetadata,
     TaskResultMetadata,
     TaskRouteMetadata,
+    TaskGraphEdgeMetadata,
+    TaskGraphNodeMetadata,
+    TaskFileResolutionMetadata,
+    TaskFileResolutionRequestMetadata,
+    ToolCallMetadata,
+    ToolContextMetadata,
+    ToolErrorMetadata,
+    ToolEventMetadata,
     ToolInputMetadata,
+    ToolLoopMetadata,
     ToolResultMetadata,
     ValidationIssueMetadata,
     WarningCheckResultMetadata,
     WarningItemMetadata,
     artifact_to_tool_input,
+    json_safe,
+    metadata_summary,
 )
 
 
@@ -37,6 +63,177 @@ def test_metadata_base_fields_and_json_serialization() -> None:
     assert payload["schema_version"] == "1.0"
     assert payload["code"] == "print('ok')"
     assert payload["content"] == "print('ok')"
+
+
+def test_project_stack_preset_metadata_serializes_frontend_backend_decision() -> None:
+    preset = ProjectStackPresetMetadata(
+        project_path="/tmp/assistant",
+        preset_file="/tmp/assistant/.openpilot/project_stack.json",
+        delivery_surface="browser",
+        architecture="frontend_backend_split",
+        frontend_language="html_css_javascript",
+        backend_language="python",
+        ui_strategy="browser_application",
+        ui_review_required=True,
+    )
+
+    payload = preset.to_json_dict()
+
+    assert payload["kind"] == MetadataKind.PROJECT_STACK_PRESET
+    assert payload["architecture"] == "frontend_backend_split"
+    assert payload["ui_review_required"] is True
+
+
+def test_problem_resolution_and_task_graph_metadata_serialize() -> None:
+    signal = ProblemSignalMetadata(
+        source="tool_planning",
+        category="planning_gap",
+        message="empty plan",
+        evidence=["decision_needs_count:0"],
+        task_id="task-1",
+        tool_name="tool_planning_executor",
+        target_files=["app.py"],
+        raw_payload={"decision_needs": []},
+    )
+    judgment = ProblemJudgmentMetadata(
+        is_problem=True,
+        severity="blocking",
+        requires_fix=True,
+        user_visible=True,
+        recommended_repair_kind="recover_tool_plan",
+        confidence=0.9,
+        reason="No routable tool plan.",
+    )
+    difficulty = DifficultyAssessmentMetadata(
+        level="simple",
+        needs_decomposition=False,
+        blocking_factors=["target file is known"],
+        recommended_task_count=1,
+    )
+    resolution = ResolutionPlanMetadata(
+        strategy="direct_retry",
+        target_tasks=["task-1"],
+        max_attempts=2,
+        acceptance_check="A routable decision_need is produced.",
+    )
+    node = TaskGraphNodeMetadata(
+        task_id="task-1",
+        description="Repair planner",
+        task_kind="repair",
+        difficulty="simple",
+        read_files=["planner.py"],
+        write_files=["planner.py"],
+        expected_outputs=["planner retries empty plan"],
+    )
+    edge = TaskGraphEdgeMetadata(from_task="task-1", to_task="task-2", edge_type="validates")
+    state = ExecutionStateMetadata(
+        completed_tasks=["task-1"],
+        failed_tasks=[],
+        blocked_tasks=[],
+        changed_files=["planner.py"],
+        validation_result={"all_completed": True},
+        execution_batches=[["task-1"], ["task-2"]],
+    )
+
+    payload = {
+        "signal": signal.to_json_dict(),
+        "judgment": judgment.to_json_dict(),
+        "difficulty": difficulty.to_json_dict(),
+        "resolution": resolution.to_json_dict(),
+        "node": node.to_json_dict(),
+        "edge": edge.to_json_dict(),
+        "state": state.to_json_dict(),
+    }
+
+    json.dumps(payload)
+    assert payload["signal"]["kind"] == MetadataKind.PROBLEM_SIGNAL
+    assert payload["judgment"]["kind"] == MetadataKind.PROBLEM_JUDGMENT
+    assert payload["difficulty"]["kind"] == MetadataKind.DIFFICULTY_ASSESSMENT
+    assert payload["resolution"]["kind"] == MetadataKind.RESOLUTION_PLAN
+    assert payload["node"]["kind"] == MetadataKind.TASK_GRAPH_NODE
+    assert payload["edge"]["edge_type"] == "validates"
+    assert payload["state"]["execution_batches"] == [["task-1"], ["task-2"]]
+
+
+def test_json_safe_summarizes_callables_and_drops_internal_handles() -> None:
+    class CallbackOwner:
+        def approve(self) -> bool:
+            return True
+
+    owner = CallbackOwner()
+
+    payload = json_safe(
+        {
+            "callback": owner.approve,
+            "_internal_callback": owner.approve,
+            "nested": [owner.approve],
+        }
+    )
+
+    assert payload == {
+        "callback": "<callable:approve>",
+        "nested": ["<callable:approve>"],
+    }
+
+
+def test_metadata_summary_summarizes_callables() -> None:
+    class CallbackOwner:
+        def approve(self) -> bool:
+            return True
+
+    owner = CallbackOwner()
+
+    assert metadata_summary({"callback": owner.approve}) == {"callback": "<callable:approve>"}
+
+
+def test_runtime_state_json_export_handles_method_values() -> None:
+    class CallbackOwner:
+        def approve(self) -> bool:
+            return True
+
+    owner = CallbackOwner()
+    input_metadata = ToolInputMetadata.from_mapping(
+        "command_executor",
+        {
+            "command": "pytest",
+            "_command_approval_callback": owner.approve,
+        },
+    )
+    state = RuntimeStateMetadata(goal="Serialize runtime callbacks")
+    state.annotations["callback"] = owner.approve
+    state.record_tool_event(
+        {
+            "event_type": "tool_run",
+            "input": input_metadata.to_params(),
+            "callback": owner.approve,
+        }
+    )
+
+    payload = state.to_json_dict()
+
+    json.dumps(payload)
+    assert payload["annotations"]["callback"] == "<callable:approve>"
+    assert payload["tool_history"][0]["callback"] == "<callable:approve>"
+    assert "_command_approval_callback" not in payload["tool_history"][0]["input"]
+    assert "runtime_handles" not in input_metadata.to_json_dict()
+    assert callable(input_metadata.runtime_handles["_command_approval_callback"])
+
+
+def test_tool_input_from_mapping_normalizes_llm_aliases_and_preserves_extras() -> None:
+    metadata = ToolInputMetadata.from_mapping(
+        "file_writer",
+        {
+            "file_path": "assistant.py",
+            "content": "print('ok')",
+            "create_intermediate": True,
+            "unexpected_planner_hint": "keep as context",
+        },
+    )
+
+    assert metadata.create_dirs is True
+    assert "create_intermediate" not in metadata.attributes
+    assert metadata.attributes["unexpected_planner_hint"] == "keep as context"
+    assert metadata.to_params()["create_dirs"] is True
 
 
 def test_task_route_metadata_serializes_typed_route_fields() -> None:
@@ -93,6 +290,96 @@ def test_task_result_and_tool_chain_routing_use_metadata_types() -> None:
     assert writer_input.code is None
     assert executor_input.code == "print('ok')"
     assert executor_input.language == "python"
+
+
+def test_tool_event_loop_metadata_serializes() -> None:
+    input_metadata = ToolInputMetadata(tool_name="code_generator", task_description="make app", language="python")
+    tool_context = ToolContextMetadata(
+        session_id="session",
+        task_id="task",
+        step_id="step_1",
+        call_id="call_1",
+        project_path="/tmp/project",
+        cwd="/tmp/project",
+        env={"VIRTUAL_ENV": "/tmp/project/.venv"},
+        python_command="/tmp/project/.venv/bin/python",
+        git_snapshot={"commit_hash": "abc1234", "created": True},
+        safety_notes=["git snapshot available: abc1234"],
+    )
+    tool_call = ToolCallMetadata(
+        session_id="session",
+        task_id="task",
+        step_id="step_1",
+        call_id="call_1",
+        tool_name="code_generator",
+        input_metadata=input_metadata,
+        tool_context=tool_context,
+    )
+    failure = FailureMetadata(error_type="UnsupportedLanguage", error_message="language=text", recoverable=True)
+    tool_error = ToolErrorMetadata(
+        session_id="session",
+        task_id="task",
+        step_id="step_1",
+        call_id="call_1",
+        tool_name="code_generator",
+        error_type=failure.error_type,
+        error_message=failure.error_message,
+        failure=failure,
+        input_metadata=input_metadata,
+        tool_context=tool_context,
+    )
+    event = ToolEventMetadata(
+        session_id="session",
+        task_id="task",
+        step_id="step_1",
+        call_id="call_1",
+        tool_name="code_generator",
+        event_type="error",
+        status="error",
+        tool_call=tool_call,
+        tool_error=tool_error,
+        tool_context=tool_context,
+        failure=failure,
+    )
+    loop = ToolLoopMetadata(
+        session_id="session",
+        task_id="task",
+        status="failed",
+        success=False,
+        events=[event],
+        tool_invocations=[tool_call],
+        recoverable_errors=[tool_error],
+        tool_contexts=[tool_context],
+        final_error=failure,
+    )
+
+    payload = loop.to_json_dict()
+
+    assert payload["kind"] == MetadataKind.TOOL_LOOP
+    assert payload["events"][0]["kind"] == MetadataKind.TOOL_EVENT
+    assert payload["tool_contexts"][0]["kind"] == MetadataKind.TOOL_CONTEXT
+    assert payload["tool_invocations"][0]["kind"] == MetadataKind.TOOL_CALL
+    assert payload["tool_invocations"][0]["tool_context"]["python_command"].endswith("/python")
+    assert payload["recoverable_errors"][0]["kind"] == MetadataKind.TOOL_ERROR
+    assert payload["events"][0]["call_id"] == "call_1"
+
+
+def test_tool_loop_metadata_accepts_runtime_invocation_trace_without_context() -> None:
+    payload = {
+        "kind": MetadataKind.TOOL_LOOP,
+        "session_id": "session",
+        "task_id": "task",
+        "status": "completed",
+        "success": True,
+        "events": [],
+        "tool_invocations": [],
+        "recoverable_errors": [],
+    }
+
+    loop = ToolLoopMetadata.model_validate(payload)
+
+    assert loop.success is True
+    assert loop.tool_contexts == []
 
 
 def test_bug_fix_metadata_serializes_attempts_and_failure_result() -> None:
@@ -160,6 +447,36 @@ def test_warning_check_metadata_serializes_items() -> None:
     assert payload["kind"] == MetadataKind.WARNING_CHECK_RESULT
     assert payload["warnings"][0]["kind"] == MetadataKind.WARNING_ITEM
     assert payload["requires_fix"] is True
+
+
+def test_git_metadata_serializes_repository_snapshot_and_diff() -> None:
+    repository = GitRepositoryMetadata(
+        project_path="/tmp/project",
+        initialized=True,
+        branch="main",
+        head="abc123",
+        dirty=False,
+        ignored_paths=[".venv/"],
+    )
+    snapshot = GitSnapshotMetadata(
+        project_path="/tmp/project",
+        reason="before_write",
+        message="openpilot: safety snapshot before write",
+        commit_hash="abc123",
+        created=True,
+        changed_files=["app.py"],
+    )
+    diff = GitDiffContextMetadata(
+        project_path="/tmp/project",
+        base_ref="abc123",
+        head_ref="def456",
+        changed_files=["app.py"],
+        diff_stat="app.py | 2 +-",
+    )
+
+    assert repository.to_json_dict()["kind"] == MetadataKind.GIT_REPOSITORY
+    assert snapshot.to_json_dict()["kind"] == MetadataKind.GIT_SNAPSHOT
+    assert diff.to_json_dict()["kind"] == MetadataKind.GIT_DIFF_CONTEXT
 
 
 def test_product_intent_and_validation_issue_metadata_serialize() -> None:
@@ -233,3 +550,64 @@ def test_project_diagnosis_metadata_serializes_ranked_candidates() -> None:
     assert payload["success_metrics"][0]["kind"] == MetadataKind.SUCCESS_METRIC
     assert payload["selected_candidate"]["candidate_id"] == "gap_cli_help"
     assert payload["reference_insights"][0]["kind"] == MetadataKind.REFERENCE_INSIGHT
+
+
+def test_dependency_metadata_serializes_with_diagnosis() -> None:
+    dependency = ProjectDependencyMetadata(
+        package_name="pygame",
+        version="2.6.1",
+        import_names=["pygame"],
+        dependency_sources=["installed", "import_scan"],
+        import_usage=["import pygame"],
+        role="interactive_window_rendering_input_game_loop",
+        confidence=0.91,
+    )
+    strategy = DependencyStrategyMetadata(
+        preserve_packages=["pygame"],
+        rationale=["Preserve pygame as existing rendering/input capability."],
+        confidence=0.85,
+    )
+    objective = ProjectObjectiveMetadata(goal="Build a game", project_type="interactive_app")
+    diagnosis = ProjectDiagnosisMetadata(
+        project_path="/tmp/game",
+        objective=objective,
+        dependencies=[dependency],
+        dependency_strategy=strategy,
+    )
+
+    payload = diagnosis.to_json_dict()
+
+    assert payload["dependencies"][0]["kind"] == MetadataKind.PROJECT_DEPENDENCY
+    assert payload["dependency_strategy"]["kind"] == MetadataKind.DEPENDENCY_STRATEGY
+    assert payload["dependency_strategy"]["preserve_packages"] == ["pygame"]
+
+
+def test_task_file_resolution_metadata_serializes() -> None:
+    request = TaskFileResolutionRequestMetadata(
+        project_path="/tmp/project",
+        task_description="Update README controls",
+        acceptance_criteria=["README documents controls."],
+        target_file_hints=["README.md"],
+    )
+    file = RelatedProjectFileMetadata(
+        file_path="/tmp/project/README.md",
+        name="README.md",
+        suffix=".md",
+        role="documentation",
+        relevance_score=1.0,
+        relation_source="target_hint",
+    )
+    resolution = TaskFileResolutionMetadata(
+        task_description=request.task_description,
+        project_path=request.project_path,
+        related_files=[file],
+        primary_file=file,
+        recommended_edit_kind="documentation",
+    )
+
+    payload = resolution.to_json_dict()
+
+    assert request.to_json_dict()["kind"] == MetadataKind.TASK_FILE_RESOLUTION_REQUEST
+    assert payload["kind"] == MetadataKind.TASK_FILE_RESOLUTION
+    assert payload["primary_file"]["kind"] == MetadataKind.RELATED_PROJECT_FILE
+    assert payload["recommended_edit_kind"] == "documentation"

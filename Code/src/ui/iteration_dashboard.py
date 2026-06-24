@@ -361,16 +361,28 @@ class IterationDashboardAdapter:
             status = "completed" if validation_passed and (completed_successfully or repair_completed) else "failed"
             self.set_dashboard_task_status(self.dashboard_stage_id("evaluation"), status)
             summary = getattr(evaluation, "summary", "") or ("Validation passed" if validation_passed else "Validation did not pass")
+            issue_summary = payload.get("validation_issue_summary") or self.evaluation_issue_summary(evaluation)
+            description = summary
+            if status == "failed" and issue_summary:
+                description = f"{summary}: {issue_summary}" if issue_summary not in summary else issue_summary
             self.append_dashboard_stage_child(
                 "evaluation",
                 child_id=f"validation_{payload.get('iteration', 0)}",
-                description=summary,
+                description=self.short_dashboard_text(description, 500),
                 kind="result",
                 status=status,
             )
+            details = description
+            if status == "failed":
+                target_files = payload.get("target_files") or self.evaluation_target_files(evaluation)
+                recommended_actions = payload.get("recommended_actions") or self.evaluation_recommended_actions(evaluation)
+                if target_files:
+                    details += "\nTarget files: " + ", ".join(str(path) for path in target_files[:3])
+                if recommended_actions:
+                    details += "\nRecommended action: " + str(recommended_actions[0])
             self.enhanced_ui.set_current_task_state(
                 title="Modification Evaluator",
-                details=self.short_dashboard_text(summary, 500),
+                details=self.short_dashboard_text(details, 800),
                 status=status,
             )
             return
@@ -444,13 +456,55 @@ class IterationDashboardAdapter:
                     if repair_completed
                     else "Iteration completed successfully"
                     if status == "completed"
-                    else "Iteration finished without satisfying the required improvement"
+                    else getattr(result, "failure_reason", None)
+                    or self.evaluation_issue_summary(payload.get("evaluation"))
+                    or "Iteration finished without satisfying the required improvement"
                 ),
                 status=status,
             )
             return
 
         self._handle_generic_event(event, payload)
+
+    def evaluation_issue_summary(self, evaluation: Any) -> str:
+        if evaluation is None:
+            return ""
+        issues = getattr(evaluation, "validation_issues", []) or []
+        if issues:
+            issue = issues[0]
+            message = getattr(issue, "message", "")
+            target_files = getattr(issue, "target_files", []) or []
+            action = getattr(issue, "recommended_action", "")
+            parts = [message]
+            if target_files:
+                parts.append("target=" + ", ".join(str(path).split("/")[-1] for path in target_files[:3]))
+            if action:
+                parts.append("action=" + str(action))
+            return " | ".join(part for part in parts if part)
+        errors = getattr(evaluation, "validation_errors", []) or []
+        if errors:
+            return str(errors[0])
+        return ""
+
+    def evaluation_target_files(self, evaluation: Any) -> list[str]:
+        if evaluation is None:
+            return []
+        targets: list[str] = []
+        for issue in getattr(evaluation, "validation_issues", []) or []:
+            targets.extend(str(path) for path in (getattr(issue, "target_files", []) or []) if str(path))
+        return list(dict.fromkeys(targets))
+
+    def evaluation_recommended_actions(self, evaluation: Any) -> list[str]:
+        if evaluation is None:
+            return []
+        actions = [str(action) for action in (getattr(evaluation, "recommended_actions", []) or []) if str(action)]
+        if actions:
+            return actions
+        for issue in getattr(evaluation, "validation_issues", []) or []:
+            action = getattr(issue, "recommended_action", "")
+            if action:
+                return [str(action)]
+        return []
 
     def append_dashboard_tasks(self, new_tasks: list[dict[str, Any]], current_task_id: str | None = None) -> None:
         if not self.enhanced_ui:

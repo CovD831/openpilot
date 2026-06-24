@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from types import SimpleNamespace
 
 from memory.agents.virtual_environment_manager import (
@@ -7,7 +8,11 @@ from memory.agents.virtual_environment_manager import (
     EnvironmentManager as MemoryEnvironmentManager,
     VirtualEnvironmentManager,
 )
-from memory.agents.project_environment_tool import EnvironmentManager, project_environment_tool_executor
+from memory.agents.project_environment_tool import (
+    EnvironmentManager,
+    infer_project_dependencies,
+    project_environment_tool_executor,
+)
 from metadata import ToolInputMetadata
 
 
@@ -77,3 +82,65 @@ def test_project_environment_tool_uses_injected_manager_without_real_venv(tmp_pa
     assert result.result.pip_command.endswith(".venv/bin/pip")
     assert result.result.command_env["VIRTUAL_ENV"].endswith(".venv")
     assert str(project / ".venv" / "bin") in result.result.command_env["PATH"]
+    assert result.result.dependencies[0].package_name == "pygame"
+    assert result.result.dependencies[0].import_names == ["pygame"]
+    assert "pygame" in result.result.dependency_strategy.preserve_packages
+    if shutil.which("git"):
+        assert result.result.git_repository is not None
+        assert result.result.git_repository.initialized is True
+        assert result.result.git_snapshot is not None
+        assert ".venv/" in (project / ".gitignore").read_text(encoding="utf-8")
+    else:
+        assert any("Git safety unavailable" in warning for warning in result.result.warnings)
+
+
+def test_project_environment_tool_maps_import_name_to_published_distribution(tmp_path) -> None:
+    app = tmp_path / "assistant.py"
+    app.write_text("import speech_recognition\nimport pyttsx3\n", encoding="utf-8")
+
+    detected = infer_project_dependencies(tmp_path, ["assistant.py"])
+
+    assert detected == ["pyttsx3", "SpeechRecognition"]
+
+
+def test_project_environment_tool_persists_and_updates_stack_preset(tmp_path) -> None:
+    project = tmp_path / "assistant"
+    project.mkdir()
+    (project / "assistant.py").write_text("print('assistant')\n", encoding="utf-8")
+    fake_manager = FakeEnvironmentManager()
+
+    initial = project_environment_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "project_environment_tool",
+            {
+                "project_path": str(project),
+                "goal": "帮我做一个个人数字助手",
+                "written_files": ["assistant.py"],
+                "install": False,
+                "_environment_manager": fake_manager,
+            },
+        )
+    )
+    updated = project_environment_tool_executor(
+        ToolInputMetadata.from_mapping(
+            "project_environment_tool",
+            {
+                "project_path": str(project),
+                "written_files": ["assistant.py"],
+                "install": False,
+                "stack_preset_update": {
+                    "delivery_surface": "terminal",
+                    "architecture": "terminal_application",
+                    "frontend_language": "terminal_text",
+                    "ui_strategy": "terminal_ui",
+                },
+                "_environment_manager": fake_manager,
+            },
+        )
+    )
+
+    assert initial.result.stack_preset.delivery_surface == "browser"
+    assert initial.result.stack_preset.revision == 1
+    assert updated.result.stack_preset.delivery_surface == "terminal"
+    assert updated.result.stack_preset.revision == 2
+    assert (project / ".openpilot" / "project_stack.json").exists()

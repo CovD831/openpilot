@@ -5,7 +5,9 @@ from pathlib import Path
 from autonomous_iteration.models import EvaluationResult, ProjectStateSnapshot
 from autonomous_iteration.project_diagnosis import ProjectDiagnoser
 from metadata import (
+    ProjectDependencyMetadata,
     ProjectObjectiveMetadata,
+    ProjectStackPresetMetadata,
     ReferenceInsightMetadata,
     SuccessMetricMetadata,
     ValidationIssueMetadata,
@@ -161,3 +163,89 @@ def test_project_diagnoser_uses_reference_provider_only_for_low_evidence(tmp_pat
     assert len(calls) == 1
     assert confident.reference_insights == []
 
+
+def test_project_diagnoser_preserves_existing_third_party_capability(tmp_path) -> None:
+    state = _state(
+        tmp_path,
+        "继续迭代这个交互式游戏",
+        readme="Run the pygame game.",
+    )
+    state.dependencies = [
+        ProjectDependencyMetadata(
+            package_name="pygame",
+            version="2.6.1",
+            import_names=["pygame"],
+            dependency_sources=["installed", "import_scan"],
+            role="interactive_window_rendering_input_game_loop",
+            confidence=0.92,
+        )
+    ]
+
+    diagnosis = ProjectDiagnoser(allow_reference_search=False).diagnose(
+        project_state=state,
+        evaluation=_passing_evaluation(),
+        iteration=2,
+    )
+
+    assert diagnosis.dependency_strategy is not None
+    assert "pygame" in diagnosis.dependency_strategy.preserve_packages
+    assert any("pygame" in candidate.title.lower() or "pygame" in " ".join(candidate.evidence).lower() for candidate in diagnosis.improvement_candidates)
+
+
+def test_project_diagnoser_reference_query_includes_dependency_context(tmp_path) -> None:
+    calls: list[str] = []
+
+    def provider(query, state, objective):
+        calls.append(query)
+        return [ReferenceInsightMetadata(query=query, summary="Use the existing game library.", best_practices=["Keep rendering/input in pygame."], confidence=0.6)]
+
+    state = _state(tmp_path, "Improve the interactive game", readme="A pygame game.")
+    state.dependencies = [
+        ProjectDependencyMetadata(
+            package_name="pygame",
+            import_names=["pygame"],
+            dependency_sources=["installed", "import_scan"],
+            role="interactive_window_rendering_input_game_loop",
+        )
+    ]
+
+    diagnosis = ProjectDiagnoser(reference_provider=provider).diagnose(
+        project_state=state,
+        evaluation=EvaluationResult(
+            validation_passed=True,
+            runnable=True,
+            has_blocking_bugs=False,
+            summary="Project validation passed.",
+        ),
+        iteration=1,
+    )
+
+    assert calls
+    assert "pygame" in calls[0]
+    assert diagnosis.dependency_strategy is not None
+    assert calls[0] in diagnosis.dependency_strategy.reference_queries
+
+
+def test_project_diagnoser_prioritizes_missing_planned_browser_ui(tmp_path) -> None:
+    state = _state(tmp_path, "帮我做一个个人数字助手")
+    state.stack_preset = ProjectStackPresetMetadata(
+        project_path=str(tmp_path),
+        delivery_surface="browser",
+        architecture="frontend_backend_split",
+        frontend_language="html_css_javascript",
+        backend_language="python",
+        ui_strategy="browser_application",
+        ui_review_required=True,
+    )
+
+    diagnosis = ProjectDiagnoser(allow_reference_search=False).diagnose(
+        project_state=state,
+        evaluation=_passing_evaluation(),
+        iteration=1,
+    )
+
+    assert diagnosis.stack_preset is not None
+    assert diagnosis.objective.delivery_surface == "browser"
+    assert diagnosis.selected_candidate is not None
+    assert diagnosis.selected_candidate.candidate_id == "ui_surface_completion"
+    assert "frontend file evidence" in diagnosis.selected_candidate.rationale

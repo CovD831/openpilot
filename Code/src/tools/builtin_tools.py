@@ -5,8 +5,12 @@ from __future__ import annotations
 from tools.file_reader import FILE_READER_DEFINITION, file_reader_executor
 from tools.multi_file_reader import MULTI_FILE_READER_DEFINITION, multi_file_reader_executor
 from tools.file_writer import FILE_WRITER_DEFINITION, file_writer_executor
+from tools.file_patch_writer import FILE_PATCH_WRITER_DEFINITION, file_patch_writer_executor
+from tools.file_delete_tool import FILE_DELETE_TOOL_DEFINITION, file_delete_tool_executor
 from tools.llm_summarizer import LLM_SUMMARIZER_DEFINITION, llm_summarizer_executor
 from tools.code_generator import CODE_GENERATOR_DEFINITION, code_generator_executor
+from tools.code_unit_generator import CODE_UNIT_GENERATOR_DEFINITION, code_unit_generator_executor
+from tools.code_editor import CODE_EDITOR_DEFINITION, code_editor_executor
 from tools.code_reviewer import CODE_REVIEWER_DEFINITION, code_reviewer_executor
 from tools.code_executor import CODE_EXECUTOR_DEFINITION, code_executor_executor
 from tools.readme_tool import README_TOOL_DEFINITION, readme_tool_executor
@@ -15,7 +19,9 @@ from tools.embedder import EMBEDDER_DEFINITION, embedder_executor
 from tools.web_searcher import WEB_SEARCHER_DEFINITION, web_searcher_executor
 from tools.task_classifier import TASK_CLASSIFIER_DEFINITION, task_classifier_executor
 from tools.bug_fix_tool import BUG_FIX_TOOL_DEFINITION, bug_fix_tool_executor
+from tools.environment_fix_tool import ENVIRONMENT_FIX_TOOL_DEFINITION, environment_fix_tool_executor
 from tools.warning_check_tool import WARNING_CHECK_TOOL_DEFINITION, warning_check_tool_executor
+from autonomous_iteration.tool.task_file_resolver import TASK_FILE_RESOLVER_DEFINITION, task_file_resolver_executor
 
 
 __all__ = [
@@ -28,12 +34,20 @@ __all__ = [
     # File Writer
     "FILE_WRITER_DEFINITION",
     "file_writer_executor",
+    "FILE_PATCH_WRITER_DEFINITION",
+    "file_patch_writer_executor",
+    "FILE_DELETE_TOOL_DEFINITION",
+    "file_delete_tool_executor",
     # LLM Summarizer
     "LLM_SUMMARIZER_DEFINITION",
     "llm_summarizer_executor",
     # Code Generator
     "CODE_GENERATOR_DEFINITION",
     "code_generator_executor",
+    "CODE_UNIT_GENERATOR_DEFINITION",
+    "code_unit_generator_executor",
+    "CODE_EDITOR_DEFINITION",
+    "code_editor_executor",
     # Code Reviewer
     "CODE_REVIEWER_DEFINITION",
     "code_reviewer_executor",
@@ -53,8 +67,12 @@ __all__ = [
     "task_classifier_executor",
     "BUG_FIX_TOOL_DEFINITION",
     "bug_fix_tool_executor",
+    "ENVIRONMENT_FIX_TOOL_DEFINITION",
+    "environment_fix_tool_executor",
     "WARNING_CHECK_TOOL_DEFINITION",
     "warning_check_tool_executor",
+    "TASK_FILE_RESOLVER_DEFINITION",
+    "task_file_resolver_executor",
     # Registration
     "register_builtin_tools",
 ]
@@ -70,8 +88,12 @@ def register_builtin_tools(registry) -> None:
     registry.register(FILE_READER_DEFINITION, file_reader_executor)
     registry.register(MULTI_FILE_READER_DEFINITION, multi_file_reader_executor)
     registry.register(FILE_WRITER_DEFINITION, file_writer_executor)
+    registry.register(FILE_PATCH_WRITER_DEFINITION, file_patch_writer_executor)
+    registry.register(FILE_DELETE_TOOL_DEFINITION, file_delete_tool_executor)
     registry.register(LLM_SUMMARIZER_DEFINITION, llm_summarizer_executor)
     registry.register(CODE_GENERATOR_DEFINITION, code_generator_executor)
+    registry.register(CODE_UNIT_GENERATOR_DEFINITION, code_unit_generator_executor)
+    registry.register(CODE_EDITOR_DEFINITION, code_editor_executor)
     registry.register(CODE_REVIEWER_DEFINITION, code_reviewer_executor)
     registry.register(CODE_EXECUTOR_DEFINITION, code_executor_executor)
     registry.register(README_TOOL_DEFINITION, readme_tool_executor)
@@ -80,4 +102,6 @@ def register_builtin_tools(registry) -> None:
     registry.register(WEB_SEARCHER_DEFINITION, web_searcher_executor)
     registry.register(TASK_CLASSIFIER_DEFINITION, task_classifier_executor)
     registry.register(BUG_FIX_TOOL_DEFINITION, bug_fix_tool_executor)
+    registry.register(ENVIRONMENT_FIX_TOOL_DEFINITION, environment_fix_tool_executor)
     registry.register(WARNING_CHECK_TOOL_DEFINITION, warning_check_tool_executor)
+    registry.register(TASK_FILE_RESOLVER_DEFINITION, task_file_resolver_executor)

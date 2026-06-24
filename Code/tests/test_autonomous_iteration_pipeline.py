@@ -65,6 +65,26 @@ class SequenceEvaluator:
         )
 
 
+class RecordingEvaluator:
+    llm_client = None
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def evaluate_project(self, **kwargs) -> EvaluationResult:
+        self.calls.append(kwargs)
+        return EvaluationResult(
+            validation_passed=True,
+            runnable=True,
+            has_blocking_bugs=False,
+            summary="Project validation passed.",
+            improvement_opportunities=["Improve the project."],
+            recommended_actions=["Improve the project."],
+            next_iteration_goal="Improve the project.",
+            run_command=kwargs.get("run_command", ""),
+        )
+
+
 class FakeMemoryContextBuilder:
     def build(
         self,
@@ -155,6 +175,50 @@ def test_autonomous_iteration_events_and_memory_context(tmp_path) -> None:
     assert events.index("decomposition_started") < events.index("decomposition")
     assert events.index("task_designer") < events.index("decomposition")
     assert events.index("decomposition") < events.index("iteration_started")
+
+
+def test_autonomous_iteration_validation_tracks_changed_files_after_iteration(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    app = project / "app.py"
+    server = project / "server.py"
+    app.write_text("print('hello')\n", encoding="utf-8")
+    server.write_text("print('server')\n", encoding="utf-8")
+    evaluator = RecordingEvaluator()
+    agent = AutonomousIterationAgent(
+        evaluator,
+        required_successful_improvements=1,
+        max_iteration_attempts=2,
+        memory_context_builder=FakeMemoryContextBuilder(),
+    )
+
+    def apply_improvement(iteration, evaluation, actions, improvement_report, is_repair):
+        return IterationResult(
+            iteration=iteration,
+            validation_passed=False,
+            completed_successful_iteration=False,
+            applied_actions=actions,
+            changed_files=[str(server)],
+            success=True,
+        )
+
+    result = agent.run_project_pipeline(
+        goal="Improve project",
+        project_path=project,
+        written_files=[str(app)],
+        run_command="python server.py",
+        apply_improvement=apply_improvement,
+        analyze_improvements=lambda completed, evaluation: {
+            "summary": "Need server.",
+            "next_iteration_goal": "Add server.",
+            "recommended_actions": ["Add server."],
+        },
+        read_project_state=lambda evaluation, iteration: _project_state(project),
+    )
+
+    assert result["success"] is True
+    assert evaluator.calls[0]["written_files"] == [str(app)]
+    assert evaluator.calls[1]["written_files"] == [str(app), str(server)]
 
 
 def test_autonomous_iteration_repair_path_reports_full_stage_chain(tmp_path) -> None:

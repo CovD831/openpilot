@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
+import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal, TypeAlias
@@ -25,11 +28,18 @@ class MetadataKind(str, Enum):
     WARNING_CHECK_RESULT = "warning_check_result"
     BUG_FIX_ATTEMPT = "bug_fix_attempt"
     BUG_FIX_RESULT = "bug_fix_result"
+    ENVIRONMENT_FAILURE = "environment_failure"
+    ENVIRONMENT_FIX_RESULT = "environment_fix_result"
     TASK_ROUTE = "task_route"
     TOOL_INPUT = "tool_input"
     TOOL_SELECTION = "tool_selection"
     TOOL_CONTRACT = "tool_contract"
     TOOL_CHAIN = "tool_chain"
+    TOOL_CONTEXT = "tool_context"
+    TOOL_CALL = "tool_call"
+    TOOL_ERROR = "tool_error"
+    TOOL_EVENT = "tool_event"
+    TOOL_LOOP = "tool_loop"
     TOOL_RESULT = "tool_result"
     TOOL_EXECUTION_ENVELOPE = "tool_execution_envelope"
     TASK_RESULT = "task_result"
@@ -44,6 +54,18 @@ class MetadataKind(str, Enum):
     PROJECT_OBJECTIVE = "project_objective"
     SUCCESS_METRIC = "success_metric"
     PROJECT_DIMENSION_ASSESSMENT = "project_dimension_assessment"
+    PROJECT_DEPENDENCY = "project_dependency"
+    DEPENDENCY_STRATEGY = "dependency_strategy"
+    PROJECT_STACK_PRESET = "project_stack_preset"
+    FILE_CONTENT_SECTION = "file_content_section"
+    FILE_CONTENT_INDEX = "file_content_index"
+    DIRECTORY_SKETCH = "directory_sketch"
+    TASK_FILE_RESOLUTION_REQUEST = "task_file_resolution_request"
+    RELATED_PROJECT_FILE = "related_project_file"
+    TASK_FILE_RESOLUTION = "task_file_resolution"
+    GIT_REPOSITORY = "git_repository"
+    GIT_SNAPSHOT = "git_snapshot"
+    GIT_DIFF_CONTEXT = "git_diff_context"
     IMPROVEMENT_CANDIDATE = "improvement_candidate"
     PROJECT_DIAGNOSIS = "project_diagnosis"
     REFERENCE_INSIGHT = "reference_insight"
@@ -51,6 +73,21 @@ class MetadataKind(str, Enum):
     IMPROVEMENT_ANALYSIS = "improvement_analysis"
     ENVIRONMENT_SYNC = "environment_sync"
     AUTONOMY_DECISION = "autonomy_decision"
+    PROBLEM_SIGNAL = "problem_signal"
+    PROBLEM_JUDGMENT = "problem_judgment"
+    DIFFICULTY_ASSESSMENT = "difficulty_assessment"
+    RESOLUTION_PLAN = "resolution_plan"
+    TASK_GRAPH_NODE = "task_graph_node"
+    TASK_GRAPH_EDGE = "task_graph_edge"
+    EXECUTION_STATE = "execution_state"
+    RUNTIME_BUDGET = "runtime_budget"
+    RUNTIME_STATE = "runtime_state"
+    DECISION_NEED = "decision_need"
+    EDIT_PLAN = "edit_plan"
+    VERIFICATION_PLAN = "verification_plan"
+    GUARD_DECISION = "guard_decision"
+    TOOL_DECISION = "tool_decision"
+    RUNTIME_REPORT = "runtime_report"
     LLM_REQUEST = "llm_request"
     LLM_RESPONSE = "llm_response"
     EXECUTION_CONTEXT = "execution_context"
@@ -92,7 +129,9 @@ class MetadataBase(BaseModel):
 
     def to_json_dict(self) -> dict[str, Any]:
         """Return a JSON-safe dict suitable for logs and model harnesses."""
-        return self.model_dump(mode="json")
+        payload = self.model_dump(mode="python")
+        safe_payload = json_safe(payload)
+        return safe_payload if isinstance(safe_payload, dict) else {"value": safe_payload}
 
     def get(self, key: str, default: Any = None) -> Any:
         if hasattr(self, key):
@@ -128,18 +167,87 @@ def ensure_metadata(value: Any, metadata_type: type[MetadataBase]) -> MetadataBa
     raise TypeError(f"Expected {metadata_type.__name__}, got {type(value).__name__}")
 
 
+def json_safe(value: Any) -> Any:
+    """Return a recursive JSON-safe representation of arbitrary metadata values."""
+    return _json_safe(value, set())
+
+
+def _callable_summary(value: Any) -> str:
+    name = getattr(value, "__name__", type(value).__name__)
+    return f"<callable:{name}>"
+
+
+def _json_safe(value: Any, seen: set[int]) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if inspect.ismethod(value) or inspect.isfunction(value) or callable(value):
+        return _callable_summary(value)
+    if isinstance(value, Enum):
+        return _json_safe(value.value, seen)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, os.PathLike):
+        return os.fspath(value)
+    if isinstance(value, MetadataBase):
+        object_id = id(value)
+        if object_id in seen:
+            return f"<recursive:{type(value).__name__}>"
+        seen.add(object_id)
+        try:
+            return _json_safe(value.model_dump(mode="python"), seen)
+        finally:
+            seen.discard(object_id)
+    if isinstance(value, BaseModel):
+        object_id = id(value)
+        if object_id in seen:
+            return f"<recursive:{type(value).__name__}>"
+        seen.add(object_id)
+        try:
+            return _json_safe(value.model_dump(mode="python", exclude={"runtime_handles"}), seen)
+        finally:
+            seen.discard(object_id)
+    if isinstance(value, Mapping):
+        object_id = id(value)
+        if object_id in seen:
+            return "<recursive:dict>"
+        seen.add(object_id)
+        try:
+            return {
+                str(key): _json_safe(item, seen)
+                for key, item in value.items()
+                if not str(key).startswith("_")
+            }
+        finally:
+            seen.discard(object_id)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        object_id = id(value)
+        if object_id in seen:
+            return f"<recursive:{type(value).__name__}>"
+        seen.add(object_id)
+        try:
+            return [_json_safe(item, seen) for item in value]
+        finally:
+            seen.discard(object_id)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return repr(value)
+    return str(value)
+
+
 def metadata_summary(value: Any) -> Any:
     """Return a compact JSON-safe representation for logging."""
     if isinstance(value, MetadataBase):
         return value.to_json_dict()
     if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json")
-    if isinstance(value, dict):
+        return json_safe(value)
+    if isinstance(value, Mapping):
         return {str(key): metadata_summary(item) for key, item in value.items() if not str(key).startswith("_")}
-    if isinstance(value, list):
-        return [metadata_summary(item) for item in value[:20]]
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [metadata_summary(item) for item in list(value)[:20]]
     if isinstance(value, str) and len(value) > 1000:
         return value[:1000] + "...[truncated]"
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
-    return str(value)
+    return json_safe(value)

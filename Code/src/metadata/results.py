@@ -17,12 +17,22 @@ from metadata.artifacts import (
     TextArtifactMetadata,
 )
 from metadata.base import JsonValue, MetadataBase, MetadataKind
-from metadata.bugfix import BugFixAttemptMetadata, BugFixResultMetadata
+from metadata.bugfix import (
+    BugFixAttemptMetadata,
+    BugFixResultMetadata,
+    EnvironmentFailureMetadata,
+    EnvironmentFixResultMetadata,
+)
 from metadata.project import (
+    DependencyStrategyMetadata,
     EnvironmentSyncMetadata,
+    GitRepositoryMetadata,
+    GitSnapshotMetadata,
     ImprovementAnalysisMetadata,
     ImprovementCandidateMetadata,
     ProjectDiagnosisMetadata,
+    ProjectDependencyMetadata,
+    ProjectStackPresetMetadata,
     ProjectStateMetadata,
 )
 from metadata.warnings import WarningCheckResultMetadata, WarningItemMetadata
@@ -133,20 +143,20 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             truncated=bool(payload.get("truncated", False)),
             attributes=attr_without("content", "encoding", "files", "truncated"),
         )
-    if tool_name in {"file_writer", "readme_tool"}:
+    if tool_name in {"file_writer", "readme_tool", "file_patch_writer", "file_delete_tool"}:
         return FileArtifactMetadata(
             file_path=str(payload.get("file_path") or input_file_path),
             bytes_written=payload.get("bytes_written"),
             created=payload.get("created"),
             attributes=attr_without("file_path", "bytes_written", "created"),
         )
-    if tool_name == "code_generator":
+    if tool_name in {"code_generator", "code_unit_generator", "code_editor"}:
         return CodeArtifactMetadata(
-            code=str(payload.get("code") or ""),
+            code=str(payload.get("code") or payload.get("generated_unit") or payload.get("replacement_text") or ""),
             language=str(payload.get("language") or "python"),
             imports=list(payload.get("imports") or []),
             functions=list(payload.get("functions") or []),
-            attributes=attr_without("code", "language", "imports", "functions"),
+            attributes=attr_without("code", "generated_unit", "replacement_text", "language", "imports", "functions"),
         )
     if tool_name in {"command_executor", "code_executor"}:
         return CommandArtifactMetadata(
@@ -257,7 +267,59 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             recommended_fix=str(payload.get("recommended_fix") or ""),
             annotations=attr_without("command", "cwd", "warnings", "ignored_warnings", "requires_fix", "reason", "recommended_fix"),
         )
+    if tool_name == "environment_fix_tool":
+        failure = payload.get("environment_failure") or {}
+        if isinstance(failure, EnvironmentFailureMetadata):
+            environment_failure = failure
+        else:
+            environment_failure = EnvironmentFailureMetadata.model_validate(failure)
+        return EnvironmentFixResultMetadata(
+            project_path=str(payload.get("project_path") or getattr(input_metadata, "project_path", "") or ""),
+            environment_failure=environment_failure,
+            applied=bool(payload.get("applied", False)),
+            changed_files=[str(item) for item in payload.get("changed_files") or []],
+            repair_actions=[str(item) for item in payload.get("repair_actions") or []],
+            replacement_requirement=str(payload.get("replacement_requirement") or ""),
+            research_queries=[str(item) for item in payload.get("research_queries") or []],
+            research_results=list(payload.get("research_results") or []),
+            memory_record_ids=[str(item) for item in payload.get("memory_record_ids") or []],
+            suggested_command=str(payload.get("suggested_command") or ""),
+            command_executed=bool(payload.get("command_executed", False)),
+            requires_confirmation=bool(payload.get("requires_confirmation", False)),
+            user_declined=bool(payload.get("user_declined", False)),
+            annotations=attr_without(
+                "project_path",
+                "environment_failure",
+                "applied",
+                "changed_files",
+                "repair_actions",
+                "replacement_requirement",
+                "research_queries",
+                "research_results",
+                "memory_record_ids",
+                "suggested_command",
+                "command_executed",
+                "requires_confirmation",
+                "user_declined",
+            ),
+        )
     if tool_name == "project_environment_tool":
+        dependencies = [
+            item if isinstance(item, ProjectDependencyMetadata) else ProjectDependencyMetadata.model_validate(item)
+            for item in payload.get("dependencies") or []
+        ]
+        dependency_strategy = payload.get("dependency_strategy")
+        if isinstance(dependency_strategy, dict):
+            dependency_strategy = DependencyStrategyMetadata.model_validate(dependency_strategy)
+        stack_preset = payload.get("stack_preset")
+        if isinstance(stack_preset, dict):
+            stack_preset = ProjectStackPresetMetadata.model_validate(stack_preset)
+        git_repository = payload.get("git_repository")
+        if isinstance(git_repository, dict):
+            git_repository = GitRepositoryMetadata.model_validate(git_repository)
+        git_snapshot = payload.get("git_snapshot")
+        if isinstance(git_snapshot, dict):
+            git_snapshot = GitSnapshotMetadata.model_validate(git_snapshot)
         return EnvironmentSyncMetadata(
             project_path=str(payload.get("project_path") or ""),
             env_name=str(payload.get("env_name") or ".venv"),
@@ -277,6 +339,11 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             detected_packages=list(payload.get("detected_packages") or []),
             installed_packages=list(payload.get("installed_packages") or []),
             missing_packages=list(payload.get("missing_packages") or []),
+            dependencies=dependencies,
+            dependency_strategy=dependency_strategy if isinstance(dependency_strategy, DependencyStrategyMetadata) else None,
+            stack_preset=stack_preset if isinstance(stack_preset, ProjectStackPresetMetadata) else None,
+            git_repository=git_repository if isinstance(git_repository, GitRepositoryMetadata) else None,
+            git_snapshot=git_snapshot if isinstance(git_snapshot, GitSnapshotMetadata) else None,
             operations=list(payload.get("operations") or []),
             warnings=list(payload.get("warnings") or []),
             annotations=attr_without(
@@ -293,10 +360,25 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
                 "detected_packages",
                 "installed_packages",
                 "missing_packages",
+                "dependencies",
+                "dependency_strategy",
+                "stack_preset",
+                "git_repository",
+                "git_snapshot",
                 "warnings",
             ),
         )
     if tool_name == "project_state_reader":
+        dependencies = [
+            item if isinstance(item, ProjectDependencyMetadata) else ProjectDependencyMetadata.model_validate(item)
+            for item in payload.get("dependencies") or []
+        ]
+        dependency_strategy = payload.get("dependency_strategy")
+        if isinstance(dependency_strategy, dict):
+            dependency_strategy = DependencyStrategyMetadata.model_validate(dependency_strategy)
+        stack_preset = payload.get("stack_preset")
+        if isinstance(stack_preset, dict):
+            stack_preset = ProjectStackPresetMetadata.model_validate(stack_preset)
         return ProjectStateMetadata(
             project_path=str(payload.get("project_path") or ""),
             goal=str(payload.get("goal") or ""),
@@ -314,6 +396,9 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             runtime_evidence=[str(item) for item in payload.get("runtime_evidence") or []],
             test_evidence=[str(item) for item in payload.get("test_evidence") or []],
             module_summaries=[str(item) for item in payload.get("module_summaries") or []],
+            dependencies=dependencies,
+            dependency_strategy=dependency_strategy if isinstance(dependency_strategy, DependencyStrategyMetadata) else None,
+            stack_preset=stack_preset if isinstance(stack_preset, ProjectStackPresetMetadata) else None,
             annotations=attr_without(
                 "project_path",
                 "goal",
@@ -328,6 +413,9 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
                 "runtime_evidence",
                 "test_evidence",
                 "module_summaries",
+                "dependencies",
+                "dependency_strategy",
+                "stack_preset",
             ),
         )
     if tool_name == "project_improvement_tool":
@@ -353,6 +441,13 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
             blocking_risks=[str(item) for item in payload.get("blocking_risks") or []],
             designed_tasks=list(payload.get("designed_tasks") or []),
             product_judgment=payload.get("product_judgment") if isinstance(payload.get("product_judgment"), dict) else {},
+            stack_preset=payload.get("stack_preset") if isinstance(payload.get("stack_preset"), dict) else {},
+            stack_preset_update=payload.get("stack_preset_update")
+            if isinstance(payload.get("stack_preset_update"), dict)
+            else {},
+            ui_iteration_contract=payload.get("ui_iteration_contract")
+            if isinstance(payload.get("ui_iteration_contract"), dict)
+            else {},
             diagnosis=diagnosis if isinstance(diagnosis, ProjectDiagnosisMetadata) else None,
             improvement_candidates=candidates,
             selected_candidate=selected_candidate if isinstance(selected_candidate, ImprovementCandidateMetadata) else None,
@@ -368,6 +463,9 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
                 "blocking_risks",
                 "designed_tasks",
                 "product_judgment",
+                "stack_preset",
+                "stack_preset_update",
+                "ui_iteration_contract",
                 "diagnosis",
                 "improvement_candidates",
                 "selected_candidate",

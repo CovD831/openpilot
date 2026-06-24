@@ -73,7 +73,8 @@ def test_project_manager_agent_sketch_shape(tmp_path) -> None:
     assert result["file_count"] == 1
     assert "main.py" in sketch["files"]
     assert sketch["files"]["main.py"]["function_description"]
-    assert sketch["files"]["main.py"]["semantic_info"]["kind"] == "keyword_fallback"
+    assert sketch["files"]["main.py"]["semantic_info"]["kind"] == "content_index"
+    assert sketch["files"]["main.py"]["content_index"]["sections"][0]["title"] == "function main"
     assert agent.search("instruction aligned")[0]["name"] == "main.py"
 
 
@@ -234,6 +235,113 @@ def test_command_registry_hides_removed_agent_and_autopilot_commands() -> None:
     assert "/agent" not in help_text
     assert "/autopilot" not in help_text
     assert "task classifier" in help_text.lower()
+
+
+def test_enhanced_cli_failure_details_prefer_specific_failure_context() -> None:
+    from ui import enhanced_cli
+
+    details = enhanced_cli._format_failure_details(
+        {
+            "error": "Autopilot reported failure",
+            "failure_reason": "Tool file_reader failed: Not a file: /tmp/project",
+            "failure_stage": "Task Executor",
+            "failed_tool": "file_reader",
+            "failed_call_id": "task:r1:c2",
+        }
+    )
+
+    assert details.startswith("Tool file_reader failed")
+    assert "Stage: Task Executor" in details
+    assert "Tool: file_reader" in details
+    assert "Call: task:r1:c2" in details
+
+
+def test_enhanced_cli_failure_details_extract_from_task_result_metadata() -> None:
+    from types import SimpleNamespace
+
+    from ui import enhanced_cli
+
+    failure = SimpleNamespace(
+        error_message="Decision need schema validation failed: candidate_paths must be a list",
+        details={
+            "failure_stage": "Tool Planning",
+            "failed_tool": "tool_planning_executor",
+        },
+    )
+    task_metadata = SimpleNamespace(failure=failure)
+    task_result = SimpleNamespace(error="Autopilot reported failure", result_metadata=task_metadata)
+
+    details = enhanced_cli._format_failure_details(
+        {
+            "error": "Autopilot reported failure",
+            "results": [task_result],
+        }
+    )
+
+    assert details.startswith("Decision need schema validation failed")
+    assert "Stage: Tool Planning" in details
+    assert "Tool: tool_planning_executor" in details
+
+
+def test_enhanced_cli_failure_details_extract_from_runtime_session_result() -> None:
+    from ui import enhanced_cli
+
+    details = enhanced_cli._format_failure_details(
+        {
+            "success": False,
+            "session_result": {
+                "success": False,
+                "failure_reason": "Request timed out while generating code",
+                "failure_stage": "Task Executor",
+                "failed_tool": "code_generator",
+                "failed_call_id": "task:r1:c1",
+                "error_type": "LLMTimeoutError",
+                "suggested_recovery": "Retry code generation with a bounded request.",
+            },
+        }
+    )
+
+    assert details.startswith("Request timed out while generating code")
+    assert "Stage: Task Executor" in details
+    assert "Tool: code_generator" in details
+    assert "Call: task:r1:c1" in details
+    assert "Error Type: LLMTimeoutError" in details
+    assert "Recovery: Retry code generation with a bounded request." in details
+
+
+def test_enhanced_cli_failure_details_show_diagnostics_for_tool_and_llm_errors() -> None:
+    from types import SimpleNamespace
+
+    from ui import enhanced_cli
+
+    failure = SimpleNamespace(
+        error_message="LLM returned invalid JSON (attempt 3/3)",
+        details={
+            "task_id": "task-1",
+            "task_description": "Clarify requirements",
+            "failure_stage": "Tool Planning",
+            "failed_tool": "tool_planning_executor",
+            "error_type": "InvalidLLMResponseError",
+            "response_preview_start": '{"decision_needs": [{"need_type": "project_structure"',
+            "suggested_recovery": "Return valid JSON only.",
+        },
+    )
+    task_metadata = SimpleNamespace(failure=failure)
+    task_result = SimpleNamespace(task_id="task-1", error="Autopilot reported failure", result_metadata=task_metadata)
+
+    details = enhanced_cli._format_failure_details(
+        {
+            "error": "Autopilot reported failure",
+            "results": [task_result],
+        }
+    )
+
+    assert details.startswith("LLM returned invalid JSON")
+    assert "Task: Clarify requirements" in details
+    assert "Task ID: task-1" in details
+    assert "Error Type: InvalidLLMResponseError" in details
+    assert "Recovery: Return valid JSON only." in details
+    assert "Response Preview:" in details
 
 
 def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> None:

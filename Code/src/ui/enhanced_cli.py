@@ -10,6 +10,7 @@ from rich.console import Console
 
 from core.config import EmbeddingSettings, LLMSettings
 from core.instrumented_llm import InstrumentedLLMClient
+from core.model_health import run_startup_model_health_check
 from core.openpilot_log import OpenPilotLogger
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker
@@ -33,6 +34,182 @@ class OpenPilotRuntimeOptions:
         return self.improvement_iterations > 0
 
 
+def _format_failure_details(result: dict) -> str:
+    context = _extract_failure_context(result)
+    details = (
+        context.get("failure_reason")
+        or _result_value(result, "failure_reason")
+        or _result_value(result, "error")
+        or _result_value(result, "iteration_error")
+        or "Autopilot reported failure"
+    )
+    failure_stage = context.get("failure_stage") or _result_value(result, "failure_stage")
+    failed_tool = context.get("failed_tool") or _result_value(result, "failed_tool")
+    failed_call_id = context.get("failed_call_id") or _result_value(result, "failed_call_id")
+    failed_step_id = context.get("failed_step_id") or _result_value(result, "failed_step_id")
+    failed_iteration = _result_value(result, "failed_iteration")
+    context_lines = []
+    if context.get("task_description"):
+        context_lines.append(f"Task: {context['task_description']}")
+    if context.get("task_id"):
+        context_lines.append(f"Task ID: {context['task_id']}")
+    if failure_stage or failed_tool:
+        context_lines.extend(
+            [
+                f"Stage: {failure_stage or 'unknown'}",
+                f"Tool: {failed_tool or 'unknown'}",
+            ]
+        )
+        if failed_call_id:
+            context_lines.append(f"Call: {failed_call_id}")
+        if failed_step_id:
+            context_lines.append(f"Step: {failed_step_id}")
+        if failed_iteration:
+            context_lines.append(f"Iteration: {failed_iteration}")
+    if context.get("file_path"):
+        context_lines.append(f"File: {context['file_path']}")
+    if context.get("error_type"):
+        context_lines.append(f"Error Type: {context['error_type']}")
+    if context.get("suggested_recovery"):
+        context_lines.append(f"Recovery: {context['suggested_recovery']}")
+    response_preview = context.get("response_preview") or context.get("response_text")
+    if response_preview:
+        context_lines.append(f"Response Preview: {str(response_preview)[:1000]}")
+    if context_lines:
+        details = f"{details}\n" + "\n".join(context_lines)
+    return str(details)
+
+
+def _result_value(value, key: str):
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
+
+
+def _extract_failure_context(result) -> dict:
+    if not isinstance(result, dict):
+        return {}
+    for nested_key in ("session_result", "result"):
+        nested_result = result.get(nested_key)
+        if isinstance(nested_result, dict):
+            nested_context = _extract_failure_context(nested_result)
+            if nested_context:
+                return nested_context
+    direct_reason = result.get("failure_reason")
+    if direct_reason and direct_reason != "Autopilot reported failure":
+        direct_context = {
+            "failure_reason": direct_reason,
+            "failure_stage": result.get("failure_stage"),
+            "failed_tool": result.get("failed_tool"),
+            "failed_call_id": result.get("failed_call_id"),
+            "failed_step_id": result.get("failed_step_id"),
+            "task_id": result.get("task_id"),
+            "task_description": result.get("task_description"),
+            "file_path": result.get("file_path"),
+            "error_type": result.get("error_type"),
+            "suggested_recovery": result.get("suggested_recovery"),
+            "response_preview": result.get("response_preview") or result.get("response_text"),
+        }
+        if any(value for key, value in direct_context.items() if key != "failure_reason"):
+            return direct_context
+    for task_result in result.get("results") or []:
+        context = _failure_context_from_task_result(task_result)
+        if context:
+            return context
+    if direct_reason:
+        return {
+            "failure_reason": direct_reason,
+            "failure_stage": result.get("failure_stage"),
+            "failed_tool": result.get("failed_tool"),
+            "failed_call_id": result.get("failed_call_id"),
+            "failed_step_id": result.get("failed_step_id"),
+        }
+    decomposition = result.get("decomposition")
+    for task in _result_value(decomposition, "subtasks") or []:
+        context = _failure_context_from_task(task)
+        if context:
+            return context
+    return {}
+
+
+def _failure_context_from_task_result(task_result) -> dict:
+    metadata = _result_value(task_result, "result_metadata")
+    failure = _result_value(metadata, "failure")
+    reason = _result_value(failure, "error_message") or _result_value(task_result, "error")
+    if not reason:
+        return {}
+    details = _result_value(failure, "details") or {}
+    context = _failure_context_from_details(details, reason)
+    context.setdefault("task_id", _result_value(task_result, "task_id"))
+    context.setdefault("task_description", details.get("task_description") if isinstance(details, dict) else None)
+    return context
+
+
+def _failure_context_from_task(task) -> dict:
+    status = str(_result_value(task, "status") or "").lower()
+    if "failed" not in status and "blocked" not in status:
+        return {}
+    metadata = _result_value(task, "result") or _result_value(task, "result_metadata")
+    failure = _result_value(metadata, "failure")
+    reason = _result_value(failure, "error_message") or _result_value(task, "error")
+    if not reason:
+        return {}
+    details = _result_value(failure, "details") or {}
+    context = _failure_context_from_details(details, reason)
+    context.setdefault("task_id", _result_value(task, "id"))
+    context.setdefault("task_description", _result_value(task, "description"))
+    return context
+
+
+def _failure_context_from_details(details, reason: str) -> dict:
+    if not isinstance(details, dict):
+        details = {}
+    tool_loop = details.get("tool_loop") if isinstance(details.get("tool_loop"), dict) else {}
+    final_error = tool_loop.get("final_error") if isinstance(tool_loop, dict) else {}
+    final_details = final_error.get("details") if isinstance(final_error, dict) and isinstance(final_error.get("details"), dict) else {}
+    input_summary = details.get("input_summary") if isinstance(details.get("input_summary"), dict) else {}
+    final_input = final_details.get("input_summary") if isinstance(final_details.get("input_summary"), dict) else {}
+    error_type = (
+        details.get("error_type")
+        or details.get("failure_error_type")
+        or final_details.get("error_type")
+        or (final_error.get("error_type") if isinstance(final_error, dict) else None)
+    )
+    response_preview = (
+        details.get("response_preview")
+        or details.get("response_preview_start")
+        or final_details.get("response_preview")
+        or final_details.get("response_preview_start")
+        or details.get("response_text")
+        or final_details.get("response_text")
+    )
+    return {
+        "failure_reason": reason,
+        "failure_stage": details.get("failure_stage") or "Task Executor",
+        "failed_tool": details.get("tool_name") or details.get("failed_tool") or final_details.get("tool_name"),
+        "failed_call_id": details.get("call_id") or final_details.get("call_id"),
+        "failed_step_id": details.get("step_id") or final_details.get("step_id"),
+        "task_id": details.get("task_id") or final_details.get("task_id"),
+        "task_description": details.get("task_description") or final_details.get("task_description"),
+        "file_path": (
+            details.get("file_path")
+            or final_details.get("file_path")
+            or input_summary.get("file_path")
+            or final_input.get("file_path")
+            or final_details.get("received_path")
+        ),
+        "error_type": error_type,
+        "suggested_recovery": (
+            details.get("suggested_recovery")
+            or final_details.get("suggested_recovery")
+            or details.get("recovery_strategy")
+            or final_details.get("recovery_strategy")
+        ),
+        "response_preview": response_preview,
+        "response_text": details.get("response_text") or final_details.get("response_text"),
+    }
+
+
 def run_enhanced_cli(
     args,
     console: Console | None = None,
@@ -47,15 +224,21 @@ def run_enhanced_cli(
     if block_missing_socksio(console):
         return 2
 
+    # Probe configured providers before the runtime starts doing real work.
+    settings = LLMSettings()
+    if llm_client is None:
+        run_startup_model_health_check(
+            console,
+            llm_settings=settings,
+            embedding_settings=EmbeddingSettings(),
+        )
+
     # Initialize enhanced UI
     enhanced_ui = EnhancedUI(console)
     enhanced_ui.show_banner()
 
     # Initialize progress tracker
     tracker = ProgressTracker(enhanced_ui)
-
-    # Initialize settings
-    settings = LLMSettings()
 
     # Create instrumented LLM client
     if llm_client is None:
@@ -178,7 +361,7 @@ def _run_once_mode(
             ui.show_success("Goal completed successfully!")
             return 0
 
-        ui.show_error("Execution failed", result.get("error") or "Autopilot reported failure")
+        ui.show_error("Execution failed", _format_failure_details(result))
         return 2
 
     except Exception as e:
@@ -449,21 +632,7 @@ def _execute_autopilot(
             else:
                 ui.show_success("Goal completed!")
         else:
-            details = (
-                result.get("error")
-                or result.get("iteration_error")
-                or result.get("failure_reason")
-                or "Autopilot reported failure"
-            )
-            if result.get("failure_stage") or result.get("failed_tool"):
-                context_lines = [
-                    f"Stage: {result.get('failure_stage') or 'unknown'}",
-                    f"Tool: {result.get('failed_tool') or 'unknown'}",
-                ]
-                if result.get("failed_iteration"):
-                    context_lines.append(f"Iteration: {result.get('failed_iteration')}")
-                details = f"{details}\n" + "\n".join(context_lines)
-            ui.show_error("Autopilot execution failed", details)
+            ui.show_error("Autopilot execution failed", _format_failure_details(result))
 
     except Exception as e:
         ui.console.print()

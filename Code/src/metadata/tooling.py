@@ -15,7 +15,7 @@ from metadata.artifacts import (
     TextArtifactMetadata,
 )
 from metadata.base import JsonValue, MetadataBase, MetadataKind
-from metadata.results import ToolResultMetadata
+from metadata.results import FailureMetadata, ToolResultMetadata
 
 
 class ToolInputMetadata(MetadataBase):
@@ -44,6 +44,17 @@ class ToolInputMetadata(MetadataBase):
     max_files: int | None = None
     create_dirs: bool | None = None
     overwrite: bool | None = None
+    operation_kind: str | None = None
+    target_scope: str | None = None
+    symbol_name: str | None = None
+    symbol_type: str | None = None
+    insertion_hint: str | None = None
+    patch_mode: str | None = None
+    generated_unit: str | None = None
+    replacement_text: str | None = None
+    patch: dict[str, JsonValue] | None = None
+    line_start: int | None = None
+    line_end: int | None = None
 
     # LLM/code/search/command fields
     task_description: str | None = None
@@ -98,6 +109,7 @@ class ToolInputMetadata(MetadataBase):
     memory_query: str | None = None
     validation_context: dict[str, JsonValue] = Field(default_factory=dict)
     validation_result: dict[str, JsonValue] = Field(default_factory=dict)
+    stack_preset_update: dict[str, JsonValue] = Field(default_factory=dict)
     memory_context: dict[str, JsonValue] = Field(default_factory=dict)
     iteration: int | None = None
     include_environment: bool | None = None
@@ -120,14 +132,41 @@ class ToolInputMetadata(MetadataBase):
     def from_mapping(cls, tool_name: str, values: dict[str, Any]) -> "ToolInputMetadata":
         runtime_handles = {key: value for key, value in values.items() if str(key).startswith("_")}
         public_values = {key: value for key, value in values.items() if not str(key).startswith("_")}
-        return cls(tool_name=tool_name, runtime_handles=runtime_handles, **public_values)
+        public_values = cls._normalize_input_aliases(public_values)
+        public_values.pop("tool_name", None)
+
+        known_fields = set(cls.model_fields)
+        known_values = {key: value for key, value in public_values.items() if key in known_fields}
+        extra_values = {str(key): value for key, value in public_values.items() if key not in known_fields}
+
+        if extra_values:
+            attributes = known_values.get("attributes") if isinstance(known_values.get("attributes"), dict) else {}
+            known_values["attributes"] = {**attributes, **extra_values}
+        return cls(tool_name=tool_name, runtime_handles=runtime_handles, **known_values)
+
+    @staticmethod
+    def _normalize_input_aliases(values: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(values)
+        aliases = {
+            "create_intermediate": "create_dirs",
+            "create_intermediates": "create_dirs",
+            "parents": "create_dirs",
+        }
+        for source, target in aliases.items():
+            if source in normalized:
+                normalized.setdefault(target, normalized[source])
+                normalized.pop(source, None)
+        return normalized
 
     def to_params(self) -> dict[str, Any]:
         """Return public tool fields plus runtime handles for implementation internals."""
         data = self.model_dump(exclude_none=True, exclude={"kind", "schema_version", "source", "correlation", "created_at", "annotations", "runtime_handles"})
         data.pop("tool_name", None)
-        data.pop("attributes", None)
+        attributes = data.pop("attributes", None)
         data = {key: value for key, value in data.items() if value not in ({}, [])}
+        if isinstance(attributes, dict):
+            for key, value in attributes.items():
+                data.setdefault(str(key), value)
         data.update(self.runtime_handles)
         return data
 
@@ -151,6 +190,8 @@ class ToolContractMetadata(MetadataBase):
     input_metadata_type: str
     output_metadata_type: str
     required_input_fields: list[str] = Field(default_factory=list)
+    required_any_of: list[list[str]] = Field(default_factory=list)
+    conditional_requirements: list[dict[str, JsonValue]] = Field(default_factory=list)
     input_defaults: dict[str, JsonValue] = Field(default_factory=dict)
     capabilities: list[str] = Field(default_factory=list)
     permission_level: str = "medium"
@@ -162,12 +203,134 @@ class ToolChainMetadata(MetadataBase):
     final_result: ToolResultMetadata | None = None
 
 
+class ToolContextMetadata(MetadataBase):
+    """Runtime context attached to a tool event without changing tool inputs."""
+
+    kind: MetadataKind = MetadataKind.TOOL_CONTEXT
+    session_id: str = ""
+    task_id: str = ""
+    step_id: str = ""
+    call_id: str = ""
+    project_path: str = ""
+    cwd: str = ""
+    env: dict[str, str] = Field(default_factory=dict)
+    python_command: str = ""
+    pip_command: str = ""
+    git_snapshot: dict[str, JsonValue] | None = None
+    permission_required: bool = False
+    safety_notes: list[str] = Field(default_factory=list)
+    attributes: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class ToolCallMetadata(MetadataBase):
+    """One requested tool call inside a typed tool event loop."""
+
+    kind: MetadataKind = MetadataKind.TOOL_CALL
+    session_id: str
+    task_id: str
+    step_id: str
+    call_id: str
+    tool_name: str
+    input_metadata: ToolInputMetadata
+    tool_context: ToolContextMetadata | None = None
+    status: str = "pending"
+    reason: str = ""
+    provider_executed: bool = False
+    recoverable: bool = True
+    round_index: int = 1
+    event_index: int = 0
+
+
+class ToolErrorMetadata(MetadataBase):
+    """Recoverable or terminal tool protocol/execution error."""
+
+    kind: MetadataKind = MetadataKind.TOOL_ERROR
+    session_id: str
+    task_id: str
+    step_id: str
+    call_id: str
+    tool_name: str
+    error_type: str
+    error_message: str
+    recoverable: bool = True
+    suggested_recovery: str = ""
+    failure: FailureMetadata | None = None
+    input_metadata: ToolInputMetadata | None = None
+    tool_context: ToolContextMetadata | None = None
+    provider_executed: bool = False
+    round_index: int = 1
+    event_index: int = 0
+
+
+class ToolEventMetadata(MetadataBase):
+    """Lifecycle event for a tool call in the event loop."""
+
+    kind: MetadataKind = MetadataKind.TOOL_EVENT
+    session_id: str
+    task_id: str
+    step_id: str
+    call_id: str
+    tool_name: str
+    event_type: str
+    status: str
+    input_metadata: ToolInputMetadata | None = None
+    output_metadata: ToolResultMetadata | None = None
+    tool_context: ToolContextMetadata | None = None
+    tool_call: ToolCallMetadata | None = None
+    tool_error: ToolErrorMetadata | None = None
+    failure: FailureMetadata | None = None
+    recoverable: bool = True
+    provider_executed: bool = False
+    round_index: int = 1
+    event_index: int = 0
+
+
+class ToolLoopMetadata(MetadataBase):
+    """Complete typed event-loop trace for one task."""
+
+    kind: MetadataKind = MetadataKind.TOOL_LOOP
+    session_id: str
+    task_id: str
+    status: str
+    success: bool
+    rounds_used: int = 0
+    max_rounds: int = 5
+    events: list[ToolEventMetadata] = Field(default_factory=list)
+    tool_invocations: list[ToolCallMetadata] = Field(default_factory=list)
+    recoverable_errors: list[ToolErrorMetadata] = Field(default_factory=list)
+    tool_contexts: list[ToolContextMetadata] = Field(default_factory=list)
+    final_output: ToolResultMetadata | None = None
+    final_error: FailureMetadata | None = None
+    provider_executed: bool = False
+
+
 def artifact_to_tool_input(tool_name: str, artifact: Any) -> ToolInputMetadata:
     """Route a previous artifact into the next tool's input by metadata kind."""
     if isinstance(artifact, ToolResultMetadata):
         artifact = artifact.result
     if isinstance(artifact, CodeArtifactMetadata):
         code = artifact.code or artifact.content
+        attrs = artifact.attributes if isinstance(artifact.attributes, dict) else {}
+        if tool_name == "file_patch_writer":
+            if attrs.get("patch") or attrs.get("replacement_text"):
+                return ToolInputMetadata(
+                    tool_name=tool_name,
+                    patch=attrs.get("patch") if isinstance(attrs.get("patch"), dict) else None,
+                    replacement_text=str(attrs.get("replacement_text") or code),
+                    operation_kind=str(attrs.get("operation_kind") or "modify_symbol"),
+                    symbol_name=str(attrs.get("symbol_name") or "") or None,
+                    symbol_type=str(attrs.get("symbol_type") or "") or None,
+                    line_start=attrs.get("line_start") if isinstance(attrs.get("line_start"), int) else None,
+                    line_end=attrs.get("line_end") if isinstance(attrs.get("line_end"), int) else None,
+                )
+            return ToolInputMetadata(
+                tool_name=tool_name,
+                generated_unit=code,
+                operation_kind=str(attrs.get("operation_kind") or "add_symbol"),
+                symbol_name=str(attrs.get("symbol_name") or "") or None,
+                symbol_type=str(attrs.get("symbol_type") or "") or None,
+                insertion_hint=str(attrs.get("insertion_hint") or "") or None,
+            )
         if tool_name in {"code_executor", "code_reviewer"}:
             return ToolInputMetadata(tool_name=tool_name, code=code, language=artifact.language)
         return ToolInputMetadata(tool_name=tool_name, content=code)

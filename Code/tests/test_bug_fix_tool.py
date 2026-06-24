@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from metadata import BugFixResultMetadata, ResultStatus, ToolInputMetadata
 from tools import bug_fix_tool as bug_fix_tool_module
 from tools.bug_fix_tool import bug_fix_tool_executor
@@ -330,6 +332,37 @@ def test_bug_fix_tool_continues_after_user_approval(tmp_path) -> None:
     assert approvals == [1]
 
 
+def test_bug_fix_tool_emits_each_internal_iteration_for_observability(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    app.write_text("print('broken'\n", encoding="utf-8")
+    progress_events = []
+    llm = FakeBugFixLLM(
+        [
+            {"rationale": "Still broken 1.", "files": [{"file_path": "app.py", "content": "print('broken'\n"}]},
+            {"rationale": "Still broken 2.", "files": [{"file_path": "app.py", "content": "print('broken'\n"}]},
+            {"rationale": "Fixed.", "files": [{"file_path": "app.py", "content": "print('fixed')\n"}]},
+        ]
+    )
+
+    result = bug_fix_tool_executor(
+        _input(
+            _python_file_command(app),
+            tmp_path,
+            ["app.py"],
+            max_iterations=3,
+            _llm_client=llm,
+            _bug_fix_progress_callback=progress_events.append,
+        )
+    )
+
+    assert result.status == ResultStatus.SUCCESS
+    assert result.result.iterations_used == 3
+    assert [event["iteration"] for event in progress_events if event["event"] == "iteration_started"] == [1, 2, 3]
+    completed = [event for event in progress_events if event["event"] == "iteration_completed"]
+    assert [event["iteration"] for event in completed] == [1, 2, 3]
+    assert completed[-1]["success"] is True
+
+
 def test_bug_fix_tool_stops_when_user_declines_more_iterations(tmp_path) -> None:
     app = tmp_path / "app.py"
     app.write_text("print('broken'\n", encoding="utf-8")
@@ -352,6 +385,25 @@ def test_bug_fix_tool_stops_when_user_declines_more_iterations(tmp_path) -> None
     assert result.failure.error_type == "BugFixTerminatedByUser"
     assert result.result.user_terminated is True
     assert result.result.requires_user_decision is False
+
+
+def test_bug_fix_tool_uses_command_approval_gate_for_initial_command(tmp_path) -> None:
+    app = tmp_path / "app.py"
+    app.write_text("print('ok')\n", encoding="utf-8")
+    approvals = []
+
+    with pytest.raises(PermissionError):
+        bug_fix_tool_executor(
+            _input(
+                "sudo --version",
+                tmp_path,
+                ["app.py"],
+                _llm_client=FakeBugFixLLM([]),
+                _command_approval_callback=lambda decision: approvals.append(decision.command) or False,
+            )
+        )
+
+    assert approvals == ["sudo --version"]
 
 
 def test_bug_fix_tool_is_registered_and_requires_command_and_files() -> None:
