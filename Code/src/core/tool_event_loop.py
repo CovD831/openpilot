@@ -15,10 +15,12 @@ from metadata import (
     AgentPhase,
     EditPlanMetadata,
     FailureMetadata,
+    ResultStatus,
     ToolCallMetadata,
     ToolContextMetadata,
     ToolErrorMetadata,
     ToolEventMetadata,
+    ToolExecutionEnvelopeMetadata,
     ToolInputMetadata,
     ToolLoopMetadata,
     ToolResultMetadata,
@@ -218,6 +220,11 @@ class ToolEventLoopRunner:
                     return self._finish(task_id, session_id, False, rounds_used, last_output, final_error, guard_error.error_message)
 
                 self.owner._log_tool_start(task, tool_name, input_payload)
+                diagnostics = getattr(self.runtime, "runtime_diagnostics_hooks", None)
+                if diagnostics:
+                    diagnostics.on_tool_started(
+                        tool_call=tool_call_metadata,
+                    )
                 exec_result = self.runtime.tool_executor.execute_single(selection, context=None)
                 self._update_runtime_state(selection, exec_result)
                 self.owner._show_tool_result(tool_name, exec_result)
@@ -240,6 +247,25 @@ class ToolEventLoopRunner:
                         round_index=round_index,
                     )
                     self._append_tool_result(tool_call_metadata, input_metadata, True, None, output_metadata)
+                    if diagnostics:
+                        tool_execution = ToolExecutionEnvelopeMetadata(
+                            tool_name=tool_name,
+                            step_id=tool_call_metadata.step_id,
+                            status=ResultStatus.SUCCESS,
+                            success=True,
+                            input_metadata=input_metadata,
+                            output_metadata=output_metadata,
+                            duration_seconds=0.0,
+                            timeout_override=timeout_override if isinstance(timeout_override, int) else None,
+                            attempts_used=1,
+                            call_id=tool_call_metadata.call_id,
+                            tool_context=tool_context,
+                        )
+                        diagnostics.on_tool_completed(
+                            tool_execution=tool_execution,
+                            task_id=task_id,
+                            session_id=session_id,
+                        )
                     verification_error = self._verify_state_change_if_needed(
                         task=task,
                         task_id=task_id,
@@ -1065,6 +1091,9 @@ class ToolEventLoopRunner:
             recoverable=tool_error.recoverable,
             round_index=round_index,
         )
+        diagnostics = getattr(self.runtime, "runtime_diagnostics_hooks", None)
+        if diagnostics:
+            diagnostics.on_tool_failed(tool_error)
 
     def _append_event(
         self,

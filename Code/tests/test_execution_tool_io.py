@@ -297,6 +297,11 @@ def test_intelligent_autopilot_tool_io_proxy_matches_helper(tmp_path) -> None:
 
     assert autopilot._sanitize_tool_metadata({"content": "abc"}) == helper.sanitize_tool_metadata({"content": "abc"})
     assert autopilot._format_tools_for_llm([tool]) == helper.format_tools_for_llm([tool])
+    assert "Need Catalog" in autopilot._format_planning_surface(
+        [tool],
+        task_description="Inspect the demo file",
+        goal="analyze demo",
+    )
     assert autopilot._map_reason_to_enum("best performance") == "best_performance"
     assert autopilot.memory_context_builder is not None
     assert autopilot.iterative_improvement.memory_context_builder is autopilot.memory_context_builder

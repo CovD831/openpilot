@@ -362,8 +362,8 @@ def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> No
         calls.append(("agent", task))
         return "agent-result"
 
-    def fake_autopilot(goal, ui, tracker, llm_client, logger, runtime_options):
-        calls.append(("autopilot", goal))
+    def fake_autopilot(goal, ui, tracker, llm_client, logger, runtime_options, context=None):
+        calls.append(("autopilot", goal, dict(context or {})))
         return "autopilot-result"
 
     monkeypatch.setattr(enhanced_cli, "_execute_agent_generator", fake_agent)
@@ -393,8 +393,11 @@ def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> No
         )
         == "autopilot-result"
     )
-    assert calls[-1] == ("autopilot", "帮我做一个项目")
-    assert calls == [("agent", "生成一个可复用的研究报告 agent"), ("autopilot", "帮我做一个项目")]
+    assert calls[-1][0:2] == ("autopilot", "帮我做一个项目")
+    assert calls[-1][2]["source"] == "interactive"
+    assert str(calls[-1][2]["task_id"]).startswith("cli_")
+    assert calls[0] == ("agent", "生成一个可复用的研究报告 agent")
+    assert len(calls) == 2
 
 
 def test_execute_goal_interactive_intercepts_shell_activation(monkeypatch) -> None:
@@ -426,3 +429,17 @@ def test_execute_goal_interactive_intercepts_shell_activation(monkeypatch) -> No
     assert result is None
     assert calls == []
     assert any("Shell state command" in message for message in UI.console.messages)
+
+
+def test_runtime_diagnostics_are_enabled_by_default_and_explicitly_disableable(monkeypatch) -> None:
+    from ui import enhanced_cli
+
+    monkeypatch.delenv("OPENPILOT_RUNTIME_DIAGNOSTICS_ENABLED", raising=False)
+    assert enhanced_cli._runtime_diagnostics_enabled() is True
+
+    for value in ("0", "false", "no", "off"):
+        monkeypatch.setenv("OPENPILOT_RUNTIME_DIAGNOSTICS_ENABLED", value)
+        assert enhanced_cli._runtime_diagnostics_enabled() is False
+
+    monkeypatch.setenv("OPENPILOT_RUNTIME_DIAGNOSTICS_ENABLED", "1")
+    assert enhanced_cli._runtime_diagnostics_enabled() is True

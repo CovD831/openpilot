@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
 import shlex
 import sys
@@ -58,11 +59,18 @@ from autonomous_iteration.task_executor import AutonomousTaskExecutor
 from autonomous_iteration.agents.execution_orchestrator import AgentOrchestrator
 from autonomous_iteration.agents.execution_task_decomposer import TaskDecomposer
 from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskExecutor
+from autonomous_iteration.skill_specs import (
+    SkillCapabilityCardProvider,
+    default_skill_search_roots,
+    load_skill_specs,
+)
 from ui.console_presenter import ConsolePresenter
 from ui.iteration_dashboard import IterationDashboardAdapter
 from autonomous_iteration.project_iteration import ProjectIterationHelper
 from autonomous_iteration.tool_io import ExecutionToolIO
 from autonomous_iteration.runtime_controller import AgentRuntimeController
+from runtime_diagnostics.llm_proxy import TrajectoryLLMClientProxy
+from runtime_diagnostics.hooks import RuntimeDiagnosticsHooks, get_default_hooks
 
 
 class IntelligentAutopilot:
@@ -89,6 +97,8 @@ class IntelligentAutopilot:
         disallowed_improvement_directions: list[str] | None = None,
         allow_reference_search: bool = True,
         reference_provider: Callable[..., list[Any]] | None = None,
+        runtime_diagnostics_hooks: RuntimeDiagnosticsHooks | None = None,
+        skill_roots: list[str | Path] | None = None,
     ):
         """Initialize intelligent autopilot.
 
@@ -120,6 +130,17 @@ class IntelligentAutopilot:
         )
         self.prompt_for_project_improvement_iterations = prompt_for_project_improvement_iterations
         self.allow_reference_search = allow_reference_search
+        code_root = Path(__file__).resolve().parents[2]
+        self.skill_specs = load_skill_specs(skill_roots or default_skill_search_roots(code_root))
+        self.planning_surface_providers: list[Any] = []
+        if self.skill_specs:
+            self.planning_surface_providers.append(SkillCapabilityCardProvider(self.skill_specs))
+        if runtime_diagnostics_hooks is not None:
+            self.runtime_diagnostics_hooks = runtime_diagnostics_hooks
+        elif str(os.getenv("OPENPILOT_RUNTIME_DIAGNOSTICS_ENABLED", "")).strip().lower() in {"1", "true", "yes", "on"}:
+            self.runtime_diagnostics_hooks = get_default_hooks()
+        else:
+            self.runtime_diagnostics_hooks = None
         self._project_improvement_iterations_prompted = False
         self._project_environments: dict[str, dict[str, Any]] = {}
 
@@ -144,6 +165,18 @@ class IntelligentAutopilot:
             self.tracker = None
             self._owns_tracker = False
             self.llm_client = llm_client
+
+        self._current_task_id: str = ""
+        self._current_goal: str = ""
+        if self.runtime_diagnostics_hooks and hasattr(self.llm_client, "complete") and not isinstance(self.llm_client, TrajectoryLLMClientProxy):
+            self.llm_client = TrajectoryLLMClientProxy(
+                self.llm_client,
+                hooks=self.runtime_diagnostics_hooks,
+                task_id_getter=lambda: self._current_task_id,
+                session_id_getter=lambda: str(self.session_id or ""),
+                phase_getter=self._diagnostic_phase,
+                goal_getter=lambda: self._current_goal,
+            )
 
         # Initialize logger
         default_log_file = Path(__file__).resolve().parents[2] / "logs" / "autopilot.jsonl"
@@ -355,7 +388,18 @@ class IntelligentAutopilot:
         """
         self.session_id = str(uuid.uuid4())
         self.stats["start_time"] = datetime.now()
-        context = context or {}
+        context = self._normalize_execution_context(context or {})
+        self._current_execution_context = context
+        self._current_goal = goal
+        self._current_task_id = str(context.get("task_id") or self.session_id)
+        if self.runtime_diagnostics_hooks:
+            self.runtime_diagnostics_hooks.on_task_received(
+                task_id=self._current_task_id,
+                source=str(context.get("source") or "interactive"),
+                raw_input=goal,
+                extra={"tags": list(context.get("tags") or [])},
+                session_id=self.session_id,
+            )
 
         mode = "enhanced_ui" if self.use_enhanced_ui and self.enhanced_ui and self.tracker else "standard"
         try:
@@ -372,6 +416,38 @@ class IntelligentAutopilot:
             if classify_error(e) in {ErrorCategory.NETWORK, ErrorCategory.TIMEOUT, ErrorCategory.RETRYABLE}:
                 return self._structured_execution_error(goal, e)
             raise
+
+    def _normalize_execution_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(context or {})
+        if not str(normalized.get("cwd") or "").strip():
+            normalized["cwd"] = str(Path.cwd().expanduser().resolve())
+        return normalized
+
+    def _task_parent_context(self, goal: str) -> dict[str, Any]:
+        parent_context: dict[str, Any] = {"goal": goal, "session_id": self.session_id}
+        current_context = getattr(self, "_current_execution_context", {}) or {}
+        for key in (
+            "cwd",
+            "project_path",
+            "target_dir",
+            "output_dir",
+            "run_command",
+            "test_command",
+            "validation_command",
+            "validation_context",
+        ):
+            value = current_context.get(key)
+            if value is not None and value != "":
+                parent_context[key] = value
+        return parent_context
+
+    def _diagnostic_phase(self) -> str:
+        controller = getattr(self, "runtime_controller", None)
+        state = getattr(controller, "state", None)
+        phase = getattr(state, "phase", "")
+        if hasattr(phase, "value"):
+            return str(phase.value)
+        return str(phase or "")
 
     def _structured_execution_error(self, goal: str, error: Exception) -> dict[str, Any]:
         category = classify_error(error)
@@ -2428,10 +2504,129 @@ class IntelligentAutopilot:
                     "description": task.description if task else None,
                     "status": result.status.value if hasattr(result.status, "value") else str(result.status),
                     "error": result.error,
-                    "result_summary": str(result.result_metadata)[:1000] if result.result_metadata else None,
+                    "result_summary": self._history_result_summary(result),
+                    "observed_paths": self._history_observed_paths(result),
                 }
             )
         return history
+
+    def _history_result_summary(self, result: TaskExecutionResult) -> Any:
+        if result.result_metadata is None:
+            return None
+        summary: dict[str, Any] = {}
+        artifact = result.result_metadata.result
+        if artifact is not None:
+            content = getattr(artifact, "content", None)
+            if content and str(content).strip() and str(content).strip() != "completed":
+                summary["content_preview"] = self._history_value_summary(str(content), max_length=400)
+            attributes = getattr(artifact, "attributes", None)
+            if isinstance(attributes, dict):
+                if "final_output" in attributes:
+                    summary["final_output"] = self._history_value_summary(attributes.get("final_output"))
+                tool_results = attributes.get("tool_results")
+                if isinstance(tool_results, list) and tool_results:
+                    summary["tool_results"] = self._history_value_summary(tool_results[-3:])
+                if "all_tools_succeeded" in attributes:
+                    summary["all_tools_succeeded"] = bool(attributes.get("all_tools_succeeded"))
+        if result.error:
+            summary["error"] = result.error
+        if not summary:
+            summary = self._history_value_summary(result.result_metadata.to_json_dict())
+        return summary
+
+    def _history_observed_paths(self, result: TaskExecutionResult) -> list[str]:
+        if result.result_metadata is None:
+            return []
+        artifact = result.result_metadata.result
+        candidates: list[str] = []
+        if artifact is not None:
+            content = getattr(artifact, "content", None)
+            if isinstance(content, str):
+                candidates.extend(self._extract_history_paths_from_text(content))
+            attributes = getattr(artifact, "attributes", None)
+            if isinstance(attributes, dict):
+                candidates.extend(self._collect_history_paths(attributes))
+        return list(dict.fromkeys(path for path in candidates if path))[:12]
+
+    def _collect_history_paths(self, value: Any) -> list[str]:
+        paths: list[str] = []
+        safe_value = self._json_safe_summary(value)
+        if isinstance(safe_value, dict):
+            for key, nested in safe_value.items():
+                lowered = str(key).lower()
+                if lowered in {"file_path", "directory_path", "project_path", "path"} and nested:
+                    paths.append(str(nested))
+                elif lowered in {"files", "file_paths", "written_files", "sketch_files", "candidate_paths"} and isinstance(nested, list):
+                    paths.extend(str(item) for item in nested if item)
+                elif lowered in {"content", "result_summary", "summary"} and isinstance(nested, str):
+                    paths.extend(self._extract_history_paths_from_text(nested))
+                else:
+                    paths.extend(self._collect_history_paths(nested))
+            return paths
+        if isinstance(safe_value, list):
+            for item in safe_value:
+                paths.extend(self._collect_history_paths(item))
+            return paths
+        if isinstance(safe_value, str):
+            return self._extract_history_paths_from_text(safe_value)
+        return []
+
+    def _extract_history_paths_from_text(self, text: str) -> list[str]:
+        if not text:
+            return []
+        paths: list[str] = []
+        absolute_pattern = re.compile(r"(/[^\s`'\"<>|]+)")
+        relative_pattern = re.compile(r"(?<![\w.-])([A-Za-z0-9_./-]+\.(?:py|md|json|toml|yaml|yml|txt))(?![\w.-])")
+        for match in absolute_pattern.finditer(text):
+            candidate = match.group(1).strip("`'\"()[]{}<>,;:")
+            if candidate:
+                paths.append(candidate)
+        for match in relative_pattern.finditer(text):
+            candidate = match.group(1).strip("`'\"()[]{}<>,;:")
+            if candidate and ".." not in Path(candidate).parts:
+                paths.append(candidate)
+        return paths
+
+    def _history_value_summary(self, value: Any, *, max_length: int = 300, depth: int = 0) -> Any:
+        safe_value = self._json_safe_summary(value)
+        if depth >= 3:
+            return self._trim_history_text(safe_value, max_length=max_length)
+        if isinstance(safe_value, str):
+            return self._trim_history_text(safe_value, max_length=max_length)
+        if isinstance(safe_value, list):
+            return [self._history_value_summary(item, max_length=max_length, depth=depth + 1) for item in safe_value[:5]]
+        if isinstance(safe_value, dict):
+            important_keys = (
+                "tool_name",
+                "status",
+                "success",
+                "question",
+                "reason",
+                "file_path",
+                "directory_path",
+                "project_path",
+                "files",
+                "sketch_files",
+                "content",
+                "result",
+                "output",
+                "output_metadata",
+                "input_metadata",
+                "error",
+                "error_message",
+            )
+            keys = [key for key in important_keys if key in safe_value]
+            keys.extend(key for key in safe_value.keys() if key not in keys)
+            compact: dict[str, Any] = {}
+            for key in keys[:8]:
+                compact[str(key)] = self._history_value_summary(safe_value[key], max_length=max_length, depth=depth + 1)
+            return compact
+        return safe_value
+
+    def _trim_history_text(self, value: Any, *, max_length: int = 300) -> Any:
+        if isinstance(value, str) and len(value) > max_length:
+            return f"{value[:max_length]}..."
+        return value
 
     def _execute_tasks_enhanced_ui(self, tasks: list[Task], execution_order: list[str], goal: str) -> list[TaskExecutionResult]:
         """Execute tasks with enhanced UI updates."""
@@ -2526,7 +2721,7 @@ class IntelligentAutopilot:
 
             task_context = TaskExecutionContext(
                 task=task,
-                parent_context={"goal": goal, "session_id": self.session_id},
+                parent_context=self._task_parent_context(goal),
                 shared_state={"previous_task_results": self._execution_history_payload(tasks, results)},
                 execution_history=self._execution_history_payload(tasks, results),
             )
@@ -2730,7 +2925,7 @@ class IntelligentAutopilot:
 
                 task_context = TaskExecutionContext(
                     task=task,
-                    parent_context={"goal": goal, "session_id": self.session_id},
+                    parent_context=self._task_parent_context(goal),
                     shared_state={"previous_task_results": self._execution_history_payload(tasks, results)},
                     execution_history=self._execution_history_payload(tasks, results),
                 )
@@ -2958,6 +3153,30 @@ class IntelligentAutopilot:
     def _format_tools_for_llm(self, tools: list) -> str:
         """Format available tools for LLM prompt."""
         return self.tool_io.format_tools_for_llm(tools)
+
+    def _format_planning_surface(
+        self,
+        tools: list,
+        *,
+        task_description: str,
+        goal: str = "",
+        history_text: str = "",
+        retry_reason: str = "",
+        signal: Any | None = None,
+        plan_data: dict[str, Any] | None = None,
+        capability_card_providers: list[Any] | None = None,
+    ) -> str:
+        """Format a compact planner-facing capability surface."""
+        return self.tool_io.format_planning_surface(
+            tools,
+            task_description=task_description,
+            goal=goal,
+            history_text=history_text,
+            retry_reason=retry_reason,
+            signal=signal,
+            plan_data=plan_data,
+            capability_card_providers=capability_card_providers,
+        )
 
     def _resolve_selection_metadata(
         self,

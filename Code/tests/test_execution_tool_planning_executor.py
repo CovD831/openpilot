@@ -8,15 +8,34 @@ from core.openpilot_log import OpenPilotLogger
 from core.tool_event_loop import ToolEventLoopRunner
 from autonomous_iteration.agents.tool_planning_executor import ToolPlanningTaskExecutor
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+from autonomous_iteration.planning_surface import (
+    CapabilityExposure,
+    CapabilitySourceKind,
+    PlanningSurfaceCard,
+    PlanningSurfaceCatalog,
+    PlanningSurfaceSelector,
+    StaticCapabilityCardProvider,
+    ToolCapabilityCardProvider,
+)
 from autonomous_iteration.runtime_controller import EditGuard, FileSelector, RuntimeVerifier, StateUpdater, ToolRouter
 from autonomous_iteration.tool_io import ExecutionToolIO
 from core.exceptions import ErrorCategory, InvalidLLMResponseError, LLMProviderError
-from metadata import AgentPhase, CodeArtifactMetadata, FileArtifactMetadata, ResultStatus, RuntimeStateMetadata, TaskResultMetadata, TextArtifactMetadata, ToolResultMetadata
+from metadata import AgentPhase, CodeArtifactMetadata, FileArtifactMetadata, ResolutionPlanMetadata, ResultStatus, RuntimeStateMetadata, TaskResultMetadata, TextArtifactMetadata, ToolResultMetadata
+from tools.bug_fix_tool import BUG_FIX_TOOL_DEFINITION
+from tools.command_tool import COMMAND_EXECUTOR_DEFINITION
+from tools.code_generator import CODE_GENERATOR_DEFINITION
 from tools.file_reader import FILE_READER_DEFINITION
+from tools.file_writer import FILE_WRITER_DEFINITION
+from tools.file_delete_tool import FILE_DELETE_TOOL_DEFINITION
+from tools.environment_fix_tool import ENVIRONMENT_FIX_TOOL_DEFINITION
+from tools.llm_summarizer import LLM_SUMMARIZER_DEFINITION
 from tools.multi_file_reader import MULTI_FILE_READER_DEFINITION
 from tools.code_editor import CODE_EDITOR_DEFINITION
 from tools.code_unit_generator import CODE_UNIT_GENERATOR_DEFINITION
 from tools.file_patch_writer import FILE_PATCH_WRITER_DEFINITION
+from tools.readme_tool import README_TOOL_DEFINITION
+from tools.task_classifier import TASK_CLASSIFIER_DEFINITION
+from tools.web_searcher import WEB_SEARCHER_DEFINITION
 
 
 class FakeLLM:
@@ -60,12 +79,28 @@ class FakeToolRegistry:
             return FILE_READER_DEFINITION
         if tool_name == "multi_file_reader":
             return MULTI_FILE_READER_DEFINITION
+        if tool_name == "command_executor":
+            return COMMAND_EXECUTOR_DEFINITION
+        if tool_name == "code_generator":
+            return CODE_GENERATOR_DEFINITION
         if tool_name == "code_unit_generator":
             return CODE_UNIT_GENERATOR_DEFINITION
         if tool_name == "code_editor":
             return CODE_EDITOR_DEFINITION
+        if tool_name == "file_writer":
+            return FILE_WRITER_DEFINITION
         if tool_name == "file_patch_writer":
             return FILE_PATCH_WRITER_DEFINITION
+        if tool_name == "readme_tool":
+            return README_TOOL_DEFINITION
+        if tool_name == "web_searcher":
+            return WEB_SEARCHER_DEFINITION
+        if tool_name == "bug_fix_tool":
+            return BUG_FIX_TOOL_DEFINITION
+        if tool_name == "environment_fix_tool":
+            return ENVIRONMENT_FIX_TOOL_DEFINITION
+        if tool_name == "file_delete_tool":
+            return FILE_DELETE_TOOL_DEFINITION
         return None
 
     def get_executor(self, tool_name):
@@ -84,7 +119,23 @@ class FakeToolRegistry:
         return None
 
     def list_all(self):
-        return []
+        return [
+            FILE_READER_DEFINITION,
+            MULTI_FILE_READER_DEFINITION,
+            COMMAND_EXECUTOR_DEFINITION,
+            WEB_SEARCHER_DEFINITION,
+            CODE_GENERATOR_DEFINITION,
+            CODE_UNIT_GENERATOR_DEFINITION,
+            CODE_EDITOR_DEFINITION,
+            FILE_WRITER_DEFINITION,
+            FILE_PATCH_WRITER_DEFINITION,
+            README_TOOL_DEFINITION,
+            FILE_DELETE_TOOL_DEFINITION,
+            BUG_FIX_TOOL_DEFINITION,
+            ENVIRONMENT_FIX_TOOL_DEFINITION,
+            LLM_SUMMARIZER_DEFINITION,
+            TASK_CLASSIFIER_DEFINITION,
+        ]
 
 
 class FakeToolExecutor:
@@ -353,6 +404,9 @@ class FakeRuntime:
 
     def _format_tools_for_llm(self, tools):
         return "No tools"
+
+    def _format_planning_surface(self, tools, **kwargs):
+        return self.tool_io.format_planning_surface(tools, **kwargs)
 
     def _resolve_chained_metadata(self, tool_name, input_metadata, last_output, last_code_output):
         return self.tool_io.resolve_chained_metadata(tool_name, input_metadata, last_output, last_code_output)
@@ -1332,6 +1386,109 @@ def test_tool_planning_executor_invalid_or_empty_plan_returns_failed_result(tmp_
     assert result.result_metadata.failure.details["difficulty_assessment"]["level"] in {"simple", "moderate"}
 
 
+def test_tool_planning_executor_read_only_empty_plan_with_evidence_summarizes(tmp_path) -> None:
+    task = Task(
+        id="task",
+        description="请梳理 CLI 入口到主执行运行时的核心链路",
+        kind="codebase_understanding",
+        tags=["analysis"],
+    )
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    state = RuntimeStateMetadata(goal=task.description, phase=AgentPhase.UNDERSTAND_PROJECT)
+    state.add_fact("Observed CLI entrypoint in Code/src/ui/enhanced_cli.py")
+    state.add_candidate_file("Code/src/ui/enhanced_cli.py", "file_read evidence")
+    runtime.runtime_controller = SimpleNamespace(
+        state=state,
+        router=ToolRouter(runtime.tool_registry),
+        edit_guard=EditGuard(),
+        file_selector=FileSelector(),
+        state_updater=StateUpdater(),
+        verifier=RuntimeVerifier(),
+    )
+    context = TaskExecutionContext(
+        task=task,
+        parent_context={"goal": task.description, "project_path": str(tmp_path)},
+        shared_state={},
+        execution_history=[],
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, context)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert runtime.tool_executor.selections == []
+    assert state.phase == AgentPhase.SUMMARIZE
+    assert state.completion_reason == "read-only analysis has enough evidence to synthesize"
+
+
+def test_tool_planning_executor_read_only_empty_plan_without_evidence_still_fails(tmp_path) -> None:
+    task = Task(
+        id="task",
+        description="请梳理 CLI 入口到主执行运行时的核心链路",
+        kind="codebase_understanding",
+        tags=["analysis"],
+    )
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    runtime.runtime_controller = SimpleNamespace(
+        state=RuntimeStateMetadata(goal=task.description, phase=AgentPhase.UNDERSTAND_PROJECT),
+        router=ToolRouter(runtime.tool_registry),
+        edit_guard=EditGuard(),
+        file_selector=FileSelector(),
+        state_updater=StateUpdater(),
+        verifier=RuntimeVerifier(),
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.FAILED
+    assert result.error == "Tool planning requires decomposition after empty decision_needs plan"
+
+
+def test_tool_planning_fallback_state_inherits_context_project_path(tmp_path) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    task = Task(id="task", description="Inspect project structure", kind="codebase_understanding", tags=["analysis"])
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    controller = SimpleNamespace(
+        state=None,
+        router=ToolRouter(runtime.tool_registry),
+        edit_guard=EditGuard(),
+        file_selector=FileSelector(),
+        state_updater=StateUpdater(),
+        verifier=RuntimeVerifier(),
+    )
+    runtime.runtime_controller = controller
+    executor = ToolPlanningTaskExecutor(runtime)
+    executor._active_task = task
+    executor._active_task_id = task.id
+    executor._active_task_description = task.description
+    executor._active_goal = task.description
+    executor._active_context = TaskExecutionContext(
+        task=task,
+        parent_context={"goal": task.description, "project_path": str(project_dir)},
+        shared_state={},
+        execution_history=[],
+    )
+
+    requests = executor._route_decision_needs(
+        {
+            "decision_needs": [
+                {
+                    "need_type": "project_structure",
+                    "question": "Inspect the repository root",
+                }
+            ]
+        }
+    )
+
+    assert requests
+    assert controller.state is not None
+    assert f"Project path: {project_dir.resolve(strict=False)}" in controller.state.known_facts
+    assert str(project_dir.resolve(strict=False)) in controller.state.candidate_files
+    assert requests[0]["input_metadata"]["project_path"] == str(project_dir.resolve(strict=False))
+
+
 def test_tool_planning_executor_empty_plan_retry_can_recover(tmp_path) -> None:
     task = Task(id="task", description="Do impossible thing")
     runtime = FakeRuntime(
@@ -1490,6 +1647,38 @@ def test_tool_planning_executor_validation_fallback_prefers_runtime_command(tmp_
     assert runtime.tool_executor.selections[1].input_metadata.command == f"python -m compileall {tmp_path}"
 
 
+def test_tool_planning_executor_inherits_project_root_for_hallucinated_workspace_need(tmp_path) -> None:
+    task = Task(id="task", description="Inspect the current project root")
+    runtime = FakeRuntime(tmp_path, {})
+    executor = ToolPlanningTaskExecutor(runtime)
+    executor._active_context = TaskExecutionContext(
+        task=task,
+        parent_context={"goal": "analyze runtime", "cwd": str(tmp_path)},
+        shared_state={},
+        execution_history=[],
+    )
+
+    tool_requests = executor._parse_decision_needs(
+        SimpleNamespace(
+            parsed_json={
+                "decision_needs": [
+                    {
+                        "need_type": "project_structure",
+                        "question": "inspect current project structure",
+                        "target_path": "/workspace/openpilot",
+                    }
+                ]
+            },
+            content="",
+        )
+    )
+
+    assert tool_requests[0]["tool_name"] == "multi_file_reader"
+    assert tool_requests[0]["input_metadata"]["directory_path"] == str(tmp_path)
+    assert tool_requests[0]["input_metadata"]["project_path"] == str(tmp_path)
+    assert tool_requests[0]["input_metadata"]["pattern"] == "sketch.json"
+
+
 def test_tool_planning_executor_bad_json_returns_failed_result(tmp_path) -> None:
     task = Task(id="task", description="Do impossible thing")
     executor = ToolPlanningTaskExecutor(FakeRuntime(tmp_path, "{bad-json"))
@@ -1502,7 +1691,8 @@ def test_tool_planning_executor_bad_json_returns_failed_result(tmp_path) -> None
 
 def test_tool_planning_prompt_uses_history_and_forbids_invented_subtask_files(tmp_path) -> None:
     task = Task(id="task", description="Create project based on subtask 0 requirements")
-    executor = ToolPlanningTaskExecutor(FakeRuntime(tmp_path, {"decision_needs": []}))
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
     context = TaskExecutionContext(
         task=task,
         parent_context={"goal": "build app"},
@@ -1517,13 +1707,306 @@ def test_tool_planning_prompt_uses_history_and_forbids_invented_subtask_files(tm
         ],
     )
 
-    prompt = executor._build_tool_plan_prompt(task.description, "build app", "No tools", context)
+    planning_surface = executor._planning_surface_for_prompt(task.description, "build app", context=context)
+    prompt = executor._build_tool_plan_prompt(task.description, "build app", planning_surface, context)
 
     assert "Previous Task Results" in prompt
     assert "Use a small Python CLI app" in prompt
+    assert "Need Catalog" in prompt
+    assert "Core Capability Cards" in prompt
+    assert "Deferred Capability Cards" in prompt
     assert "Never invent or read intermediate files such as subtask_0.md" in prompt
     assert "Do not emit null" in prompt
+    assert "Available Tools" not in prompt
+    assert "Input metadata:" not in prompt
     assert '"symbol_name": "optional' not in prompt
+
+
+def test_tool_planning_surface_for_read_only_task_uses_only_core_cards(tmp_path) -> None:
+    task = Task(id="task", description="梳理 CLI 入口到主执行运行时的核心链路")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    planning_surface = executor._planning_surface_for_prompt(task.description, "analyze runtime flow", context=_context(task))
+
+    assert "File evidence" in planning_surface
+    assert "Project structure evidence" in planning_surface
+    assert "Command validation" in planning_surface
+    assert "External research" in planning_surface
+    assert "New file generation" not in planning_surface
+    assert "Existing code modification" not in planning_surface
+    assert "Documentation delivery" not in planning_surface
+    assert "Guarded deletion" not in planning_surface
+    assert "Runtime or environment repair" not in planning_surface
+    assert "llm_summarizer" not in planning_surface
+    assert "task_classifier" not in planning_surface
+
+
+def test_tool_plan_prompt_includes_read_only_notice_for_analysis_task(tmp_path) -> None:
+    task = Task(id="task", description="梳理 CLI 入口到主执行运行时的核心链路", tags=["readonly", "understanding"])
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    context = _context(task)
+
+    planning_surface = executor._planning_surface_for_prompt(task.description, "analyze runtime flow", context=context)
+    prompt = executor._build_tool_plan_prompt(task.description, "analyze runtime flow", planning_surface, context)
+
+    assert "Read-only task mode" in prompt
+    assert "Do not emit file_write, file_delete, code generation, bug_fix, repair, or mutating command needs." in prompt
+    assert "Prefer file_read, project_structure, and safe validation evidence." in prompt
+
+
+def test_tool_planning_surface_adds_deferred_cards_for_create_and_docs_tasks(tmp_path) -> None:
+    task = Task(id="task", description="Implement app.py with README documentation")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    planning_surface = executor._planning_surface_for_prompt(task.description, "build app", context=_context(task))
+
+    assert "New file generation" in planning_surface
+    assert "Documentation delivery" in planning_surface
+    assert "Existing code modification" not in planning_surface
+
+
+def test_tool_planning_surface_adds_repair_card_for_runtime_failure_tasks(tmp_path) -> None:
+    task = Task(id="task", description="Repair runtime import failure and broken venv startup")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    planning_surface = executor._planning_surface_for_prompt(task.description, "restore startup", context=_context(task))
+
+    assert "Runtime or environment repair" in planning_surface
+    assert '"need_type":"bug_fix"' in planning_surface
+
+
+def test_planning_surface_catalog_merges_tool_and_future_skill_providers() -> None:
+    skill_card = PlanningSurfaceCard(
+        card_id="skill_test_development",
+        title="Test-development skill",
+        source_kind=CapabilitySourceKind.SKILL_FUTURE,
+        exposure=CapabilityExposure.DEFERRED,
+        need_types=("project_structure", "command_check"),
+        summary="Use a future skill procedure for test-development investigation.",
+        required_fields_hint="task goal and project path",
+        example_need={"need_type": "project_structure", "target_path": "/abs/path/project"},
+        trigger_terms=("test development", "测试开发"),
+        backing_refs=("skill:test_development",),
+    )
+
+    catalog = PlanningSurfaceCatalog.from_providers(
+        [
+            ToolCapabilityCardProvider([FILE_READER_DEFINITION, MULTI_FILE_READER_DEFINITION]),
+            StaticCapabilityCardProvider([skill_card]),
+        ]
+    )
+    selection = PlanningSurfaceSelector().select(
+        catalog,
+        task_description="改进测试开发流程，先做 test development investigation",
+        goal="improve agent testing",
+    )
+
+    assert catalog.get("file_evidence") is not None
+    assert catalog.get("skill_test_development") is skill_card
+    assert selection.deferred_cards == (skill_card,)
+    assert "Test-development skill" in selection.render()
+
+
+def test_tool_planning_surface_accepts_runtime_future_skill_provider(tmp_path) -> None:
+    skill_card = PlanningSurfaceCard(
+        card_id="skill_bug_investigation",
+        title="Bug investigation skill",
+        source_kind="skill_future",
+        exposure="deferred",
+        need_types=("file_read", "project_structure", "command_check"),
+        summary="Use a future skill procedure to find root causes before fixes.",
+        required_fields_hint="problem statement and evidence scope",
+        example_need={"need_type": "project_structure", "target_path": "/abs/path/project"},
+        trigger_terms=("root cause", "本质问题"),
+        backing_refs=("skill:bug_investigation",),
+    )
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    runtime.planning_surface_providers = [StaticCapabilityCardProvider([skill_card])]
+    task = Task(id="task", description="分析 bug 的 root cause，不要只修表象")
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    planning_surface = executor._planning_surface_for_prompt(task.description, "find 本质问题", context=_context(task))
+
+    assert "Bug investigation skill" in planning_surface
+    assert "skill:bug_investigation" not in planning_surface
+    assert "Input metadata:" not in planning_surface
+
+
+def test_tool_planning_retry_prompt_uses_incremental_capability_surface(tmp_path) -> None:
+    task = Task(id="task", description="Modify the existing CLI entrypoint to fix command parsing")
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    executor._active_task_description = task.description
+    executor._active_goal = "fix CLI"
+    executor._active_context = _context(task)
+    signal = executor._problem_signal_for_empty_plan({"decision_needs": []})
+
+    prompt = executor._empty_plan_retry_prompt(
+        {"decision_needs": []},
+        signal,
+        executor._assess_problem_difficulty(signal, executor._judge_problem(signal)),
+        ResolutionPlanMetadata(strategy="direct_retry", max_attempts=2, acceptance_check="recover"),
+    )
+
+    assert "Planning Surface" in prompt
+    assert "Existing code modification" in prompt
+    assert "Available Tools" not in prompt
+    assert "Input metadata:" not in prompt
+
+
+def test_tool_planning_prompt_budget_is_significantly_smaller_than_legacy_full_tool_prompt(tmp_path) -> None:
+    runtime = IntelligentAutopilot(FakeLLM({"decision_needs": []}), log_file=tmp_path / "autopilot.jsonl")
+    executor = runtime.tool_planning_task_executor
+    task = Task(id="task", description="请梳理从 CLI 入口到主执行运行时的核心链路，并指出关键模块之间的关系。")
+    context = TaskExecutionContext(task=task, parent_context={"goal": "analyze runtime"}, shared_state={}, execution_history=[])
+    tools = runtime.tool_registry.list_all()
+    tools_description = runtime.tool_io.format_tools_for_llm(tools)
+    planning_surface = executor._planning_surface_for_prompt(task.description, "analyze runtime", context=context)
+
+    legacy_prompt = f"""You are an AI assistant that selects and sequences tools to accomplish tasks.
+
+Task: {task.description}
+Overall Goal: analyze runtime
+Previous Task Results:
+No previous task results.
+
+Available Tools:
+{tools_description}
+
+Generate a JSON plan with decision_needs. The runtime ToolRouter is the only component
+allowed to map needs to concrete tools using budget, risk, and permission checks.
+
+Output ONLY valid JSON in this format:
+{{
+  "decision_needs": [
+    {{
+      "need_type": "code_file_create",
+      "question": "create the main project file",
+      "target_path": "/absolute/path/to/file.py",
+      "operation_kind": "create_file",
+      "attributes": {{"language": "python"}}
+    }}
+  ]
+}}
+
+Allowed need_type values:
+file_read, project_structure, web_search, command_check, file_write, file_delete, code_file_create,
+directory_generate, code_unit_generate, code_symbol_modify, code_patch, code_generation,
+code_execution, readme_generation.
+
+Optional fields may include: target_path, operation_kind, target_scope, symbol_name,
+symbol_type, insertion_hint, patch_mode, candidate_paths, query, command, risk_level,
+attributes. Omit unknown or unavailable optional fields. Do not emit null.
+
+Important:
+- Previous task outputs are provided above in Previous Task Results. Use that shared history directly.
+- Never invent or read intermediate files such as subtask_0.md, subtask_1.md, requirements.md, or plan.md unless they appear in previous tool outputs or the user explicitly requested them.
+- If previous task results are absent or failed, infer sensible defaults from the original goal instead of reading a made-up plan file.
+- For project creation, use directory_generate/code_file_create/file_write directly and create the needed files in the target directory.
+- Always distinguish create_file, add_symbol, modify_symbol, and code_patch before selecting needs.
+- For new code files or generated project files, emit code_file_create or directory_generate, then file_write with operation_kind create_file.
+- For adding a function/class to an existing file, emit file_read, then code_unit_generate with operation_kind add_symbol, then file_write with operation_kind add_symbol so ToolRouter uses file_patch_writer.
+- For modifying an existing function/class, emit file_read, then code_symbol_modify or code_patch with operation_kind modify_symbol, then file_write with operation_kind modify_symbol so ToolRouter uses file_patch_writer.
+- For deleting an existing file, emit file_read or project_structure first for evidence, then file_delete with operation_kind delete_file so ToolRouter uses file_delete_tool.
+- Do not plan code_generator + file_writer for edits to existing functions/classes.
+- code_generator only supports executable code languages: python, shell, bash. Never use language "text"
+- For design, outline, planning, or prose-only tasks, either return planning metadata through an appropriate text/documentation tool or write Markdown/text with file_writer/readme_tool
+- For completed project/code deliveries, emit a readme_generation need after file_write to create README.md with run instructions
+- Autopilot will run hard validation and autonomous-iteration improvement analysis after project delivery
+- Provide actual values for all parameters, do not use null or placeholders
+- If you need to pass output from one tool to another, generate the content directly in the first tool
+- For command_executor, input_metadata.mode must be one of: dry_run, interactive, automatic
+- For project commands, use mode "automatic" and do not use source/activate/cd/export; OpenPilot injects the target cwd and virtual environment from metadata
+"""
+    new_prompt = executor._build_tool_plan_prompt(task.description, "analyze runtime", planning_surface, context)
+
+    assert len(new_prompt) <= len(legacy_prompt) * 0.55
+    assert "Input metadata:" not in new_prompt
+    assert "Available Tools" not in new_prompt
+    assert "Need Catalog" in new_prompt
+    assert "Do not invent nested directories or filenames under that root without evidence." in new_prompt
+
+
+def test_tool_planning_prompt_includes_current_project_context(tmp_path) -> None:
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    task = Task(id="task", description="Analyze the CLI runtime flow")
+    context = TaskExecutionContext(
+        task=task,
+        parent_context={"goal": "analyze runtime", "cwd": str(tmp_path)},
+        shared_state={},
+        execution_history=[],
+    )
+
+    prompt = executor._build_tool_plan_prompt(
+        task.description,
+        "analyze runtime",
+        executor._planning_surface_for_prompt(task.description, "analyze runtime", context=context),
+        context,
+    )
+
+    assert f"Project root: {tmp_path}" in prompt
+
+
+def test_intelligent_autopilot_normalizes_execution_context_and_propagates_parent_context(tmp_path, monkeypatch) -> None:
+    autopilot = IntelligentAutopilot(FakeLLM({"decision_needs": []}), log_file=tmp_path / "autopilot.jsonl")
+    monkeypatch.chdir(tmp_path)
+
+    normalized = autopilot._normalize_execution_context({})
+
+    assert normalized["cwd"] == str(tmp_path.resolve())
+    autopilot.session_id = "session"
+    autopilot._current_execution_context = {**normalized, "run_command": "pytest"}
+
+    parent_context = autopilot._task_parent_context("analyze runtime")
+
+    assert parent_context["goal"] == "analyze runtime"
+    assert parent_context["cwd"] == str(tmp_path.resolve())
+    assert parent_context["run_command"] == "pytest"
+
+
+def test_intelligent_autopilot_execution_history_payload_carries_observed_paths(tmp_path) -> None:
+    autopilot = IntelligentAutopilot(FakeLLM({"decision_needs": []}), log_file=tmp_path / "autopilot.jsonl")
+    task = Task(id="task", description="Inspect CLI files")
+    result = TaskExecutionResult(
+        task_id=task.id,
+        status=TaskStatus.COMPLETED,
+        result_metadata=TaskResultMetadata(
+            task_id=task.id,
+            status=ResultStatus.SUCCESS,
+            result=TextArtifactMetadata(
+                content="completed",
+                attributes={
+                    "final_output": {
+                        "files": [str(tmp_path / "src" / "ui" / "cli.py")],
+                        "content": f"# Source: {tmp_path / 'src' / 'ui' / 'cli.py'}",
+                    },
+                    "tool_results": [
+                        {
+                            "tool_name": "multi_file_reader",
+                            "input_metadata": {"directory_path": str(tmp_path), "project_path": str(tmp_path)},
+                            "output": {
+                                "files": [str(tmp_path / "pyproject.toml")],
+                                "sketch_files": [str(tmp_path / "sketch.json")],
+                            },
+                        }
+                    ],
+                    "all_tools_succeeded": True,
+                },
+            ),
+        ),
+    )
+
+    history = autopilot._execution_history_payload([task], [result])
+
+    assert history[0]["observed_paths"]
+    assert str(tmp_path / "src" / "ui" / "cli.py") in history[0]["observed_paths"]
+    assert str(tmp_path / "pyproject.toml") in history[0]["observed_paths"]
+    assert history[0]["result_summary"]["all_tools_succeeded"] is True
 
 
 def test_intelligent_autopilot_execute_task_proxy_uses_tool_planning_agent(tmp_path) -> None:

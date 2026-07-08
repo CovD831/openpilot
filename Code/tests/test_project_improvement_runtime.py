@@ -7,6 +7,8 @@ from autonomous_iteration.project_improvement_runtime import ProjectImprovementR
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
 from metadata import FailureMetadata, ResultStatus, ToolExecutionEnvelopeMetadata, ToolInputMetadata, ToolResultMetadata, payload_to_artifact
+from runtime_diagnostics import DiagnosticRecorder
+from runtime_diagnostics.hooks import RuntimeDiagnosticsHooks
 
 
 class FakeIterationAgent:
@@ -76,6 +78,7 @@ class FakeAutopilot:
         self.iterative_improvement = FakeIterationAgent()
         self.memory_store = None
         self.progress_events: list[str] = []
+        self.runtime_diagnostics_hooks = RuntimeDiagnosticsHooks(DiagnosticRecorder(tmp_path))
         self.environment_success = environment_success
         self.environment_failures_before_success = environment_failures_before_success
         self.environment_error = environment_error
@@ -251,6 +254,30 @@ def test_project_improvement_runtime_success_callbacks_and_shape(tmp_path) -> No
         "on_progress",
     }
     assert autopilot.progress_events == ["context_loader"]
+
+
+def test_project_improvement_runtime_records_trajectory_events(tmp_path) -> None:
+    autopilot = FakeAutopilot(tmp_path)
+    runtime = ProjectImprovementRuntime(autopilot)
+
+    runtime.run(
+        goal="Inspect project runtime flow",
+        project_path=tmp_path,
+        written_files=[str(tmp_path / "app.py")],
+    )
+
+    run = autopilot.runtime_diagnostics_hooks.recorder.load_run(autopilot.session_id)
+    assert run is not None
+    events = autopilot.runtime_diagnostics_hooks.recorder.load_trajectory_events(run.run_id)
+    event_types = [event["event_type"] for event in events]
+    assert "pipeline_started" in event_types
+    assert "environment_sync_completed" in event_types
+    assert "pipeline_progress" in event_types
+    assert "project_state_read" in event_types
+    assert "pipeline_finished" in event_types
+    progress_event = next(event for event in events if event["event_type"] == "pipeline_progress")
+    assert progress_event["payload"]["annotations"]["module"] == "project_improvement_runtime"
+    assert progress_event["payload"]["correlation"]["session_id"] == autopilot.session_id
 
 
 def test_intelligent_autopilot_iterative_improvement_proxy_uses_project_improvement_runtime(tmp_path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import autonomous_iteration.runtime_controller
 from types import SimpleNamespace
 
 from autonomous_iteration.runtime_controller import (
@@ -11,6 +12,8 @@ from autonomous_iteration.runtime_controller import (
     StateUpdater,
     ToolRouter,
 )
+from runtime_diagnostics import DiagnosticRecorder
+from runtime_diagnostics.hooks import RuntimeDiagnosticsHooks
 from metadata import (
     AgentPhase,
     DecisionNeedMetadata,
@@ -82,7 +85,10 @@ def test_tool_router_routes_information_gaps_and_blocks_on_budget() -> None:
     )
 
     assert router.route(state, file_need)[0].tool_name == "file_reader"
-    assert router.route(state, directory_need)[0].tool_name == "multi_file_reader"
+    directory_selection = router.route(state, directory_need)[0]
+    assert directory_selection.tool_name == "multi_file_reader"
+    assert directory_selection.input_metadata.pattern == "sketch.json"
+    assert directory_selection.input_metadata.max_files == 1
     assert router.route(state, search_need)[0].tool_name == "web_searcher"
     assert router.route(state, command_need)[0].tool_name == "command_executor"
     assert router.route(state, code_execution_command_need)[0].tool_name == "command_executor"
@@ -104,6 +110,96 @@ def test_tool_router_routes_information_gaps_and_blocks_on_budget() -> None:
     assert "budget exhausted" in state.completion_reason
 
 
+def test_tool_router_blocks_mutation_tools_for_read_only_analysis_tasks() -> None:
+    blocked_state = RuntimeStateMetadata(goal="请梳理 CLI 到运行时的核心链路")
+    autonomous_iteration.runtime_controller.apply_read_only_runtime_mode(
+        blocked_state,
+        blocked_state.goal,
+        tags=["readonly", "understanding"],
+        task_type="analysis",
+    )
+    router = ToolRouter()
+
+    blocked_selection = router.route(
+        blocked_state,
+        DecisionNeedMetadata(
+            need_type="file_write",
+            question="Write notes to README",
+            target_path="README.md",
+            attributes={"content": "summary"},
+        ),
+    )
+    allowed_state = RuntimeStateMetadata(goal="请梳理 CLI 到运行时的核心链路")
+    autonomous_iteration.runtime_controller.apply_read_only_runtime_mode(
+        allowed_state,
+        allowed_state.goal,
+        tags=["readonly", "understanding"],
+        task_type="analysis",
+    )
+    allowed_selection = router.route(
+        allowed_state,
+        DecisionNeedMetadata(
+            need_type="project_structure",
+            question="Inspect project structure",
+            target_path=".",
+        ),
+    )
+
+    assert blocked_selection == []
+    assert blocked_state.phase == AgentPhase.BLOCKED
+    assert "read-only analysis task" in (blocked_state.completion_reason or "").lower()
+    assert allowed_selection
+    assert allowed_selection[0].tool_name == "multi_file_reader"
+
+
+def test_tool_router_blocks_mutating_commands_for_read_only_analysis_tasks() -> None:
+    state = RuntimeStateMetadata(goal="Inspect runtime path handling")
+    autonomous_iteration.runtime_controller.apply_read_only_runtime_mode(
+        state,
+        state.goal,
+        tags=["readonly"],
+        task_type="analysis",
+    )
+    router = ToolRouter()
+
+    selections = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="command_check",
+            question="Install a dependency and rerun",
+            command="pip install rich",
+        ),
+    )
+
+    assert selections == []
+    assert state.phase == AgentPhase.BLOCKED
+    assert "mutating shell commands" in (state.completion_reason or "")
+
+
+def test_tool_router_blocks_ungrounded_file_read_for_read_only_analysis_without_project_context() -> None:
+    state = RuntimeStateMetadata(goal="请梳理 CLI 到运行时的核心链路")
+    autonomous_iteration.runtime_controller.apply_read_only_runtime_mode(
+        state,
+        state.goal,
+        tags=["readonly", "understanding"],
+        task_type="analysis",
+    )
+    router = ToolRouter()
+
+    selections = router.route(
+        state,
+        DecisionNeedMetadata(
+            need_type="file_read",
+            question="Read likely setup file",
+            target_path="setup.py",
+        ),
+    )
+
+    assert selections == []
+    assert state.phase == AgentPhase.BLOCKED
+    assert "project_path" in (state.completion_reason or "")
+
+
 def test_tool_router_routes_directory_shaped_file_reads_to_multi_file_reader(tmp_path) -> None:
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -121,7 +217,8 @@ def test_tool_router_routes_directory_shaped_file_reads_to_multi_file_reader(tmp
 
     assert directory_selection.tool_name == "multi_file_reader"
     assert directory_selection.input_metadata.directory_path == str(project_dir)
-    assert directory_selection.input_metadata.pattern == "*"
+    assert directory_selection.input_metadata.pattern == "sketch.json"
+    assert directory_selection.input_metadata.max_files == 1
 
     file_state = RuntimeStateMetadata(goal="Inspect file")
     file_need = DecisionNeedMetadata(
@@ -602,3 +699,61 @@ def test_agent_runtime_controller_returns_runtime_state_and_report() -> None:
     assert state["modified_files"] == ["app.py"]
     assert result["runtime_report"]["goal"] == "Build app"
     assert result["runtime_report"]["modified_files"] == ["app.py"]
+
+
+def test_runtime_controller_task_card_event_uses_active_task_id(tmp_path) -> None:
+    analyzer = SimpleNamespace(
+        analyze_goal=lambda goal: SimpleNamespace(
+            task_type="document_summary",
+            risk_level="low",
+            required_resources=[],
+            expected_deliverables=[],
+        )
+    )
+    hooks = RuntimeDiagnosticsHooks(DiagnosticRecorder(tmp_path))
+    runtime = SimpleNamespace(
+        tool_registry=None,
+        semantic_analyzer=analyzer,
+        runtime_diagnostics_hooks=hooks,
+        session_id="session-123",
+    )
+    executor = autonomous_iteration.runtime_controller._RuntimeSessionExecutor(runtime)
+
+    semantic = executor._analyze_goal("Summarize project", task_id="task-123")
+
+    assert semantic.task_type == "document_summary"
+    run = hooks.recorder.load_run("session-123")
+    assert run is not None
+    events = hooks.recorder.load_trajectory_events(run.run_id)
+    assert events[-1]["event_type"] == "task_card_ready"
+    assert events[-1]["payload"]["output_summary"]["task_id"] == "task-123"
+    assert events[-1]["payload"]["correlation"]["task_id"] == "task-123"
+    assert events[-1]["payload"]["correlation"]["session_id"] == "session-123"
+
+
+def test_runtime_controller_task_finished_event_uses_active_task_id(tmp_path) -> None:
+    class FakeSessionRunner:
+        def run(self, goal, context, mode="standard"):
+            return {
+                "success": True,
+                "task_id": "subtask-finished-123",
+                "stats": {"tasks_completed": 1, "tasks_failed": 0},
+            }
+
+    from runtime_diagnostics import DiagnosticRecorder
+    from runtime_diagnostics.hooks import RuntimeDiagnosticsHooks
+
+    hooks = RuntimeDiagnosticsHooks(DiagnosticRecorder(tmp_path))
+    runtime = SimpleNamespace(tool_registry=None, runtime_diagnostics_hooks=hooks, session_id="session-finished-123")
+    controller = AgentRuntimeController(runtime, session_executor=FakeSessionRunner())
+
+    result = controller.run("Summarize app", {"project_path": "/tmp/project", "task_id": "root-task-finished-123"}, mode="standard")
+
+    assert result["success"] is True
+    run = hooks.recorder.load_run("root-task-finished-123")
+    assert run is not None
+    events = hooks.recorder.load_trajectory_events(run.run_id)
+    finished = [event for event in events if event["event_type"] == "task_finished"][-1]
+    assert finished["task_id"] == "root-task-finished-123"
+    assert finished["payload"]["correlation"]["task_id"] == "root-task-finished-123"
+    assert finished["payload"]["correlation"]["session_id"] == "session-finished-123"

@@ -30,6 +30,7 @@ class ProjectImprovementRuntime:
 
     def __init__(self, autopilot: Any) -> None:
         self.autopilot = autopilot
+        self._active_pipeline_task_id = ""
 
     def run(
         self,
@@ -49,8 +50,19 @@ class ProjectImprovementRuntime:
 
         project_path = Path(project_path).expanduser()
         readme_path = Path(readme_path).expanduser() if readme_path else project_path / "README.md"
+        self._active_pipeline_task_id = f"{self.autopilot.session_id or 'session'}:project_improvement_runtime:{uuid.uuid4().hex[:8]}"
 
         self._log("pipeline_start", {"goal": goal, "project_path": str(project_path)}, {"written_files": len(written_files)})
+        self._emit_trajectory_event(
+            "pipeline_started",
+            input_summary={
+                "goal": goal,
+                "project_path": str(project_path),
+                "written_files": written_files,
+                "run_command": run_command,
+                "readme_path": str(readme_path),
+            },
+        )
         self._prepare_dashboard(goal)
 
         environment_result = self._prepare_environment(
@@ -62,6 +74,17 @@ class ProjectImprovementRuntime:
         if not environment_result.success or environment_result.output is None:
             result = self._environment_failure_result(environment_result, run_command)
             self._log("environment_failed", {"project_path": str(project_path)}, {"reason": result["failure_reason"]}, success=False)
+            self._emit_trajectory_event(
+                "pipeline_environment_failed",
+                input_summary={"project_path": str(project_path)},
+                output_summary={
+                    "failure_reason": result["failure_reason"],
+                    "failed_tool": result["failed_tool"],
+                    "failure_stage": result["failure_stage"],
+                },
+                success=False,
+                error=result["failure_reason"],
+            )
             return result
 
         environment_payload = environment_result.output
@@ -69,6 +92,12 @@ class ProjectImprovementRuntime:
 
         def on_progress(event: str, payload: dict[str, Any]) -> None:
             self.autopilot._handle_iteration_progress(event, payload)
+            self._emit_trajectory_event(
+                "pipeline_progress",
+                step_id=f"iteration_{payload.get('iteration', '')}" if isinstance(payload, dict) else "",
+                input_summary={"event": event},
+                output_summary=payload,
+            )
 
         def apply_improvement(
             iteration: int,
@@ -137,6 +166,20 @@ class ProjectImprovementRuntime:
             success=bool(result.get("success")),
             error=result.get("failure_reason"),
         )
+        self._emit_trajectory_event(
+            "pipeline_finished",
+            input_summary={"goal": goal, "project_path": str(project_path)},
+            output_summary={
+                "success": bool(result.get("success")),
+                "failure_stage": result.get("failure_stage"),
+                "failed_tool": result.get("failed_tool"),
+                "completed_improvements": result.get("completed_improvements"),
+                "required_improvements": result.get("required_improvements"),
+                "retry_attempted": result.get("retry_attempted"),
+            },
+            success=bool(result.get("success")),
+            error=result.get("failure_reason"),
+        )
         return result
 
     def _prepare_dashboard(self, goal: str) -> None:
@@ -180,6 +223,14 @@ class ProjectImprovementRuntime:
             success=result.success,
             error=result.error_message,
         )
+        self._emit_trajectory_event(
+            "environment_sync_completed",
+            step_id="environment_setup",
+            input_summary={"project_path": str(project_path), "written_files": written_files},
+            output_summary={"success": result.success},
+            success=result.success,
+            error=result.error_message,
+        )
         if result.success:
             return result
 
@@ -215,6 +266,14 @@ class ProjectImprovementRuntime:
                     "repair_attempt": repair_attempt,
                 },
                 {"success": result.success},
+                success=result.success,
+                error=result.error_message,
+            )
+            self._emit_trajectory_event(
+                "environment_sync_retried",
+                step_id=f"environment_repair_{repair_attempt}",
+                input_summary={"repair_attempt": repair_attempt, "project_path": str(project_path)},
+                output_summary={"success": result.success},
                 success=result.success,
                 error=result.error_message,
             )
@@ -267,6 +326,17 @@ class ProjectImprovementRuntime:
             {
                 "success": repair_result.success,
                 "output": repair_result.output.to_json_dict() if repair_result.output else None,
+            },
+            success=repair_result.success,
+            error=repair_result.error_message,
+        )
+        self._emit_trajectory_event(
+            "environment_repair_attempted",
+            step_id=f"environment_repair_{repair_attempt}",
+            input_summary={"project_path": str(project_path), "repair_attempt": repair_attempt},
+            output_summary={
+                "success": repair_result.success,
+                "repair_output": repair_result.output.to_json_dict() if repair_result.output else None,
             },
             success=repair_result.success,
             error=repair_result.error_message,
@@ -345,6 +415,13 @@ class ProjectImprovementRuntime:
                 {"source": "direct", "success": payload is not None},
                 success=payload is not None,
             )
+            self._emit_trajectory_event(
+                "project_state_read",
+                step_id=f"iteration_{iteration}_project_state",
+                input_summary={"project_path": str(project_path), "iteration": iteration, "source": "direct"},
+                output_summary={"success": payload is not None},
+                success=payload is not None,
+            )
             return payload.to_json_dict() if payload else {}
 
         result = execute_reader(
@@ -355,6 +432,13 @@ class ProjectImprovementRuntime:
         )
         if result.success and result.output is not None:
             self._log("project_state_read", {"iteration": iteration}, {"source": "tool", "success": True})
+            self._emit_trajectory_event(
+                "project_state_read",
+                step_id=f"iteration_{iteration}_project_state",
+                input_summary={"project_path": str(project_path), "iteration": iteration, "source": "tool"},
+                output_summary={"success": True},
+                success=True,
+            )
             return result.output.to_json_dict()
 
         fallback = project_state_reader_executor(
@@ -365,6 +449,14 @@ class ProjectImprovementRuntime:
             "project_state_read",
             {"iteration": iteration},
             {"source": "fallback", "success": payload is not None},
+            success=payload is not None,
+            error=result.error_message,
+        )
+        self._emit_trajectory_event(
+            "project_state_read",
+            step_id=f"iteration_{iteration}_project_state",
+            input_summary={"project_path": str(project_path), "iteration": iteration, "source": "fallback"},
+            output_summary={"success": payload is not None},
             success=payload is not None,
             error=result.error_message,
         )
@@ -518,4 +610,32 @@ class ProjectImprovementRuntime:
             output_summary=output_summary,
             error=error,
             annotations={"stages": self.STAGES},
+        )
+
+    def _emit_trajectory_event(
+        self,
+        event_type: str,
+        *,
+        step_id: str = "",
+        input_summary: Any | None = None,
+        output_summary: Any | None = None,
+        success: bool | None = None,
+        error: str | None = None,
+    ) -> None:
+        hooks = getattr(self.autopilot, "runtime_diagnostics_hooks", None)
+        if not hooks:
+            return
+        hooks.on_log_event(
+            task_id=self._active_pipeline_task_id,
+            session_id=str(self.autopilot.session_id or ""),
+            step_id=step_id,
+            source_type="module",
+            source_name="autonomous_iteration.project_improvement_runtime",
+            phase="project_improvement_runtime",
+            event_type=event_type,
+            success=success,
+            input_summary=input_summary,
+            output_summary=output_summary,
+            error=error,
+            annotations={"module": "project_improvement_runtime"},
         )

@@ -150,6 +150,43 @@ class VerificationPlanMetadata(MetadataBase):
     attributes: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+class PathIntentMetadata(MetadataBase):
+    """Path interpretation request before any path-sensitive action runs."""
+
+    kind: Literal[MetadataKind.PATH_INTENT] = MetadataKind.PATH_INTENT
+    project_root: str = ""
+    raw_path: str = ""
+    intent_kind: str = "existing_file"
+    operation: str = "read"
+    source: str = "runtime"
+    evidence: list[str] = Field(default_factory=list)
+    candidate_paths: list[str] = Field(default_factory=list)
+    attributes: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class PathResolutionMetadata(MetadataBase):
+    """Deterministic result of grounding a path against project truth."""
+
+    kind: Literal[MetadataKind.PATH_RESOLUTION] = MetadataKind.PATH_RESOLUTION
+    project_root: str = ""
+    raw_path: str = ""
+    resolved_path: str = ""
+    status: str = "resolved"
+    confidence: float = 1.0
+    correction_rule: str = ""
+    candidate_paths: list[str] = Field(default_factory=list)
+    intent_kind: str = "existing_file"
+    operation: str = "read"
+    source: str = "runtime"
+    inside_project: bool = True
+    exists_verified: bool = False
+    parent_exists: bool = False
+    used_sketch: bool = False
+    used_file_index: bool = False
+    reason: str = ""
+    attributes: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 class DecisionNeedMetadata(MetadataBase):
     """Model- or controller-raised information need consumed by ToolRouter."""
 
@@ -214,6 +251,8 @@ class RuntimeStateMetadata(MetadataBase):
     unknowns: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     resolved_questions: list[str] = Field(default_factory=list)
+    path_intents: list[PathIntentMetadata] = Field(default_factory=list)
+    path_resolutions: list[PathResolutionMetadata] = Field(default_factory=list)
     candidate_files: dict[str, list[str]] = Field(default_factory=dict)
     selected_files: dict[str, list[str]] = Field(default_factory=dict)
     planned_edits: list[EditPlanMetadata] = Field(default_factory=list)
@@ -248,6 +287,12 @@ class RuntimeStateMetadata(MetadataBase):
         assumption = assumption.strip()
         if assumption and assumption not in self.assumptions:
             self.assumptions.append(assumption)
+
+    def record_path_intent(self, intent: PathIntentMetadata) -> None:
+        self.path_intents.append(intent)
+
+    def record_path_resolution(self, resolution: PathResolutionMetadata) -> None:
+        self.path_resolutions.append(resolution)
 
     def add_candidate_file(self, file_path: str, evidence: str) -> None:
         if not file_path:
@@ -298,6 +343,7 @@ class RuntimeReportMetadata(MetadataBase):
     completion_reason: str | None = None
     known_facts: list[str] = Field(default_factory=list)
     unresolved_questions: list[str] = Field(default_factory=list)
+    path_resolutions: list[PathResolutionMetadata] = Field(default_factory=list)
     selected_files: dict[str, list[str]] = Field(default_factory=dict)
     modified_files: list[str] = Field(default_factory=list)
     planned_edits: list[EditPlanMetadata] = Field(default_factory=list)

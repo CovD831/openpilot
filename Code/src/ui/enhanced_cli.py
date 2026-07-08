@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Sequence
+from uuid import uuid4
 
 from rich.console import Console
 
@@ -12,6 +14,7 @@ from core.config import EmbeddingSettings, LLMSettings
 from core.instrumented_llm import InstrumentedLLMClient
 from core.model_health import run_startup_model_health_check
 from core.openpilot_log import OpenPilotLogger
+from runtime_diagnostics.hooks import get_default_hooks
 from ui.enhanced_ui import EnhancedUI
 from ui.progress_tracker import ProgressTracker
 
@@ -20,6 +23,22 @@ if TYPE_CHECKING:
 
 
 DEFAULT_IMPROVEMENT_ITERATIONS = 2
+
+
+def _runtime_diagnostics_enabled() -> bool:
+    value = str(os.getenv("OPENPILOT_RUNTIME_DIAGNOSTICS_ENABLED", "1")).strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _build_task_execution_context(*, source: str, classification: "TaskRouteMetadata") -> dict[str, object]:
+    """Create a stable task context before runtime execution begins."""
+    return {
+        "task_id": f"cli_{uuid4().hex}",
+        "source": source,
+        "route": classification.route,
+        "route_confidence": classification.confidence,
+        "route_reason": classification.reason,
+    }
 
 
 @dataclass(frozen=True)
@@ -324,8 +343,17 @@ def _run_once_mode(
     try:
         classification = _classify_task_route(goal)
         _show_task_route(ui, classification)
+        execution_context = _build_task_execution_context(source="cli_once", classification=classification)
+        if _runtime_diagnostics_enabled() and classification.route != "agent_generator":
+            get_default_hooks().on_route_selected(
+                task_id=str(execution_context["task_id"]),
+                route=classification.route,
+                confidence=classification.confidence,
+                reason=classification.reason,
+            )
 
         active_llm_client = llm_client or LLMClient(settings)
+        diagnostics_hooks = get_default_hooks() if _runtime_diagnostics_enabled() else None
         if classification.route == "agent_generator":
             return 0 if _execute_agent_generator(goal, ui, active_llm_client, logger) else 2
 
@@ -341,6 +369,7 @@ def _run_once_mode(
             enable_iterative_improvement=runtime_options.enable_iterative_improvement,
             required_successful_improvements=runtime_options.improvement_iterations,
             prompt_for_project_improvement_iterations=runtime_options.prompt_for_project_improvement_iterations,
+            runtime_diagnostics_hooks=diagnostics_hooks,
         )
 
         # Execute with live session
@@ -349,7 +378,7 @@ def _run_once_mode(
                 ui.create_status_panel("Autopilot Mode", "Intelligent task decomposition and execution...")
             )
 
-            result = autopilot.execute(goal)
+            result = autopilot.execute(goal, context=execution_context)
 
             # Small delay to let user see final status
             import time
@@ -484,11 +513,20 @@ def _execute_goal_interactive(
     """Execute a goal in interactive mode."""
     if _handle_shell_state_command(goal, ui):
         return None
+
     classification = _classify_task_route(goal)
     _show_task_route(ui, classification)
+    execution_context = _build_task_execution_context(source="interactive", classification=classification)
+    if _runtime_diagnostics_enabled() and classification.route != "agent_generator":
+        get_default_hooks().on_route_selected(
+            task_id=str(execution_context["task_id"]),
+            route=classification.route,
+            confidence=classification.confidence,
+            reason=classification.reason,
+        )
     if classification.route == "agent_generator":
         return _execute_agent_generator(goal, ui, llm_client, logger)
-    return _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options)
+    return _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options, context=execution_context)
 
 
 def _classify_task_route(task: str) -> "TaskRouteMetadata":
@@ -584,6 +622,7 @@ def _execute_autopilot(
     llm_client,
     logger,
     runtime_options: OpenPilotRuntimeOptions | None = None,
+    context: dict[str, object] | None = None,
 ):
     """Execute goal using intelligent autopilot with enhanced UI."""
     from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
@@ -593,6 +632,7 @@ def _execute_autopilot(
     runtime_options = runtime_options or OpenPilotRuntimeOptions()
 
     try:
+        diagnostics_hooks = get_default_hooks() if _runtime_diagnostics_enabled() else None
         # Create autopilot with enhanced UI support
         autopilot = IntelligentAutopilot(
             llm_client=llm_client or LLMClient(),
@@ -605,6 +645,7 @@ def _execute_autopilot(
             enable_iterative_improvement=runtime_options.enable_iterative_improvement,
             required_successful_improvements=runtime_options.improvement_iterations,
             prompt_for_project_improvement_iterations=runtime_options.prompt_for_project_improvement_iterations,
+            runtime_diagnostics_hooks=diagnostics_hooks,
         )
 
         # Execute with live session
@@ -613,7 +654,7 @@ def _execute_autopilot(
                 ui.create_status_panel("Autopilot Mode", "Intelligent task decomposition and execution...")
             )
 
-            result = autopilot.execute(goal)
+            result = autopilot.execute(goal, context=dict(context or {}))
 
             # Final status is already shown in the layout by autopilot
             # Just add a small delay to let user see it

@@ -8,6 +8,7 @@ import textwrap
 import uuid
 from pathlib import Path
 
+from memory.project_path_resolver import ensure_resolved_path
 from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
 
 from core.tool_contracts import PermissionLevel, ToolCapability, ToolDefinition, ToolFailureMode
@@ -94,7 +95,17 @@ def _source_from_params(params: dict[str, object]) -> str:
     file_path = params.get("file_path")
     if not file_path:
         raise ValueError("code_editor requires file_path or code")
-    path = Path(str(file_path)).expanduser()
+    project_path = params.get("project_path")
+    path = (
+        ensure_resolved_path(
+            file_path,
+            project_path,
+            operation="read",
+            intent_kind="existing_file",
+        )
+        if project_path
+        else Path(str(file_path)).expanduser()
+    )
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"Code edit target file not found: {path}")
     return path.read_text(encoding=str(params.get("encoding") or "utf-8"))

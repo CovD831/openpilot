@@ -7,15 +7,19 @@ import uuid
 import shlex
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from autonomous_iteration.task_models import TaskStatus
+from core.semantic_types import TaskCard
 from core.exceptions import InvalidLLMResponseError, LLMProviderError, LLMTimeoutError
+from memory.project_path_resolver import ProjectPathResolver, ground_command_paths_within_project
 from metadata import (
     AgentPhase,
     DecisionNeedMetadata,
     EditPlanMetadata,
+    FailureMetadata,
     GuardDecisionMetadata,
+    PathIntentMetadata,
     RuntimeReportMetadata,
     RuntimeStateMetadata,
     ToolDecisionMetadata,
@@ -23,6 +27,7 @@ from metadata import (
     VerificationPlanMetadata,
 )
 from tools.tool_selection import SelectionReason, ToolSelection
+from utils.path_boundary import resolve_project_path
 
 
 WRITE_TOOLS = {"file_writer", "file_patch_writer", "file_delete_tool"}
@@ -41,6 +46,24 @@ NON_EXECUTABLE_FILE_SUFFIXES = {
     ".yaml",
     ".yml",
 }
+READ_ONLY_TASK_TAGS = {"analysis", "inspect", "inspection", "investigate", "readonly", "read_only", "understanding"}
+READ_ONLY_TASK_TYPES = {"analysis", "inspection", "investigation", "document_summary", "codebase_understanding"}
+READ_ONLY_TASK_TERMS = (
+    "analy",
+    "architecture",
+    "explain",
+    "inspect",
+    "investigate",
+    "review",
+    "trace",
+    "分析",
+    "排查",
+    "梳理",
+    "理解",
+    "解释",
+    "取证",
+)
+READ_ONLY_BLOCKED_TOOLS = WRITE_TOOLS | {"bug_fix_tool", "code_generator", "code_unit_generator", "code_editor", "code_executor", "readme_tool"}
 RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "forbidden": 3}
 PHASE_SEQUENCE = [
     AgentPhase.UNDERSTAND_TASK,
@@ -52,6 +75,72 @@ PHASE_SEQUENCE = [
     AgentPhase.REPLAN,
     AgentPhase.SUMMARIZE,
 ]
+
+
+def is_read_only_analysis_goal(
+    goal: str,
+    *,
+    tags: list[str] | None = None,
+    task_type: str = "",
+) -> bool:
+    normalized_tags = {str(tag or "").strip().lower() for tag in tags or [] if str(tag or "").strip()}
+    if normalized_tags.intersection(READ_ONLY_TASK_TAGS):
+        return True
+    normalized_task_type = str(task_type or "").strip().lower()
+    if normalized_task_type in READ_ONLY_TASK_TYPES:
+        return True
+    lowered_goal = str(goal or "").strip().lower()
+    if not lowered_goal:
+        return False
+    return any(term in lowered_goal for term in READ_ONLY_TASK_TERMS)
+
+
+def apply_read_only_runtime_mode(
+    state: RuntimeStateMetadata,
+    goal: str,
+    *,
+    tags: list[str] | None = None,
+    task_type: str = "",
+) -> bool:
+    if not is_read_only_analysis_goal(goal, tags=tags, task_type=task_type):
+        return False
+    marker = "runtime_mode:read_only_analysis"
+    if marker not in state.assumptions:
+        state.add_assumption(marker)
+    state.add_fact("Task classified as read-only analysis; gather evidence before any mutation.")
+    return True
+
+
+def _state_is_read_only_analysis(state: RuntimeStateMetadata) -> bool:
+    return "runtime_mode:read_only_analysis" in state.assumptions
+
+
+def _command_looks_mutating(command: str) -> bool:
+    lowered = f" {str(command or '').lower()} "
+    patterns = (
+        " rm ",
+        " mv ",
+        " cp ",
+        " mkdir ",
+        " touch ",
+        " chmod ",
+        " chown ",
+        " tee ",
+        " pip install ",
+        " pip3 install ",
+        " npm install ",
+        " npm add ",
+        " pnpm add ",
+        " yarn add ",
+        " git checkout ",
+        " git switch ",
+        " git commit ",
+        " git reset ",
+        " git clean ",
+        " git apply ",
+        " git am ",
+    )
+    return any(pattern in lowered for pattern in patterns) or " >" in lowered or ">>" in lowered or "sed -i" in lowered
 
 
 def _phase_value(phase: AgentPhase | str) -> str:
@@ -102,6 +191,11 @@ class RuntimeGuard:
                 attributes={"requires_user_confirmation": True, "tool_name": tool_name},
             )
 
+        if _state_is_read_only_analysis(state):
+            read_only_block = self._read_only_restriction(state, need, tool_name)
+            if read_only_block is not None:
+                return read_only_block
+
         read_count = 1 if tool_name in READ_TOOLS else 0
         file_path = need.target_path or need.attributes.get("file_path")
         operation_kind = need.operation_kind or need.attributes.get("operation_kind")
@@ -120,6 +214,60 @@ class RuntimeGuard:
             risk_level=need.risk_level,
             attributes={"requires_confirmation": self.requires_confirmation(tool_name, need)},
         )
+
+    def _read_only_restriction(
+        self,
+        state: RuntimeStateMetadata,
+        need: DecisionNeedMetadata,
+        tool_name: str,
+    ) -> GuardDecisionMetadata | None:
+        if tool_name in READ_ONLY_BLOCKED_TOOLS:
+            return GuardDecisionMetadata(
+                approved=False,
+                reason=f"Read-only analysis task cannot use mutation tool '{tool_name}'. Gather evidence first and wait for explicit write mode.",
+                risk_level=need.risk_level,
+                attributes={"guard_kind": "read_only_analysis", "tool_name": tool_name},
+            )
+        if tool_name == "command_executor" and _command_looks_mutating(need.command or ""):
+            return GuardDecisionMetadata(
+                approved=False,
+                reason="Read-only analysis task cannot run mutating shell commands.",
+                risk_level=need.risk_level,
+                attributes={"guard_kind": "read_only_analysis", "command": need.command or ""},
+            )
+        if self._read_only_file_read_lacks_project_context(state, need, tool_name):
+            return GuardDecisionMetadata(
+                approved=False,
+                reason=(
+                    "Read-only analysis file reads require project_path/cwd or prior path evidence before "
+                    "reading a model-proposed path."
+                ),
+                risk_level=need.risk_level,
+                attributes={"guard_kind": "read_only_path_grounding", "tool_name": tool_name},
+            )
+        return None
+
+    def _read_only_file_read_lacks_project_context(
+        self,
+        state: RuntimeStateMetadata,
+        need: DecisionNeedMetadata,
+        tool_name: str,
+    ) -> bool:
+        if tool_name != "file_reader":
+            return False
+        attrs = need.attributes or {}
+        if attrs.get("project_path") or attrs.get("cwd"):
+            return False
+        raw_path = str(need.target_path or attrs.get("file_path") or "").strip()
+        if not raw_path:
+            return False
+        if raw_path in state.candidate_files or raw_path in state.selected_files:
+            return False
+        path = Path(raw_path).expanduser()
+        if path.is_absolute():
+            hallucinated_roots = ("/workspace/openpilot", "/workspace/project", "/openpilot")
+            return raw_path.rstrip("/") in hallucinated_roots or raw_path.startswith(tuple(f"{root}/" for root in hallucinated_roots))
+        return raw_path not in {".", "./"}
 
     def requires_confirmation(self, tool_name: str, need: DecisionNeedMetadata, registry: Any | None = None) -> bool:
         if self._risk_value(need.risk_level) >= self._risk_value("high"):
@@ -172,11 +320,12 @@ class ToolRouter:
                     "tool_name": tool_name,
                     "approved": False,
                     "reason": guard_decision.reason,
+                    "guard_kind": guard_decision.attributes.get("guard_kind", ""),
                 }
             )
             return []
 
-        input_metadata = self._input_for_need(tool_name, need)
+        input_metadata = self._input_for_need(state, tool_name, need)
         if input_metadata is None:
             state.add_unknown(need.question)
             return []
@@ -263,23 +412,66 @@ class ToolRouter:
             return "readme_tool"
         return None
 
-    def _input_for_need(self, tool_name: str, need: DecisionNeedMetadata) -> ToolInputMetadata | None:
+    def _input_for_need(self, state: RuntimeStateMetadata, tool_name: str, need: DecisionNeedMetadata) -> ToolInputMetadata | None:
         attrs = dict(need.attributes)
+        project_path = self._project_root_from_attrs(attrs)
         if tool_name == "file_reader":
             file_path = need.target_path or attrs.get("file_path")
             if not file_path:
                 return None
-            if self._path_is_existing_directory(file_path):
+            resolved_file_path = self._resolve_single_path(
+                state,
+                raw_path=file_path,
+                project_path=project_path,
+                operation="read",
+                intent_kind="existing_file",
+                source=f"{tool_name}:file_path",
+                evidence=[need.question],
+            )
+            if not resolved_file_path or self._path_is_existing_directory(resolved_file_path):
                 return None
-            return ToolInputMetadata.from_mapping(tool_name, {"file_path": file_path, **attrs})
+            payload = dict(attrs)
+            payload["file_path"] = resolved_file_path
+            if project_path:
+                payload["project_path"] = project_path
+            return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "multi_file_reader":
             payload: dict[str, Any] = dict(attrs)
             if need.candidate_paths:
-                payload["file_paths"] = need.candidate_paths
+                payload["file_paths"] = self._resolve_many_paths(
+                    state,
+                    raw_paths=need.candidate_paths,
+                    project_path=project_path,
+                    operation="read",
+                    intent_kind="existing_file",
+                    source=f"{tool_name}:file_paths",
+                    evidence=[need.question],
+                )
+                if not payload["file_paths"]:
+                    return None
             elif need.target_path:
-                payload["directory_path"] = need.target_path
+                resolved_directory = self._resolve_single_path(
+                    state,
+                    raw_path=need.target_path,
+                    project_path=project_path,
+                    operation="read",
+                    intent_kind="existing_directory",
+                    source=f"{tool_name}:directory_path",
+                    evidence=[need.question],
+                )
+                if not resolved_directory:
+                    return None
+                payload["directory_path"] = resolved_directory
+            elif project_path and self._looks_like_project_root_read_need(need):
+                payload["directory_path"] = project_path
             if payload.get("directory_path") and not payload.get("pattern"):
-                payload["pattern"] = "*"
+                if self._should_use_directory_sketch(need, payload):
+                    payload["pattern"] = "sketch.json"
+                    payload.setdefault("max_files", 1)
+                else:
+                    payload["pattern"] = "*"
+            if project_path:
+                payload["project_path"] = project_path
             if not payload.get("file_paths") and not payload.get("directory_path"):
                 return None
             return ToolInputMetadata.from_mapping(tool_name, payload)
@@ -290,7 +482,34 @@ class ToolRouter:
             command = need.command or attrs.get("command")
             if not command:
                 return None
-            return ToolInputMetadata.from_mapping(tool_name, {"command": command, "mode": attrs.get("mode", "automatic"), **attrs})
+            payload = {"command": command, "mode": attrs.get("mode", "automatic"), **attrs}
+            cwd = attrs.get("cwd") or project_path
+            if cwd and project_path:
+                resolved_cwd = self._resolve_single_path(
+                    state,
+                    raw_path=cwd,
+                    project_path=project_path,
+                    operation="execute",
+                    intent_kind="command_cwd",
+                    source=f"{tool_name}:cwd",
+                    evidence=[need.question, command],
+                )
+                if not resolved_cwd:
+                    return None
+                payload["cwd"] = resolved_cwd
+            if project_path:
+                resolved_command = self._resolve_command_text(
+                    state,
+                    command=command,
+                    project_path=project_path,
+                    source=f"{tool_name}:command",
+                    evidence=[need.question, command],
+                )
+                if not resolved_command:
+                    return None
+                payload["command"] = resolved_command
+                payload["project_path"] = project_path
+            return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "bug_fix_tool":
             command = need.command or attrs.get("command")
             file_paths = attrs.get("file_paths") or need.candidate_paths
@@ -298,7 +517,20 @@ class ToolRouter:
                 return None
             payload = dict(attrs)
             payload["command"] = command
-            payload["file_paths"] = file_paths
+            if project_path:
+                payload["file_paths"] = self._resolve_many_paths(
+                    state,
+                    raw_paths=file_paths,
+                    project_path=project_path,
+                    operation="read",
+                    intent_kind="existing_file",
+                    source=f"{tool_name}:file_paths",
+                    evidence=[need.question, command],
+                )
+                if not payload["file_paths"]:
+                    return None
+            else:
+                payload["file_paths"] = file_paths
             return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "file_writer":
             file_path = need.target_path or attrs.get("file_path")
@@ -306,9 +538,25 @@ class ToolRouter:
             if not file_path:
                 return None
             payload = dict(attrs)
-            payload["file_path"] = file_path
+            if project_path:
+                requested_operation_kind = need.operation_kind or attrs.get("operation_kind")
+                intent_kind = "planned_new_file" if str(requested_operation_kind or "").lower() in FILE_CREATE_OPERATIONS else "existing_file"
+                resolved_file_path = self._resolve_single_path(
+                    state,
+                    raw_path=file_path,
+                    project_path=project_path,
+                    operation="write",
+                    intent_kind=intent_kind,
+                    source=f"{tool_name}:file_path",
+                    evidence=[need.question],
+                )
+                if not resolved_file_path:
+                    return None
+                payload["file_path"] = resolved_file_path
+            else:
+                payload["file_path"] = file_path
             operation_kind = self._file_writer_operation_kind(
-                file_path,
+                payload["file_path"],
                 need.operation_kind or attrs.get("operation_kind"),
                 attrs.get("overwrite", True),
             )
@@ -316,13 +564,26 @@ class ToolRouter:
                 payload["operation_kind"] = operation_kind
             if content is not None:
                 payload["content"] = content
+            if project_path:
+                payload["project_path"] = project_path
             return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "file_patch_writer":
             file_path = need.target_path or attrs.get("file_path")
             if not file_path:
                 return None
+            resolved_file_path = self._resolve_single_path(
+                state,
+                raw_path=file_path,
+                project_path=project_path,
+                operation="patch",
+                intent_kind="existing_file",
+                source=f"{tool_name}:file_path",
+                evidence=[need.question],
+            )
+            if not resolved_file_path:
+                return None
             payload = {
-                "file_path": file_path,
+                "file_path": resolved_file_path,
                 "operation_kind": need.operation_kind or attrs.get("operation_kind") or "modify_symbol",
                 "target_scope": need.target_scope or attrs.get("target_scope"),
                 "symbol_name": need.symbol_name or attrs.get("symbol_name"),
@@ -331,14 +592,29 @@ class ToolRouter:
                 "patch_mode": need.patch_mode or attrs.get("patch_mode"),
                 **attrs,
             }
+            if project_path:
+                payload["project_path"] = project_path
             return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "file_delete_tool":
             file_path = need.target_path or attrs.get("file_path")
             if not file_path:
                 return None
+            resolved_file_path = self._resolve_single_path(
+                state,
+                raw_path=file_path,
+                project_path=project_path,
+                operation="delete",
+                intent_kind="existing_file",
+                source=f"{tool_name}:file_path",
+                evidence=[need.question],
+            )
+            if not resolved_file_path:
+                return None
             payload = dict(attrs)
-            payload["file_path"] = file_path
+            payload["file_path"] = resolved_file_path
             payload["operation_kind"] = need.operation_kind or attrs.get("operation_kind") or "delete_file"
+            if project_path:
+                payload["project_path"] = project_path
             return ToolInputMetadata.from_mapping(tool_name, payload)
         if tool_name == "code_generator":
             task_description = attrs.get("task_description") or need.question
@@ -353,12 +629,26 @@ class ToolRouter:
             )
         if tool_name == "code_unit_generator":
             task_description = attrs.get("task_description") or need.question
+            file_path = need.target_path or attrs.get("file_path")
+            if file_path and project_path:
+                resolved_file_path = self._resolve_single_path(
+                    state,
+                    raw_path=file_path,
+                    project_path=project_path,
+                    operation="read",
+                    intent_kind="existing_file",
+                    source=f"{tool_name}:file_path",
+                    evidence=[need.question],
+                )
+                if not resolved_file_path:
+                    return None
+                file_path = resolved_file_path
             return ToolInputMetadata.from_mapping(
                 tool_name,
                 {
                     "task_description": task_description,
                     "language": attrs.get("language", "python"),
-                    "file_path": need.target_path or attrs.get("file_path"),
+                    "file_path": file_path,
                     "operation_kind": need.operation_kind or attrs.get("operation_kind") or "add_symbol",
                     "target_scope": need.target_scope or attrs.get("target_scope") or "symbol",
                     "symbol_name": need.symbol_name or attrs.get("symbol_name"),
@@ -369,12 +659,26 @@ class ToolRouter:
             )
         if tool_name == "code_editor":
             task_description = attrs.get("task_description") or need.question
+            file_path = need.target_path or attrs.get("file_path")
+            if file_path and project_path:
+                resolved_file_path = self._resolve_single_path(
+                    state,
+                    raw_path=file_path,
+                    project_path=project_path,
+                    operation="read",
+                    intent_kind="existing_file",
+                    source=f"{tool_name}:file_path",
+                    evidence=[need.question],
+                )
+                if not resolved_file_path:
+                    return None
+                file_path = resolved_file_path
             return ToolInputMetadata.from_mapping(
                 tool_name,
                 {
                     "task_description": task_description,
                     "language": attrs.get("language", "python"),
-                    "file_path": need.target_path or attrs.get("file_path"),
+                    "file_path": file_path,
                     "operation_kind": need.operation_kind or attrs.get("operation_kind") or "modify_symbol",
                     "target_scope": need.target_scope or attrs.get("target_scope") or "symbol",
                     "symbol_name": need.symbol_name or attrs.get("symbol_name"),
@@ -396,14 +700,115 @@ class ToolRouter:
                 },
             )
         if tool_name == "readme_tool":
-            project_path = need.target_path or attrs.get("project_path")
-            if not project_path:
+            readme_project = need.target_path or attrs.get("project_path")
+            if not readme_project:
                 return None
-            project_path = self._readme_project_path(project_path)
+            readme_project = self._readme_project_path(readme_project)
+            if project_path:
+                readme_project = self._resolve_single_path(
+                    state,
+                    raw_path=readme_project,
+                    project_path=project_path,
+                    operation="read",
+                    intent_kind="existing_directory",
+                    source=f"{tool_name}:project_path",
+                    evidence=[need.question],
+                )
+                if not readme_project:
+                    return None
             payload = dict(attrs)
-            payload["project_path"] = project_path
+            payload["project_path"] = readme_project
             return ToolInputMetadata.from_mapping(tool_name, payload)
         return None
+
+    def _project_root_from_attrs(self, attrs: dict[str, Any]) -> str:
+        raw_project = attrs.get("project_path") or attrs.get("cwd") or ""
+        if not raw_project:
+            return ""
+        return str(resolve_project_path(raw_project))
+
+    def _resolve_single_path(
+        self,
+        state: RuntimeStateMetadata,
+        *,
+        raw_path: Any,
+        project_path: str,
+        operation: str,
+        intent_kind: str,
+        source: str,
+        evidence: list[str] | None = None,
+    ) -> str | None:
+        if not raw_path:
+            return None
+        if not project_path:
+            return str(Path(str(raw_path)).expanduser())
+        resolver = ProjectPathResolver(project_path)
+        intent = PathIntentMetadata(
+            project_root=project_path,
+            raw_path=str(raw_path),
+            intent_kind=intent_kind,
+            operation=operation,
+            source=source,
+            evidence=list(evidence or []),
+        )
+        state.record_path_intent(intent)
+        resolution = resolver.resolve(intent)
+        state.record_path_resolution(resolution)
+        if resolution.status in {"blocked", "ambiguous"}:
+            state.add_unknown(resolution.reason or f"Could not resolve path for {source}")
+            return None
+        return resolution.resolved_path
+
+    def _resolve_many_paths(
+        self,
+        state: RuntimeStateMetadata,
+        *,
+        raw_paths: list[str],
+        project_path: str,
+        operation: str,
+        intent_kind: str,
+        source: str,
+        evidence: list[str] | None = None,
+    ) -> list[str]:
+        resolved: list[str] = []
+        for raw_path in raw_paths:
+            grounded = self._resolve_single_path(
+                state,
+                raw_path=raw_path,
+                project_path=project_path,
+                operation=operation,
+                intent_kind=intent_kind,
+                source=source,
+                evidence=evidence,
+            )
+            if grounded:
+                resolved.append(grounded)
+        return list(dict.fromkeys(resolved))
+
+    def _resolve_command_text(
+        self,
+        state: RuntimeStateMetadata,
+        *,
+        command: str,
+        project_path: str,
+        source: str,
+        evidence: list[str] | None = None,
+    ) -> str | None:
+        grounded_command, intents, resolutions = ground_command_paths_within_project(
+            command,
+            project_path,
+            source=source,
+            evidence=evidence,
+        )
+        for intent in intents:
+            state.record_path_intent(intent)
+        for resolution in resolutions:
+            state.record_path_resolution(resolution)
+        blocking = next((item for item in resolutions if item.status in {"blocked", "ambiguous"}), None)
+        if blocking is not None:
+            state.add_unknown(blocking.reason or f"Could not resolve command path for {source}")
+            return None
+        return grounded_command
 
     def _readme_project_path(self, project_path: Any) -> str:
         path = Path(str(project_path)).expanduser()
@@ -441,6 +846,31 @@ class ToolRouter:
             "folder contents",
         )
         return any(token in question for token in directory_tokens)
+
+    def _looks_like_project_root_read_need(self, need: DecisionNeedMetadata) -> bool:
+        need_type = str(need.need_type or "").lower().replace("-", "_")
+        if need_type in {"project_structure", "directory_read", "read_directory", "multi_file_read"}:
+            return True
+        text = f"{need.question} {need.target_path or ''}".lower()
+        return "project" in text and any(term in text for term in ("structure", "directory", "root", "files"))
+
+    def _should_use_directory_sketch(self, need: DecisionNeedMetadata, payload: dict[str, Any]) -> bool:
+        if payload.get("file_paths"):
+            return False
+        need_type = str(need.need_type or "").lower().replace("-", "_")
+        if need_type in {"project_structure", "directory_read", "read_directory", "multi_file_read"}:
+            return True
+        question = f"{need.question} {need.decision_to_unlock or ''}".lower()
+        return any(
+            token in question
+            for token in (
+                "project structure",
+                "files and directories",
+                "directories exist",
+                "what files exist",
+                "directory listing",
+            )
+        )
 
     def _path_is_existing_directory(self, path_value: Any) -> bool:
         try:
@@ -587,8 +1017,14 @@ class EditGuard:
 class StateUpdater:
     """Absorb tool results into explicit runtime state."""
 
-    def __init__(self, guard: RuntimeGuard | None = None) -> None:
+    def __init__(
+        self,
+        guard: RuntimeGuard | None = None,
+        *,
+        state_event_sink: Callable[[RuntimeStateMetadata, str, str], None] | None = None,
+    ) -> None:
         self.guard = guard or RuntimeGuard()
+        self.state_event_sink = state_event_sink
 
     def apply_tool_result(
         self,
@@ -596,6 +1032,8 @@ class StateUpdater:
         selection: ToolSelection,
         execution_result: Any,
     ) -> RuntimeStateMetadata:
+        previous_phase = _phase_value(state.phase)
+        previous_verification_status = str(state.verification_status or "")
         progress_before = self._progress_signature(state)
         tool_name = selection.tool_name
         success = bool(getattr(execution_result, "success", False))
@@ -629,6 +1067,7 @@ class StateUpdater:
                 state.request_replan(replan_reason)
             else:
                 state.phase = AgentPhase.RECOVER
+            self._emit_state_changes(state, previous_phase, previous_verification_status)
             return state
 
         matching_decisions = [decision for decision in state.decision_history if decision.selected_tool == tool_name]
@@ -644,7 +1083,23 @@ class StateUpdater:
             state.add_fact(f"Reference search completed for: {input_params.get('query', '')}".strip())
 
         self._update_progress_stop_condition(state, progress_before)
+        self._emit_state_changes(state, previous_phase, previous_verification_status)
         return state
+
+    def _emit_state_changes(
+        self,
+        state: RuntimeStateMetadata,
+        previous_phase: str,
+        previous_verification_status: str,
+    ) -> None:
+        if self.state_event_sink is None:
+            return
+        current_phase = _phase_value(state.phase)
+        current_verification_status = str(state.verification_status or "")
+        if current_phase != previous_phase:
+            self.state_event_sink(state, "phase", previous_phase)
+        if current_verification_status != previous_verification_status:
+            self.state_event_sink(state, "verification", previous_verification_status)
 
     def next_phase(self, state: RuntimeStateMetadata) -> AgentPhase:
         if _phase_value(state.phase) in {AgentPhase.BLOCKED.value, AgentPhase.RECOVER.value, AgentPhase.SUMMARIZE.value}:
@@ -788,6 +1243,7 @@ class RuntimeReporter:
             completion_reason=state.completion_reason,
             known_facts=list(state.known_facts),
             unresolved_questions=list(state.unknowns),
+            path_resolutions=list(state.path_resolutions),
             selected_files=dict(state.selected_files),
             modified_files=list(state.modified_files),
             planned_edits=list(state.planned_edits),
@@ -852,7 +1308,7 @@ class _RuntimeSessionExecutor:
                 current_stage="Semantic Analysis",
             )
             with runtime.tracker.track_task("Semantic Analysis", {"goal": goal}):
-                semantic = self._analyze_goal(goal)
+                semantic = self._analyze_goal(goal, task_id=str(context.get("task_id") or ""))
 
             stage_statuses["Semantic Analysis"] = "completed"
             runtime.enhanced_ui.set_task_graph_state(stage_statuses=stage_statuses)
@@ -1030,7 +1486,7 @@ class _RuntimeSessionExecutor:
             runtime._show_start_panel(goal)
 
             runtime.console.print("[bold cyan]🧠 Analyzing goal...[/bold cyan]")
-            semantic = self._analyze_goal(goal)
+            semantic = self._analyze_goal(goal, task_id=str(context.get("task_id") or ""))
             runtime.console.print(f"  • Task type: [cyan]{semantic.task_type.value}[/cyan]")
             runtime.console.print(
                 f"  • Risk level: [{'red' if semantic.risk_level.value == 'high' else 'yellow' if semantic.risk_level.value == 'medium' else 'green'}]{semantic.risk_level.value}[/]"
@@ -1140,11 +1596,30 @@ class _RuntimeSessionExecutor:
             self._log("session_failed", success=False, error=str(exc))
             raise
 
-    def _analyze_goal(self, goal: str) -> Any:
+    def _analyze_goal(self, goal: str, *, task_id: str = "") -> Any:
         runtime = self.runtime
         analyzer = runtime.semantic_analyzer
         try:
-            return analyzer.analyze_goal(goal)
+            semantic = analyzer.analyze_goal(goal)
+            hooks = getattr(runtime, "runtime_diagnostics_hooks", None)
+            if hooks:
+                task_card = TaskCard(
+                    goal=goal,
+                    task_type=semantic.task_type,
+                    risk_level=semantic.risk_level,
+                    required_resources=list(semantic.required_resources),
+                    expected_deliverables=list(semantic.expected_deliverables),
+                    constraints=[],
+                    context={},
+                )
+                resolved_task_id = str(task_id or getattr(runtime, "session_id", "") or "unknown")
+                session_id = str(getattr(runtime, "session_id", "") or resolved_task_id)
+                hooks.on_task_card_ready(
+                    task_id=resolved_task_id,
+                    task_card=task_card,
+                    session_id=session_id,
+                )
+            return semantic
         except (InvalidLLMResponseError, LLMProviderError, LLMTimeoutError) as exc:
             fallback = getattr(analyzer, "fallback_goal_analysis", None)
             if not callable(fallback):
@@ -1542,7 +2017,11 @@ class AgentRuntimeController:
         self.runtime = runtime
         self.runtime_guard = runtime_guard or RuntimeGuard()
         self.router = router or ToolRouter(getattr(runtime, "tool_registry", None), guard=self.runtime_guard)
-        self.state_updater = state_updater or StateUpdater(self.runtime_guard)
+        self._active_task_id: str = ""
+        self.state_updater = state_updater or StateUpdater(
+            self.runtime_guard,
+            state_event_sink=self._handle_state_event_change,
+        )
         self.file_selector = file_selector or FileSelector()
         self.edit_guard = edit_guard or EditGuard()
         self.verifier = verifier or RuntimeVerifier()
@@ -1555,16 +2034,35 @@ class AgentRuntimeController:
         context = context or {}
         state = RuntimeStateMetadata(goal=goal)
         self.state = state
+        self._active_task_id = str(context.get("task_id") or getattr(self.runtime, "session_id", "") or "")
+        apply_read_only_runtime_mode(
+            state,
+            goal,
+            tags=[str(tag) for tag in context.get("tags") or []],
+            task_type=str(context.get("task_type") or ""),
+        )
         state.add_fact(f"User goal captured: {goal}")
         if context.get("project_path"):
             state.add_fact(f"Project path: {context['project_path']}")
             state.add_candidate_file(str(context["project_path"]), "project_path provided by caller")
         state.phase = AgentPhase.UNDERSTAND_PROJECT if context.get("project_path") else AgentPhase.UNDERSTAND_TASK
+        self._emit_runtime_phase_change("", _phase_value(state.phase), state.verification_status, state.completion_reason, state)
 
         try:
             result = self.session_executor.run(goal, context, mode=mode)
-        except Exception:
+        except Exception as exc:
             state.phase = AgentPhase.RECOVER
+            hooks = getattr(self.runtime, "runtime_diagnostics_hooks", None)
+            if hooks:
+                hooks.on_failure(
+                    FailureMetadata(
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                        recoverable=False,
+                    ),
+                    source="runtime_failure",
+                    task_id=str(context.get("task_id") or getattr(self.runtime, "session_id", "") or ""),
+                )
             raise
 
         if isinstance(result, dict):
@@ -1576,6 +2074,8 @@ class AgentRuntimeController:
         return self._runtime_result(state, {"result": result, "success": bool(result)})
 
     def _absorb_session_result(self, state: RuntimeStateMetadata, result: dict[str, Any]) -> None:
+        previous_phase = _phase_value(state.phase)
+        previous_verification_status = str(state.verification_status or "")
         success = bool(result.get("success"))
         stats = result.get("stats")
         if isinstance(stats, dict):
@@ -1588,9 +2088,33 @@ class AgentRuntimeController:
             state.verification_status = "passed" if success else "failed"
         state.phase = AgentPhase.SUMMARIZE if success else AgentPhase.RECOVER
         state.completion_reason = "runtime session completed" if success else str(result.get("error") or "runtime session failed")
+        if _phase_value(state.phase) != previous_phase:
+            self._emit_runtime_phase_change(previous_phase, _phase_value(state.phase), state.verification_status, state.completion_reason, state)
+        if str(state.verification_status or "") != previous_verification_status:
+            self._emit_verification_state_change(previous_verification_status, str(state.verification_status or ""), _phase_value(state.phase), state.completion_reason, state)
 
     def _runtime_result(self, state: RuntimeStateMetadata, session_result: dict[str, Any]) -> dict[str, Any]:
         report = self.reporter.report(state)
+        hooks = getattr(self.runtime, "runtime_diagnostics_hooks", None)
+        if hooks:
+            root_task_id = self._active_task_id or str(getattr(self.runtime, "session_id", "") or "")
+            hooks.on_runtime_state_updated(state)
+            if bool(session_result.get("success")) and report.residual_risks:
+                hooks.on_suspicious_success(
+                    task_id=root_task_id,
+                    evidence=list(report.residual_risks),
+                )
+            hooks.on_task_finished(
+                task_id=root_task_id,
+                success=bool(session_result.get("success")),
+                summary={
+                    "phase": state.phase.value if hasattr(state.phase, "value") else str(state.phase),
+                    "verification_status": state.verification_status,
+                    "modified_files": list(state.modified_files),
+                    "completion_reason": state.completion_reason,
+                },
+                session_id=str(getattr(self.runtime, "session_id", "") or ""),
+            )
         result = {
             "success": bool(session_result.get("success")),
             "goal": state.goal,
@@ -1615,6 +2139,67 @@ class AgentRuntimeController:
             if value not in (None, "", [], {}):
                 result[key] = value
         return result
+
+    def _handle_state_event_change(self, state: RuntimeStateMetadata, change_kind: str, previous_value: str) -> None:
+        if change_kind == "phase":
+            self._emit_runtime_phase_change(
+                previous_value,
+                _phase_value(state.phase),
+                str(state.verification_status or ""),
+                state.completion_reason,
+                state,
+            )
+            return
+        if change_kind == "verification":
+            self._emit_verification_state_change(
+                previous_value,
+                str(state.verification_status or ""),
+                _phase_value(state.phase),
+                state.completion_reason,
+                state,
+            )
+
+    def _emit_runtime_phase_change(
+        self,
+        previous_phase: str,
+        phase: str,
+        verification_status: str,
+        completion_reason: str,
+        state: RuntimeStateMetadata,
+    ) -> None:
+        hooks = getattr(self.runtime, "runtime_diagnostics_hooks", None)
+        if not hooks:
+            return
+        hooks.on_runtime_phase_changed(
+            task_id=self._active_task_id or str(getattr(self.runtime, "session_id", "") or ""),
+            session_id=str(getattr(self.runtime, "session_id", "") or ""),
+            previous_phase=previous_phase,
+            phase=phase,
+            verification_status=verification_status,
+            completion_reason=completion_reason,
+            state=state,
+        )
+
+    def _emit_verification_state_change(
+        self,
+        previous_status: str,
+        verification_status: str,
+        phase: str,
+        reason: str,
+        state: RuntimeStateMetadata,
+    ) -> None:
+        hooks = getattr(self.runtime, "runtime_diagnostics_hooks", None)
+        if not hooks:
+            return
+        hooks.on_verification_state_changed(
+            task_id=self._active_task_id or str(getattr(self.runtime, "session_id", "") or ""),
+            session_id=str(getattr(self.runtime, "session_id", "") or ""),
+            previous_status=previous_status,
+            verification_status=verification_status,
+            phase=phase,
+            reason=reason,
+            state=state,
+        )
 
     def handle_streamed_need(self, need: DecisionNeedMetadata) -> list[ToolSelection]:
         """Interrupt generation for one need and route it through the runtime state."""

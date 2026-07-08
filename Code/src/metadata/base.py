@@ -82,6 +82,8 @@ class MetadataKind(str, Enum):
     EXECUTION_STATE = "execution_state"
     RUNTIME_BUDGET = "runtime_budget"
     RUNTIME_STATE = "runtime_state"
+    PATH_INTENT = "path_intent"
+    PATH_RESOLUTION = "path_resolution"
     DECISION_NEED = "decision_need"
     EDIT_PLAN = "edit_plan"
     VERIFICATION_PLAN = "verification_plan"
