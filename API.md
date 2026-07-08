@@ -29,6 +29,9 @@
 - Input: plan step, available tool registry, permission policy.
 - Output: selected tool and invocation schema.
 - Responsibility: choose API tools, local tools, browser automation, GUI agent, file system access, or local model execution.
+- Current runtime note: the planner no longer receives the full tool registry on every turn. It first sees a compact
+  **planning surface** (need catalog + core capability cards + deferred capability cards). The runtime then maps
+  `decision_needs` to concrete tools through `ToolRouter`.
 
 ### Executor
 
@@ -112,7 +115,36 @@ Tool execution uses typed metadata:
 Result metadata uses `status`. Successful results put data in `result`; failed
 or timed-out results put structured error details in `failure`.
 
+Path-sensitive runtime actions additionally emit:
+
+- `PathIntentMetadata`: what raw path the planner/runtime wanted to use, for what operation, and under which project root.
+- `PathResolutionMetadata`: how that path was grounded (resolved, corrected, planned, ambiguous, or blocked), including whether `sketch.json` or file indexes were used.
+
+When `project_path` is available, path governance now covers both explicit tool
+path fields and absolute path fragments embedded inside command strings. For
+example, `command_executor` grounds `cwd` plus command arguments such as
+`python /workspace/openpilot/src/ui/cli.py` before execution, and blocks
+absolute paths that escape the declared project boundary.
+
 ### Autonomous Planning Types
+
+`PlanningSurfaceCard` (runtime-internal, prompt-facing only):
+
+- `card_id`
+- `source_kind` (`tool` today, future-compatible with skill-backed cards)
+- `exposure` (`core`, `deferred`, `hidden`)
+- `need_types`
+- `summary`
+- `required_fields_hint`
+- `example_need`
+- `trigger_terms`
+- `backing_refs`
+
+`PlanningSurfaceCatalog`:
+
+- Built from one or more capability-card providers.
+- Today includes tool-backed cards.
+- Future skill providers can join the same planning surface without changing the `decision_needs -> ToolRouter` protocol.
 
 `ClarificationQuestion`:
 

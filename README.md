@@ -88,6 +88,7 @@ The active runtime path:
 ```text
 ui.cli -> ui.enhanced_cli -> tools.task_classifier
         -> agent_generator.runner OR autonomous_iteration.IntelligentAutopilot
+        -> planning surface (need catalog + capability cards)
         -> autonomous_iteration.AgentRuntimeController
         -> core.SemanticAnalyzer / autonomous_iteration.agents.TaskDecomposer
         -> RuntimeGuard / ToolRouter / FileSelector / EditGuard
@@ -98,13 +99,21 @@ ui.cli -> ui.enhanced_cli -> tools.task_classifier
 ```
 
 The runtime is **phase-driven**. `AgentRuntimeController` maintains an explicit
-`RuntimeStateMetadata` (current phase, known facts, unknowns, candidate/selected files,
-planned edits, modified files, tool history, verification status, risk, and bounded
-budgets). `RuntimeGuard` owns budget/risk/confirmation/stop-condition policy; `ToolRouter`
+`RuntimeStateMetadata` (current phase, known facts, unknowns, path intents/resolutions,
+candidate/selected files, planned edits, modified files, tool history, verification
+status, risk, and bounded budgets). `RuntimeGuard` owns budget/risk/confirmation/stop-condition policy; `ToolRouter`
 maps decision needs to tools; `FileSelector` promotes evidence-backed candidates to
 selected files; `EditGuard` approves scoped edit plans; `StateUpdater` folds tool results
 back into state. **Any write or code/shell execution that changes project state must be
 followed by verification (`RuntimeVerifier`) before the runtime may report success.**
+When a project root is known, the same path-governance layer now grounds not
+only file tool inputs but also absolute path fragments inside command strings,
+so hallucinated roots such as `/workspace/openpilot/...` can be corrected and
+out-of-project absolute paths can be blocked before execution.
+The planner now sees a compact **planning surface** instead of a full tool dump. That
+surface is built from capability-card providers: tool-backed cards today, with future
+skill-backed cards able to join the same prompt layer without changing the core
+`decision_needs -> ToolRouter` execution contract.
 
 ### Source layout (`Code/src/`)
 
