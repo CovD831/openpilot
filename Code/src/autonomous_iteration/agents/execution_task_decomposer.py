@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Callable
 
 from core.graph import Graph, GraphNode, GraphEdge, GraphType
-from core.llm import LLMClient, LLMMessage, LLMRequest
+from core.llm import LLMClient, LLMMessage
 from memory.context_assembly import build_context_candidate_request, build_context_llm_request
 from memory.session_constraints import build_session_constraint_candidate
 from metadata import (
@@ -26,7 +26,6 @@ from autonomous_iteration.task_models import (
     Task,
     TaskStatus,
     TaskPriority,
-    TaskDecompositionRequest,
     TaskDecompositionResult
 )
 
@@ -40,6 +39,7 @@ class TaskDecomposer:
         "codebase_understanding": "codebase_understanding",
         "document": "document",
         "documentation": "document",
+        "general": "general",
         "implement": "implement",
         "implementation": "implement",
         "inspect": "inspect",
@@ -114,7 +114,7 @@ class TaskDecomposer:
                 "task_decomposition_failed",
                 input_summary={"task_description": task_description},
                 success=False,
-                error=str(exc),
+                error=type(exc).__name__,
             )
             raise
         self._log_agent(
@@ -153,8 +153,13 @@ class TaskDecomposer:
 
         # Analyze task and generate decomposition
         decomposition = self._generate_decomposition(original_task, context)
+        if not isinstance(decomposition, dict):
+            raise ValueError("Task decomposition response must be a JSON object.")
+        raw_subtasks = decomposition.get("subtasks")
+        if not isinstance(raw_subtasks, list):
+            raise ValueError("Task decomposition subtasks must be a JSON array.")
         if self._is_simple_code_artifact(task_description):
-            decomposition["subtasks"] = self._compact_simple_code_subtasks(decomposition.get("subtasks", []))
+            decomposition["subtasks"] = self._compact_simple_code_subtasks(raw_subtasks)
 
         # Create subtasks
         subtasks = []
@@ -269,6 +274,9 @@ class TaskDecomposer:
         if not isinstance(raw_subtask, dict):
             raise ValueError("Each decomposed subtask must be a JSON object.")
         normalized = dict(raw_subtask)
+        description = normalized.get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise ValueError("Each decomposed subtask must include a description.")
         explicit_kind = normalized.get("kind") or normalized.get("task_kind")
         legacy_type = normalized.get("type")
         raw_kind = explicit_kind if explicit_kind is not None else legacy_type
@@ -278,7 +286,7 @@ class TaskDecomposer:
         kind_key = str(raw_kind).strip().lower().replace("-", "_")
         canonical = cls._TASK_KIND_ALIASES.get(kind_key)
         if canonical is None:
-            raise ValueError(f"Unsupported subtask kind: {raw_kind!r}")
+            raise ValueError("Unsupported subtask kind")
         normalized["kind"] = canonical
         return normalized
 
@@ -584,7 +592,7 @@ Context:
             import json
             return json.loads(response.content)
 
-        except Exception as e:
+        except Exception:
             # Fallback to simple decomposition
             return self._fallback_decomposition(task)
 
@@ -684,6 +692,8 @@ Context:
     def _compact_simple_code_subtasks(self, subtasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not subtasks:
             return []
+        if any(not isinstance(subtask, dict) for subtask in subtasks):
+            raise ValueError("Each decomposed subtask must be a JSON object.")
         actionable = [
             dict(subtask)
             for subtask in subtasks
@@ -754,7 +764,7 @@ Context:
             Summary text
         """
         lines = [
-            f"Task Graph Summary:",
+            "Task Graph Summary:",
             f"- Total tasks: {len(tasks)}",
             f"- Total nodes: {graph.node_count()}",
             f"- Total edges: {graph.edge_count()}",

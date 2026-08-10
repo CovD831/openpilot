@@ -4,10 +4,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from rich.console import Console
 
 from autonomous_iteration.task_models import Task, TaskDecompositionResult, TaskExecutionResult, TaskStatus
-from core.exceptions import LLMProviderError
+from core.exceptions import InvalidLLMResponseError, LLMProviderError
 from core.openpilot_log import OpenPilotLogger
 from autonomous_iteration.runtime_controller import _RuntimeSessionExecutor
 from metadata import (
@@ -59,6 +60,18 @@ class FakeTaskDecomposer:
     def assemble_results(self, original_task, subtasks):
         self.assemble_called = True
         return {"summary": original_task.description, "tasks": len(subtasks)}
+
+
+class FailingTaskDecomposer:
+    def __init__(self) -> None:
+        self.decompose_calls = 0
+
+    def decompose(self, task_description, context):
+        self.decompose_calls += 1
+        raise InvalidLLMResponseError(
+            "Task decomposition response did not match the executable contract.",
+            response_text='{"api_key": "sk-test-secret"}',
+        )
 
 
 class FakeMemoryStore:
@@ -390,6 +403,38 @@ def test_runtime_session_falls_back_when_semantic_llm_is_temporarily_unavailable
     assert result["success"] is True
     assert runtime.semantic_analyzer.fallback_calls == [("Build app", "LLMProviderError")]
     assert any("Semantic analysis fallback" in message for _level, message in runtime.enhanced_ui.activities)
+
+
+@pytest.mark.parametrize("mode", ["standard", "enhanced_ui"])
+def test_runtime_session_contains_decomposition_contract_failure(tmp_path, monkeypatch, mode) -> None:
+    if mode == "enhanced_ui":
+        monkeypatch.setattr("autonomous_iteration.runtime_controller.time.sleep", lambda seconds: None)
+    runtime = FakeRuntime(tmp_path)
+    if mode == "enhanced_ui":
+        class CompletingTracker(FakeTracker):
+            @contextmanager
+            def track_task(self, title, attributes):
+                yield
+                runtime.enhanced_ui.set_current_task_state(title=title, status="completed")
+
+        runtime.tracker = CompletingTracker()
+    runtime.task_decomposer = FailingTaskDecomposer()
+    runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
+
+    result = _RuntimeSessionExecutor(runtime).run("Answer the user", {}, mode=mode)
+
+    assert result["success"] is False
+    assert result["failure_stage"] == "Task Decomposition"
+    assert result["failed_tool"] == "task_decomposer"
+    assert result["error_type"] == "InvalidLLMResponseError"
+    assert result["recoverable"] is True
+    assert result["failure"]["recoverable"] is True
+    assert result["failure"]["details"]["phase"] == "Task Decomposition"
+    assert "sk-test-secret" not in str(result)
+    assert runtime.task_decomposer.decompose_calls == 1
+    if mode == "enhanced_ui":
+        assert runtime.tracker.stopped is True
+        assert runtime.enhanced_ui.current_updates[-1]["status"] == "failed"
 
 
 def test_runtime_session_surfaces_autonomous_iteration_failure(tmp_path) -> None:
