@@ -111,7 +111,8 @@ operation-specific omissions must fail closed before execution.
   `RuntimeExecutionMode`, and existing guards remain the execution authorities;
   the session ledger can only narrow or project those facts. Assistant text,
   summaries, compact artifacts, and long-term memory cannot create authority.
-- `ConversationIdentity`, `SessionTurn`, and `SessionIngressState` are strict
+- `ConversationIdentity`, `SessionTurn`, `SessionProjectScopeTransition`, and
+  `SessionIngressState` are strict
   ingress values for the production conversation owner. They keep
   conversation identity distinct from a per-run checkpoint identity and hold
   pending proposals outside long-term memory; they do not add a public
@@ -121,6 +122,11 @@ operation-specific omissions must fail closed before execution.
   whose nested constraint snapshot diverges from `RuntimeStateMetadata`.
   The top-level `run_id` remains the diagnostic/checkpoint-store routing ID and
   is intentionally not equated with the ingress execution run ID.
+  `SessionIngressState.initial_project_root` anchors project ownership, while a
+  typed `SessionProjectScopeTransition` may advance only into a canonically
+  resolved generated descendant. Historical turns retain their original root;
+  discontinuous lineage, siblings, parents, unrelated paths, and histories over
+  16 transitions fail closed.
 - Recovery extends that existing runtime family rather than adding parallel
   public kinds. `RuntimeStateMetadata.recovery_status` is operational state;
   `RuntimeResumeDecisionMetadata` owns one attempt's recoverability, mode,

@@ -73,6 +73,7 @@ from metadata import (
 from autonomous_iteration.improvement_context import ImprovementContextHelper
 from autonomous_iteration.project_improvement_runtime import ProjectImprovementRuntime
 from memory.session_dialog import session_turn_ledger_hash
+from memory.session_ingress import SessionIngress
 from autonomous_iteration.task_executor import AutonomousTaskExecutor
 from autonomous_iteration.agents.execution_orchestrator import AgentOrchestrator
 from autonomous_iteration.agents.execution_task_decomposer import TaskDecomposer
@@ -1902,6 +1903,20 @@ class IntelligentAutopilot:
         session_ingress_state: SessionIngressState | None = None,
     ) -> dict[str, Any] | None:
         """Run fixed-count validation and improvement loop."""
+        active_ingress = (
+            session_ingress_state
+            if session_ingress_state is not None
+            else (
+                self._current_execution_context.get("session_ingress_state")
+                if isinstance(getattr(self, "_current_execution_context", None), dict)
+                else None
+            )
+        )
+        if active_ingress is not None:
+            active_ingress = SessionIngress.enter_generated_child_project(
+                active_ingress,
+                project_path,
+            )
         return self.project_improvement_runtime.run(
             goal=goal,
             project_path=project_path,
@@ -1915,15 +1930,7 @@ class IntelligentAutopilot:
                 if getattr(getattr(self, "runtime_controller", None), "state", None) is not None
                 else None
             ),
-            session_ingress_state=(
-                session_ingress_state
-                if session_ingress_state is not None
-                else (
-                    self._current_execution_context.get("session_ingress_state")
-                    if isinstance(getattr(self, "_current_execution_context", None), dict)
-                    else None
-                )
-            ),
+            session_ingress_state=active_ingress,
         )
 
     def _sync_project_environment(

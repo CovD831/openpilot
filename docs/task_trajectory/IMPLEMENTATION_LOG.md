@@ -8004,3 +8004,25 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   invariants and malformed-artifact zero-hash rejection. Independent focused was **122 passed**;
   full-excluded was **1330 passed** with one pre-existing warning. No files, provider, runs/data,
   staging, commit, or push actions occurred.
+
+## [已完成] 用户端 project identity 与空 JSON 稳定性修复
+
+- 观察到的失败：交互会话把 ingress project root 固定为 CLI 启动目录；生成项目进入其子目录执行
+  post-core improvement 时，Context Loader 以精确路径相等校验并报
+  `session ingress project identity mismatch`。工具规划同时以 `max_retries=1` 调用结构化
+  completion，空响应或非法 JSON 没有任何修复机会，直接显示
+  `LLM returned invalid JSON (attempt 1/1; parsed_type=None; preview='')`。
+- Metadata impact：复用 `SessionIngressState` 作为唯一会话 ingress 权威，新增 owned nested
+  `SessionProjectScopeTransition` 与 `initial_project_root`，不新增 `MetadataKind`，不改变文件写入、
+  command、validation 或 Provider tool 权限。历史 turn 保留原始 project root；只有 canonical
+  generated descendant 能成为下一 active root。
+- 实现修复：`SessionIngress.enter_generated_child_project` 验证 parent→child 关系并记录连续 typed
+  lineage，IntelligentAutopilot 在进入生成项目的 improvement runtime 前建立 scoped ingress；兄弟、
+  父级和外部路径继续 fail closed。Tool-event structured completion 改为初始请求加一次 bounded
+  JSON repair（总计最多两次），第二次仍失败时保留现有 typed failure/usage/finish-reason 路径。
+- 验证证据：新增 parent→generated-child、历史 turn provenance、sibling rejection、improvement
+  wiring、bounded JSON repair 和两次尝试预算保守结算测试；聚焦回归 **458 passed**。完整
+  `Code/tests` 为 **1334 passed / 1 failed**，唯一失败是既有 `test_model_health.py` 将仓库路径
+  硬编码为 `/Users/abab/Developer/openpilot/.env`，因此在独立 worktree 路径下不成立。
+- 剩余限制：project transition 当前仅授权生成子项目，不支持 sibling workspace handoff；JSON repair
+  不能保证 Provider 在第二次返回有效内容，持续空响应仍会按 typed failure 终止。

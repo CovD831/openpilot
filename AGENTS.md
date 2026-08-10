@@ -75,6 +75,10 @@ update this file together with `API.md`.
   projection opt-in, explicit `allow_mutations`, user confirmation, and the
   `real_mutation` budget profile; the read-only projection flag must never
   authorize writes.
+- Session project identity may transition only through the typed generated-child
+  scope reducer. The canonical target must remain below the active project root;
+  sibling, parent, unrelated, or discontinuous project transitions fail closed,
+  and historical turn provenance must not be rewritten.
 - `Task.support_context_files` is model-facing context only. It may be projected
   as body-free required `ContextCandidate` metadata, but it never grants read or
   write authority, never satisfies validation/completion, and never participates

@@ -719,12 +719,23 @@ The interactive ingress routes `/constraints`, `/confirm`, `/reject`, and
 ones, and typed `SessionConstraintLimits` bound proposal/entry counts and
 serialized values. Active entries retain the confirmation turn and revoked
 tombstones retain the revocation turn; quota violations fail closed.
+When a successful generation flow enters a child project for post-core
+improvement, `SessionIngress.enter_generated_child_project` records a typed
+`SessionProjectScopeTransition`. The target must be a canonical descendant of
+the active root. Historical turns keep their source root, while siblings,
+parents, unrelated paths, and discontinuous transition histories are rejected.
 The ledger's `canonical_hash` covers the complete persisted snapshot, including
 the ingress cursor; the derived `authority_hash` excludes `processed_through_turn`
 and is the stable source identity of the model-facing required constraint
 projection, so ordinary dialog noise does not stale an unchanged constraint.
 This establishes offline production wiring; it does not authorize a
 full-conversation Provider canary or claim a Token/quality gain.
+
+Tool-event structured completion performs at most two Provider attempts: the
+initial request and one JSON-repair request. This gives empty, truncated, or
+otherwise invalid JSON one bounded recovery opportunity; failure after the
+second attempt remains typed and preserves available response, usage, and
+finish-reason diagnostics.
 
 When a ContextLoader or project-improvement request consumes a derived dialog
 projection, `ToolInputMetadata.session_turn_source_hash` records the SHA-256
