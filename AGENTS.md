@@ -53,6 +53,9 @@ update this file together with `API.md`.
 
 ## Tooling and permissions
 - Tool use must remain controlled; do not open up command execution, file writes, or network access by default.
+- Linked worktrees may read the main checkout `.env` as a startup fallback, but
+  must never print, stage, commit, or copy secret values outside the explicit
+  `.worktreeinclude` setup contract.
 - Any action that mutates files, runs commands, or changes project state must be justified by a concrete need.
 - High-risk actions need clear inputs, scope, and a verification or rollback path.
 - Do not bypass existing approval, routing, or verification mechanisms for convenience.

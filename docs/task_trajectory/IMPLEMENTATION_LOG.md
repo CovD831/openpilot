@@ -8026,3 +8026,19 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   硬编码为 `/Users/abab/Developer/openpilot/.env`，因此在独立 worktree 路径下不成立。
 - 剩余限制：project transition 当前仅授权生成子项目，不支持 sibling workspace handoff；JSON repair
   不能保证 Provider 在第二次返回有效内容，持续空响应仍会按 typed failure 终止。
+
+## [已完成] Linked worktree 启动环境初始化
+
+- 观察到的失败：`LLMSettings` 仅按当前源码位置推导 `.env`，linked worktree 没有复制 ignored
+  `.env` 时无法读取主 checkout 配置；`test_settings_search_repository_and_code_env_files` 又把
+  `/Users/abab/Developer/openpilot` 写死，因此只在主 checkout 偶然通过。
+- 实现修复：启动配置读取 linked worktree `.git` 与 Git `commondir`，把主 checkout `.env` 作为
+  第一层 fallback，同时保留当前 worktree、`Code/.env` 和 cwd `.env`。新增 `.worktreeinclude`
+  声明 `.env`/`Code/.env`，与 Claude Code worktree 初始化机制兼容；没有复制或提交任何 secret。
+- 验证证据：新增临时 linked-worktree commondir fixture，配置搜索测试改为验证实际解析出的
+  shared/current/Code roots，不再依赖机器固定路径；当前 worktree 启动探针确认 shared `.env`
+  被发现且 API key 已加载（未输出 secret），完整 `Code/tests` **1336 passed**，compileall 与
+  `git diff --check` 通过。
+- 剩余限制：普通 `git worktree add` 本身不会消费 `.worktreeinclude`，因此 OpenPilot 使用 shared
+  checkout fallback；如果主 checkout 和 worktree 同时存在 `.env`，后加载的 worktree 配置按
+  pydantic-settings 的既有优先级覆盖 shared fallback。

@@ -737,6 +737,13 @@ otherwise invalid JSON one bounded recovery opportunity; failure after the
 second attempt remains typed and preserves available response, usage, and
 finish-reason diagnostics.
 
+At startup, configuration searches the main Git checkout `.env`, the active
+linked-worktree `.env`, `Code/.env`, and the process working-directory `.env`
+in that order. Linked worktrees discover the main checkout through Git's
+`commondir` pointer without copying or logging secret values. `.worktreeinclude`
+also declares `.env` and `Code/.env` for worktree managers, such as Claude Code,
+that support copying ignored project setup files during worktree creation.
+
 When a ContextLoader or project-improvement request consumes a derived dialog
 projection, `ToolInputMetadata.session_turn_source_hash` records the SHA-256
 digest of the authoritative ingress turn ledger. It is replay/evidence metadata
