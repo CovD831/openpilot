@@ -447,6 +447,48 @@ class SessionTurn(BaseModel):
     content: str = Field(max_length=64_000)
 
 
+class ProjectScopeDecisionKind(str, Enum):
+    """Pre-execution project identity disposition."""
+
+    USE_REQUESTED_ROOT = "use_requested_root"
+    GENERATED_CHILD_PROJECT = "generated_child_project"
+    REQUIRE_EXPLICIT_PROJECT = "require_explicit_project"
+
+
+class ProjectScopeReason(str, Enum):
+    """Stable evidence code for one project-scope decision."""
+
+    NON_PROJECT_REQUEST = "non_project_request"
+    EXISTING_PROJECT_ROOT = "existing_project_root"
+    SAFE_REQUESTED_ROOT = "safe_requested_root"
+    BROAD_ROOT_ARTIFACT_CREATION = "broad_root_artifact_creation"
+    BROAD_ROOT_EXISTING_PROJECT_AMBIGUOUS = "broad_root_existing_project_ambiguous"
+
+
+class ProjectScopeDecision(BaseModel):
+    """Runtime-only derived view selecting the effective project identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: ProjectScopeDecisionKind
+    reason_code: ProjectScopeReason
+    source_root: str = Field(min_length=1)
+    effective_root: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _roots_match_disposition(self) -> "ProjectScopeDecision":
+        source = Path(self.source_root).expanduser().resolve(strict=False)
+        effective = Path(self.effective_root).expanduser().resolve(strict=False)
+        if str(source) != self.source_root or str(effective) != self.effective_root:
+            raise ValueError("project scope roots must be canonical")
+        if self.kind == ProjectScopeDecisionKind.GENERATED_CHILD_PROJECT:
+            if effective == source or not effective.is_relative_to(source):
+                raise ValueError("generated project scope must be a child of the source root")
+        elif effective != source:
+            raise ValueError("non-generated project scope must preserve the requested root")
+        return self
+
+
 class SessionProjectScopeTransition(BaseModel):
     """Audited transition from a session-owned project to its generated child."""
 

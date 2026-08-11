@@ -21,6 +21,7 @@ from core.provider_tool_roundtrip import ProviderToolRoundTripRunner, build_prov
 from core.reasoning import reasoning_policy_for_decision
 from core.tool_event_loop import ToolEventLoopRunner
 from memory.context_assembly import build_context_llm_request
+from memory.project_inventory import collect_project_files
 from memory.session_constraints import session_constraint_prompt_text
 from metadata import (
     AgentPhase,
@@ -2174,14 +2175,13 @@ Important:
         return match.group(1) if match else None
 
     def _candidate_python_files(self, project_path: Path) -> list[Path]:
-        if not project_path.exists() or not project_path.is_dir():
-            return []
-        excluded_parts = {".git", ".venv", "__pycache__", "node_modules", "site-packages"}
-        return [
-            path
-            for path in project_path.rglob("*.py")
-            if path.is_file() and not any(part in excluded_parts for part in path.parts)
-        ]
+        return list(
+            collect_project_files(
+                project_path,
+                suffixes={".py"},
+                max_files=200,
+            ).files
+        )
 
     def _score_python_file(self, path: Path, task_description: str, goal: str, project_path: Path) -> int:
         lowered = f"{task_description}\n{goal}".lower()

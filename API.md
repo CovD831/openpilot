@@ -918,6 +918,18 @@ decomposition pipeline. CLI failures identify bounded response, external
 evidence, and project execution as separate stages without rendering the
 underlying exception message.
 
+Before project execution, typed project-scope admission distinguishes an
+existing project root, a generated child project, and a broad root that requires
+an explicit project selection. Home, filesystem roots, and shallow containers
+holding multiple projects are broad roots. Artifact-creation requests from a
+broad root select a deterministic, unused child directory and record the
+existing `SessionProjectScopeTransition` before task execution; existing-project
+mutation from a broad root stops recoverably. File discovery uses bounded
+breadth-first inventory with hard file, directory, entry, and depth ceilings;
+it never eagerly sorts an unbounded recursive glob. Scope admission does not
+create the directory or grant mutation authority—the existing writer and Guard
+remain authoritative.
+
 `BoundedModelResponseController` implements the CRU-2C zero-tool model step.
 It builds a bounded newest-turn projection that preserves all required active
 session constraints, persists an integrity-bound provider request, and sends a

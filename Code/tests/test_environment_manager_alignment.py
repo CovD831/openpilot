@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 from memory.agents.virtual_environment_manager import (
@@ -203,6 +204,24 @@ def test_project_environment_tool_scans_project_tests_outside_written_files(tmp_
     detected = infer_project_dependencies(project, ["calculator.py"])
 
     assert detected == ["pytest"]
+
+
+def test_project_environment_dependency_scan_does_not_use_eager_rglob(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    project = tmp_path / "calculator"
+    project.mkdir()
+    (project / "calculator.py").write_text("import pytest\n", encoding="utf-8")
+    monkeypatch.setattr(
+        Path,
+        "rglob",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("eager recursive glob used")
+        ),
+    )
+
+    assert infer_project_dependencies(project, []) == ["pytest"]
 
 
 def test_project_environment_tool_persists_and_updates_stack_preset(tmp_path) -> None:

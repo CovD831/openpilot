@@ -2,14 +2,15 @@
 
 ## Release identity
 
-- Package version: `0.1.0.dev4`
+- Package version: `0.1.0.dev5`
 - Git branch: `codex/cru-1-to-4b-dev`
-- Git tag: `v0.1.0-dev.4`
+- Git tag: `v0.1.0-dev.5`
 - Remote baseline: `origin/main` at `21c8e66`
 - CRU-4B functional freeze: `39b1fab`
 - CRU-7 accepted source: `c6b33db`
 - Prior development hardening: `a06853f` / `v0.1.0-dev.2`
 - Prior cumulative release: `fd49b09` / `v0.1.0-dev.3`
+- Prior admission release: `e90169a` / `v0.1.0-dev.4`
 - Release date: 2026-08-11
 
 This cumulative development release merges the complete CRU-1 through CRU-7
@@ -43,6 +44,10 @@ CRU-6 verified core/post-core handoff, and CRU-7 canary/default decisions.
   execution/validation, and ambiguous requests fail safe to project execution.
   Bounded response, external evidence, and project execution failures have
   distinct credential-redacted CLI stages.
+- dev5 project-scope hardening: broad launch roots select an unused generated
+  child for artifact creation, while ambiguous existing-project work stops
+  recoverably. Project file discovery is breadth-first with hard file,
+  directory, entry, and depth ceilings instead of eager recursive sorting.
 
 ## Runtime defaults and rollback
 
@@ -83,22 +88,26 @@ Source CRU-7 evidence recorded:
 - source branch complete `Code/tests`: **1531 passed**;
 - all pre-registered safety counters remained zero.
 
-Merged dev4 evidence recorded before release:
+Merged dev5 evidence recorded before release:
 
-- focused admission, unified-entry, CLI recovery, rollout-default, and release
-  version tests: **38 passed**;
-- merged complete `Code/tests`: **1566 passed**;
+- project-scope, bounded-inventory, session-ingress, environment, CLI recovery,
+  metadata, release-version, and tool-planning focused tests: **203 passed**;
+- merged complete `Code/tests`: **1579 passed**;
 - touched Ruff, `compileall`, and `git diff --check`: passed.
 
-- isolated wheel: `openpilot-0.1.0.dev4-py3-none-any.whl`, SHA-256
-  `1b9cbd86c9ba7bd302267efcd760e58b390f43cd42c0e760a1c73a45219eda3f`;
-- editable install reports version `0.1.0.dev4` from this release worktree;
+- isolated wheel: `openpilot-0.1.0.dev5-py3-none-any.whl`, SHA-256
+  `f692f16364e661c47bd793a6331278656f47bb9636db43300de98cfbc321a0f2`;
+- editable install reports version `0.1.0.dev5` from this release worktree;
 - real `openpilot-dev` once-mode smoke completed a greeting and fresh structured
   Changshu weather. An isolated Snake-game request entered project inspection,
   decomposition, environment setup, and `code_generator`; it did not call the
   bounded response/evidence path. The generator then stopped fail-closed at its
   independent completion limit and reported `Task Executor / code_generator`;
-- the cumulative merge is sealed by tag `v0.1.0-dev.4`.
+- dev5 broad-root smoke started from a temporary container holding two sibling
+  repositories, selected and initialized only its `snake-game` child, and bound
+  runtime state, environment, path resolutions, checkpoints, and project
+  fingerprint to that child. No parent-container recursive scan occurred;
+- the cumulative merge is sealed by tag `v0.1.0-dev.5`.
 
 ## Known limitations
 

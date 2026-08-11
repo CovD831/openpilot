@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from rich.console import Console
 
 from memory.session_ingress import (
     SessionIngress,
@@ -269,6 +270,46 @@ def test_autopilot_keeps_conversation_identity_separate_from_run_identity(tmp_pa
     assert captured["run_id"] == autopilot.session_id
     assert captured["session_constraints"].session_id == "conversation-1"
     assert autopilot.session_id != autopilot.conversation_id
+
+
+def test_autopilot_scopes_new_artifact_to_child_of_broad_workspace(tmp_path) -> None:
+    class FakeLLM:
+        pass
+
+    workspace = tmp_path / "Developer"
+    for name in ("one", "two"):
+        (workspace / name / ".git").mkdir(parents=True)
+    ingress = SessionIngressState(
+        identity=ConversationIdentity(
+            conversation_id="conversation-1",
+            run_id="run-1",
+            turn_index=0,
+            project_root=str(workspace.resolve()),
+        )
+    )
+    console = Console(record=True, width=240)
+    autopilot = IntelligentAutopilot(
+        FakeLLM(),
+        console=console,
+        log_file=tmp_path / "autopilot.jsonl",
+    )
+    captured: dict[str, object] = {}
+    autopilot.runtime_controller.run = lambda goal, context, mode="standard": captured.update(context) or {"success": True}
+
+    autopilot.execute(
+        "帮我做一个贪吃蛇游戏",
+        context={
+            "session_ingress_state": ingress,
+            "project_path": str(workspace.resolve()),
+        },
+    )
+
+    child = (workspace / "snake-game").resolve()
+    assert captured["project_path"] == str(child)
+    scoped = captured["session_ingress_state"]
+    assert scoped.identity.project_root == str(child)
+    assert scoped.project_scope_transitions[-1].target_project_root == str(child)
+    assert f"Project scope: {child}" in console.export_text()
 
 
 @pytest.mark.parametrize(

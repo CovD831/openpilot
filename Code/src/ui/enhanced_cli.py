@@ -17,6 +17,7 @@ from autonomous_iteration.pre_task_admission import (
     UnifiedEntryFailureStage,
     resolve_pre_task_admission,
 )
+from autonomous_iteration.project_scope_admission import ProjectScopeAdmissionError
 from core.config import EmbeddingSettings, LLMSettings
 from core.instrumented_llm import InstrumentedLLMClient
 from core.model_health import run_startup_model_health_check
@@ -330,6 +331,23 @@ def _cli_exception_failure(
 ) -> dict[str, object]:
     """Build a bounded ordinary-mode failure without exposing exception text or a traceback."""
 
+    if isinstance(exc, ProjectScopeAdmissionError):
+        decision = exc.decision
+        return {
+            "success": False,
+            "failure_reason": "The launch directory is too broad for an existing-project task.",
+            "failure_stage": "Project Scope",
+            "failed_tool": "project_scope_admission",
+            "task_id": task_id,
+            "failure_id": f"{task_id}:project_scope" if task_id else "project_scope",
+            "error_type": type(exc).__name__,
+            "recoverable": True,
+            "recoverability": Recoverability.RECOVERABLE_AFTER_ACTION.value,
+            "suggested_recovery": (
+                f"Change into the intended project directory and restart openpilot-dev; "
+                f"current scope: {decision.source_root}"
+            ),
+        }
     resolved_stage = stage or (
         exc.stage if isinstance(exc, UnifiedEntryError) else None
     )

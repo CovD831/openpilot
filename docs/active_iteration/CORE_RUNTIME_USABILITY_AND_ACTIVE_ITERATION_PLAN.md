@@ -1566,6 +1566,12 @@ CRU-7 后的开发版加固补充 typed、fail-closed 的 pre-task admission：�
 mutation authority；CLI 将 bounded response、external evidence 与 project execution 失败分别
 标注，避免把项目入口失败误报为 response evidence failure。
 
+后续 dev5 scope 加固把启动目录与实际项目目录分离：Home、文件系统根目录和浅层多项目容器不再
+直接进入递归项目理解。新建 artifact 请求选择未占用的 generated child，并复用现有
+`SessionProjectScopeTransition` 记录身份收窄；宽目录中的已有项目修改请求要求用户进入明确项目目录。
+Python inventory 改为有 file/directory/entry/depth 硬上限的 breadth-first discovery，禁止 eager
+`sorted(rglob(...))` 先遍历完整目录树。该 admission 只决定 scope，不创建目录、不授予 mutation。
+
 ## 17. Feature Flag 与回滚
 
 实施后保留以下窄 flag：

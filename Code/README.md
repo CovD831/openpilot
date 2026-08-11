@@ -39,6 +39,13 @@ This does not grant mutation authority or change the public
 `agent_generator | autonomous_iteration` route contract. CLI errors report
 bounded response, external evidence, and project execution as distinct stages.
 
+Project execution also performs a read-only scope admission. Starting a new
+artifact from Home or a multi-project container selects an unused child such as
+`snake-game/` and shows that path before planning. Existing-project work from a
+broad directory stops with guidance to change into the intended project. Python
+file discovery is breadth-first and bounded by file, directory, entry, and depth
+ceilings, so an accidentally broad root cannot trigger an eager recursive scan.
+
 Bounded Provider requests and observations are conversation-owned durable
 steps. A crash after an exact observed response resumes without a Provider
 replay; a pending or not-yet-bound transport outcome stops fail-closed. Recovery

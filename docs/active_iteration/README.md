@@ -11,7 +11,7 @@
 | 实验审计 | [ACTIVE_ITERATION_EXPERIMENT_LOG.md](./ACTIVE_ITERATION_EXPERIMENT_LOG.md) | 追加式协议、失败、结果和证据等级账本 |
 | 架构设计 | [ACTIVE_ITERATION_EXPERT_ROUTING_ARCHITECTURE.md](./ACTIVE_ITERATION_EXPERT_ROUTING_ARCHITECTURE.md) | 当前主动迭代、信号和专家路由设计 |
 | 核心运行时重构 | [CORE_RUNTIME_USABILITY_AND_ACTIVE_ITERATION_PLAN.md](./CORE_RUNTIME_USABILITY_AND_ACTIVE_ITERATION_PLAN.md) | 用户可用性、任务准入、受治理分解、核心问诊推进与 post-core 交接计划 |
-| CRU-1 至 CRU-7 累积开发版 | [CRU_1_TO_7_DEVELOPMENT_RELEASE.md](./CRU_1_TO_7_DEVELOPMENT_RELEASE.md) | `0.1.0.dev4` 的完整范围、typed pre-task admission、CRU-7 默认开关、联网加固、验证与回滚边界 |
+| CRU-1 至 CRU-7 累积开发版 | [CRU_1_TO_7_DEVELOPMENT_RELEASE.md](./CRU_1_TO_7_DEVELOPMENT_RELEASE.md) | `0.1.0.dev5` 的完整范围、safe project scope、bounded inventory、typed pre-task admission、验证与回滚边界 |
 | CRU-1 至 CRU-4B 累积开发版 | [CRU_1_TO_4B_DEVELOPMENT_RELEASE.md](./CRU_1_TO_4B_DEVELOPMENT_RELEASE.md) | 从远端基线累积到 `0.1.0.dev2` 的完整范围、开发 canary、验证门禁与已知限制 |
 | CRU-2A metadata gate | [CRU_2A_METADATA_IMPACT_AND_WRITER_INVENTORY.md](./CRU_2A_METADATA_IMPACT_AND_WRITER_INVENTORY.md) | pre-task durable owner、复用/新建决策、控制写入者与原子持久化清单 |
 | CRU-4B recovery metadata gate | [CRU_4B_METADATA_IMPACT_AND_RECOVERY_INVENTORY.md](./CRU_4B_METADATA_IMPACT_AND_RECOVERY_INVENTORY.md) | bounded Provider request/observation owner、replay-free crash recovery 与 fail-closed 清单 |

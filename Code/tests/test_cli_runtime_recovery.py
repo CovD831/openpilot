@@ -149,6 +149,32 @@ def test_failure_details_include_phase_recoverability_and_identifier() -> None:
     assert "Recovery status: recoverable_after_action" in details
 
 
+def test_broad_project_scope_failure_has_actionable_recovery(tmp_path) -> None:
+    from autonomous_iteration.project_scope_admission import (
+        ProjectScopeAdmissionError,
+        resolve_project_execution_scope,
+    )
+    from ui import enhanced_cli
+
+    home = tmp_path / "home"
+    home.mkdir()
+    decision = resolve_project_execution_scope(
+        "修复当前项目",
+        home,
+        home_path=home,
+    )
+
+    failure = enhanced_cli._cli_exception_failure(
+        ProjectScopeAdmissionError(decision),
+        task_id="task-1",
+    )
+    details = enhanced_cli._format_failure_details(failure)
+
+    assert "Stage: Project Scope" in details
+    assert "Recoverable: yes" in details
+    assert "Change into the intended project directory" in details
+
+
 @pytest.mark.parametrize("runner", ["once", "interactive"])
 def test_ordinary_autonomous_cli_contains_failure_without_traceback(monkeypatch, runner) -> None:
     import traceback

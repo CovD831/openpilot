@@ -89,6 +89,11 @@ from autonomous_iteration.skill_specs import (
 from ui.console_presenter import ConsolePresenter
 from ui.iteration_dashboard import IterationDashboardAdapter
 from autonomous_iteration.project_iteration import ProjectIterationHelper
+from autonomous_iteration.project_scope_admission import (
+    ProjectScopeAdmissionError,
+    ProjectScopeDecisionKind,
+    resolve_project_execution_scope,
+)
 from autonomous_iteration.tool_io import ExecutionToolIO
 from autonomous_iteration.runtime_controller import AgentRuntimeController
 from runtime_diagnostics.llm_proxy import TrajectoryLLMClientProxy
@@ -495,6 +500,11 @@ class IntelligentAutopilot:
         raw_ingress = context.get("session_ingress_state")
         if raw_ingress is not None and not isinstance(raw_ingress, SessionIngressState):
             raise TypeError("session_ingress_state must be a validated SessionIngressState")
+        context, raw_ingress = self._apply_project_scope_admission(
+            goal,
+            context=context,
+            ingress=raw_ingress,
+        )
         if isinstance(raw_ingress, SessionIngressState):
             for identity_key in ("conversation_id", "session_id"):
                 supplied_identity = str(context.get(identity_key) or "").strip()
@@ -544,6 +554,43 @@ class IntelligentAutopilot:
             if classify_error(e) in {ErrorCategory.NETWORK, ErrorCategory.TIMEOUT, ErrorCategory.RETRYABLE}:
                 return self._structured_execution_error(goal, e)
             raise
+
+    def _apply_project_scope_admission(
+        self,
+        goal: str,
+        *,
+        context: dict[str, Any],
+        ingress: SessionIngressState | None,
+    ) -> tuple[dict[str, Any], SessionIngressState | None]:
+        requested = str(
+            context.get("project_path")
+            or (ingress.identity.project_root if ingress is not None else "")
+            or context.get("cwd")
+            or ""
+        ).strip()
+        if not requested:
+            return context, ingress
+        decision = resolve_project_execution_scope(goal, requested)
+        if decision.kind is ProjectScopeDecisionKind.REQUIRE_EXPLICIT_PROJECT:
+            raise ProjectScopeAdmissionError(decision)
+        if decision.kind is not ProjectScopeDecisionKind.GENERATED_CHILD_PROJECT:
+            return context, ingress
+
+        effective = decision.effective_root
+        updated = dict(context)
+        updated["project_path"] = effective
+        updated["cwd"] = effective
+        if ingress is not None:
+            ingress = SessionIngress.enter_generated_child_project(ingress, effective)
+            updated["session_ingress_state"] = ingress
+        self.console.print(f"[cyan]Project scope:[/cyan] {effective}")
+        if self.enhanced_ui:
+            self.enhanced_ui.set_current_task_state(
+                title="Project scope",
+                details=f"Broad launch directory detected. New project: {effective}",
+                status="running",
+            )
+        return updated, ingress
 
     def resume(
         self,

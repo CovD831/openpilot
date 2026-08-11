@@ -8470,3 +8470,37 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：pre-task admission 是有界规则策略，不替代后续模型分解；无法正向证明为回答类的输入会
   优先进入受治理项目执行。大型单次代码生成仍可能达到 generator completion limit；这是独立的 task/tool
   能力边界，不再被误报或回退为 response evidence。
+
+## [已完成] dev5：宽启动目录的安全项目 scope 与有界 inventory
+
+- 观察到的失败：用户在 `/Users/abab` 直接启动 `openpilot-dev` 后请求创建贪吃蛇游戏。任务已进入
+  `understand_project` 并完成 goal/task-decomposition 两次 Provider 响应，但 trajectory 在
+  18:35:52 后无新事件、tool call 为 0。进程采样显示主线程位于
+  `sorted(project_path.rglob("*.py"))` 的 `readdir`；代码表面的 200-file 上限在 `sorted()` 完整耗尽
+  generator 后才生效，因此 Home 目录被无界遍历，CLI 只显示 `Executing`。
+- Metadata impact note：Fact 为 project execution 的 effective root 与 generated-child lineage；
+  authoritative producer 为 pre-execution project-scope admission，consumer 为 `IntelligentAutopilot`、
+  `SessionIngress`、runtime context 与 CLI projection；lifecycle 为 runtime-only decision + 已有 checkpoint/
+  trajectory session ingress；control impact 为 identity/scope routing，不授予 permission。已复核
+  `SessionIngressState.initial_project_root`、`SessionProjectScopeTransition`、`RuntimeStateMetadata`、
+  `EnvironmentSyncMetadata`、`Task.write_files`、Guard 和 contract catalog。Decision：复用现有
+  `SessionProjectScopeTransition`，新增 metadata-owned strict runtime-only derived decision，不新增
+  `MetadataKind`。source root 仍由 ingress 拥有，effective child 只通过既有 transition 成为权威，故没有
+  第二份项目身份；无持久化 schema 迁移，历史 checkpoint 继续以空 transition 列表读取。
+- 实现修复：Home、文件系统根目录、浅层包含至少两个项目的容器被 typed 判为 broad root。新建 artifact
+  请求选择 `snake-game` 等确定性未占用 child，执行前更新 session scope 并在 CLI 显示路径；宽目录中的
+  既有项目修改请求以 `Project Scope` recoverable failure 要求进入明确项目目录；非 project rollback
+  请求不受影响。新增 `memory.project_inventory.collect_project_files`，用 breadth-first traversal 和
+  max-files/max-directories/max-entries/max-depth 四个硬上限替代环境依赖扫描与 fallback target selection
+  中的 eager `rglob`。
+- 验证证据：focused scope/inventory/ingress/environment/CLI/tool-planning 通过；完整 `Code/tests`
+  **1579 passed**；含 metadata/release-version 的最终 focused **203 passed**；touched Ruff、compileall 与
+  `git diff --check` 通过。真实 launcher 从包含两个 sibling repo 的临时 container 启动，只选择并初始化
+  `snake-game` child；runtime state、environment、path resolution、checkpoint 与 project fingerprint 均绑定
+  child，没有递归扫描 parent container。生成器随后仍因独立 completion limit fail closed。dev5 wheel
+  SHA-256 为 `f692f16364e661c47bd793a6331278656f47bb9636db43300de98cfbc321a0f2`，editable
+  metadata/source 均为 `0.1.0.dev5`。
+- 剩余限制：generated child 名称当前使用有界 deterministic vocabulary 与 collision suffix，不是模型自由
+  命名；用户明确要求既有项目操作但从 broad root 启动时必须切换目录后重试，不猜测多个 sibling 中哪一个
+  是目标。Inventory 截断是安全边界，后续如需扩大范围应由 typed task evidence 指定具体路径，而不是提高
+  全局递归上限。

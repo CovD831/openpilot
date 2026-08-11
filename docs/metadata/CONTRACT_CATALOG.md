@@ -163,7 +163,11 @@ operation-specific omissions must fail closed before execution.
   is intentionally not equated with the ingress execution run ID.
   `SessionIngressState.initial_project_root` anchors project ownership, while a
   typed `SessionProjectScopeTransition` may advance only into a canonically
-  resolved generated descendant. Historical turns retain their original root;
+  resolved generated descendant. Pre-execution project-scope admission may
+  produce that transition when an artifact-creation request starts from Home or
+  a bounded multi-project container; `ProjectScopeDecision` and its enums are
+  strict runtime-only derived values owned by the same ingress boundary and
+  creates neither a directory nor mutation authority. Historical turns retain their original root;
   discontinuous lineage, siblings, parents, unrelated paths, and histories over
   16 transitions fail closed.
 - Recovery extends that existing runtime family rather than adding parallel
