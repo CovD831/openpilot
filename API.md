@@ -830,9 +830,21 @@ concurrent terminal writer converge; same-ID/different-payload retries fail
 closed. Recovery after any durable write boundary reuses the artifact and never
 appends a second turn or changes its index.
 
-The store and committer are not yet wired to CLI execution. They do not create
-a Task, invoke a Provider, authorize resume, or display independently; prepared
-task materialization and authority-freshness gates remain pending.
+`CanonicalInitialTaskSnapshot` freezes the complete typed task graph and
+execution order, unsigned side-effect-free generation-one checkpoint, pre-task
+authority, root budget, session authority revision/hash, project/environment
+fingerprint, validation plan, and session ingress. `IterationTaskMaterializer`
+persists the content-addressed snapshot, a prepared turn binding, that exact
+initial `RuntimeCheckpointMetadata`, and finally an active reference-only
+binding. Recovery may only complete those same objects. It revalidates current
+session revision/hash, rejected/revoked lineage, mutation confirmation,
+conversation/run/project identity, and every snapshot/state/checkpoint digest;
+stale or unavailable facts return a typed fail-closed failure code. Once active,
+the checkpoint is the task truth and the turn record retains references only.
+
+These components are not yet wired to CLI execution. They do not invoke a
+Provider, authorize a write by themselves, or display independently; Controller
+writer migration and the feature-flagged entry remain pending.
 
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or

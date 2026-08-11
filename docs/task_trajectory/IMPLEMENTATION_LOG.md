@@ -8107,9 +8107,18 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   outcome 一致；相同 ID/相同 payload 重试及并发终态 writer 收敛到同一 committed generation，相同 ID/
   不同 payload 拒绝。每一 durable write 后的注入崩溃均从原 artifact 恢复，不重复 append、不改变
   turn index、不重新调用 Provider，并只返回 exact durable display content。
+- task materialization 修复：新增 strict owned `CanonicalInitialTaskSnapshot`，复用 typed TaskGraph、
+  unsigned initial checkpoint、authority/root budget 和 session facts，不新增 MetadataKind 或第二份 active
+  task truth。`IterationTaskMaterializer` 按 snapshot → prepared binding → exact checkpoint → active binding
+  提交；三个写边界均可恢复且不重新生成 Task/调用 Provider。恢复重新验证 session revision/hash、
+  reject/revoke lineage、mutation confirmation、project/run identity、snapshot/state/checkpoint digest；active
+  binding 之后仍重新读取 checkpoint，损坏或漂移返回 typed fail-closed code。
 - 验证证据：contract/ingress/store/commit 聚焦 **42 passed**；store/commit 边界 **15 passed**，包含
-  三个 fault boundaries、冲突与并发收敛；完整 `Code/tests` **1390 passed**（1 个既有 pytest
-  deprecation warning），touched Ruff、compileall 与 `git diff --check` 通过。
-- 剩余限制：prepared snapshot materialization、authority freshness/revocation、Controller reducer 和
-  feature-flagged entry 尚未接入；因此当前 CLI 行为保持 CRU-1，assistant committer 本身不调用 Provider
-  或显示 UI。
+  三个 fault boundaries、冲突与并发收敛。task materialization/metadata 新增聚焦测试 **26 passed**，
+  覆盖 prepared/
+  checkpoint/active fault injection、snapshot corruption、checkpoint tamper、authority revision、reject
+  lineage、missing confirmation 与 concurrent active-writer convergence；完整 `Code/tests`
+  **1402 passed**（1 个既有 pytest deprecation
+  warning），touched Ruff、compileall 与 `git diff --check` 通过。
+- 剩余限制：Controller reducer/root writer migration 和 feature-flagged entry 尚未接入；因此当前 CLI
+  行为保持 CRU-1，offline committer/materializer 本身不调用 Provider 或显示 UI。
