@@ -84,7 +84,23 @@ Tests: default response-only, legal monotonic eligibility changes, confirmation/
 Documentation updates: API, CONTRACT_CATALOG nested-value note, trajectory alignment
 ```
 
-### 3.3 Outcome, completion scope and stop reason
+### 3.3 Response claim manifest reference (CRU-2D review)
+
+```text
+Fact: exact ordered claim text needed to create a durable evidence question
+Authoritative producer: bounded response controller after Runtime claim classification
+Consumers: evidence-escalation DecisionNeed projection and integrity gate
+Lifecycle: content-addressed artifact referenced by ResponseCandidate; retained with the turn
+Control impact: evidence routing only; never permission, source classification, or completion by itself
+Existing contracts reviewed: ResponseCandidate, ResponseClaim, DurableArtifactReference, CompletionObligation, DecisionNeedMetadata
+Decision: extend ResponseCandidate with an optional artifact reference; do not add a MetadataKind or duplicate claim text into the compact control value
+Why no duplicate source of truth is created: ResponseClaim continues to own ID/hash/source; every manifest entry must match it one-to-one in exact order, while text is only the body needed for the evidence query
+Serialization and migration: optional field preserves old records; evidence escalation rejects absence and does not synthesize text from hashes
+Tests: manifest absence, count/order/ID/hash/source mismatch, duplicate identity, and model-claim authority non-upgrade
+Documentation updates: CONTRACT_CATALOG, API, session-resume protocol, active-iteration plan, implementation log
+```
+
+### 3.4 Outcome, completion scope and stop reason
 
 ```text
 Fact: outcome and completion scope are orthogonal typed facts; stop reason is typed where it controls resumption
@@ -100,7 +116,7 @@ Tests: complete response vs project task, awaiting user, blocked/failed/interrup
 Documentation updates: API, CONTRACT_CATALOG, trajectory evidence
 ```
 
-### 3.4 Completion obligation and grounding
+### 3.5 Completion obligation and grounding
 
 ```text
 Fact: required claim/evidence obligations, legal satisfaction/waiver state, response hash and Runtime-owned claim coverage
@@ -116,7 +132,7 @@ Tests: closure/waiver matrix, non-waivable permission/verification/side-effect o
 Documentation updates: API, CONTRACT_CATALOG nested-value note, trajectory evidence
 ```
 
-### 3.5 Root decision budget and no-progress
+### 3.6 Root decision budget and no-progress
 
 ```text
 Fact: max/used decision rounds, provider calls, response tokens, grounding repairs, decomposition calls and canonical progress signature
@@ -132,7 +148,7 @@ Tests: every boundary, over-consumption rejection, no-progress threshold, determ
 Documentation updates: API, CONTRACT_CATALOG nested-value note, trajectory evidence
 ```
 
-### 3.6 Assistant payload and ledger commit
+### 3.7 Assistant payload and ledger commit
 
 ```text
 Fact: exact durable assistant payload ref/hash, stable message ID/turn index and pending|committed ledger state
@@ -148,7 +164,7 @@ Tests: crash at every write boundary, replay, duplicate same payload, conflictin
 Documentation updates: API, session-resume protocol, trajectory alignment/log
 ```
 
-### 3.7 Prepared/active task binding
+### 3.8 Prepared/active task binding
 
 ```text
 Fact: none|prepared|active binding, canonical task snapshot ref/hash, task/state digest and active checkpoint reference

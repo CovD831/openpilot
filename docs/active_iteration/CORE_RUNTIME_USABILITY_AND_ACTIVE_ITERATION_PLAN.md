@@ -2,8 +2,9 @@
 
 > 状态：实施中；CRU-0、CRU-1 已完成；CRU-2A contract/store/assistant-ledger/
 > task-materialization/reducer writer-migration 与 CRU-2B deterministic first-turn
-> completion、CRU-2C bounded model-supported core 已完成，下一切片为 CRU-2D
-> evidence escalation 与 feature-flagged handoff。
+> completion、CRU-2C bounded model-supported core、CRU-2D evidence escalation
+> core 已完成，下一切片为 CRU-3 governed decomposition 与安全的 feature-flagged
+> single-task handoff。
 >
 > 日期：2026-08-10
 >
@@ -1446,6 +1447,11 @@ classification.route == "agent_generator" dispatch predicates
 - evidence absorption；
 - same completion gate re-entry；
 - stale/fingerprint checks。
+
+实施状态：已完成 obligation → read-only `DecisionNeed`、canonical task
+materialization、source-compatible receipt/checkpoint binding、同一 completion gate
+重入和三处 durable write 恢复。CLI 不会把 evidence-required candidate 回落到旧
+decomposition；真实执行选择随 CRU-3 的 governed single-task/session cursor 接通。
 
 CRU-2A–2D 的共同非目标：不修改 Agent Generator route、pipeline 或实现。
 

@@ -39,8 +39,9 @@ checksum and payload match. Active recovery revalidates the checkpoint rather
 than treating its reference as proof.
 
 The deterministic response subset uses these primitives behind the default-off
-unified-entry flag. General model responses and evidence/task materialization
-remain offline until their later handoff gates pass.
+unified-entry flag. General model responses remain outside CLI selection until
+the governed task cursor can execute an evidence-required handoff without
+falling through to legacy decomposition.
 
 A bounded model response persists its zero-tool provider request before
 transport and clears that pending request only with a bounded provider-response
@@ -51,6 +52,20 @@ coverage failure after repair, or token-budget exhaustion produces a durable
 controlled stop; free-form provider errors never authorize retry or task
 materialization. Full provider-response crash replay is added with the later
 recovery package and must not be inferred from a prepared request alone.
+
+Evidence escalation materializes only under a user-derived
+`read_only_eligible` ceiling. Its receipt must reference an exact observed
+artifact/hash and one later task-owned read-only checkpoint whose session
+constraints and project fingerprint still match the canonical initial-task
+snapshot and a fresh caller-supplied current fingerprint. The typed artifact
+also binds obligation, source class, observation time, and evidence body, so a
+receipt cannot relabel old evidence as fresh. Project evidence with a stale fingerprint and external-current
+evidence outside its freshness window (including future timestamps) cannot
+close an obligation. After validated absorption, the durable transition is
+evidence-complete → pending assistant record → assistant ingress → committed
+assistant record. Recovery at any of those writes reuses the original response
+artifact and the already accepted evidence references; it does not rerun the
+Provider, append a duplicate turn, create project success, or admit post-core.
 
 ## Source of truth
 

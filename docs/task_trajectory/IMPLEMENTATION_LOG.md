@@ -8171,3 +8171,38 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   `git diff --check` 通过。
 - 剩余限制：CLI 尚不选择 CRU-2C；CRU-2D 必须先接通 evidence-seeking/task handoff。prepared provider
   request 的 crash replay 也不在本切片自证，不能从 request-prepared 状态推断安全重试。
+
+## [已完成] CRU-2D core：Read-only evidence escalation
+
+- 观察到的边界缺口：CRU-2C 可以保留 project/current-external claim 与 open obligation，但缺少 exact
+  claim body、read authority ceiling、task-owned receipt/checkpoint binding 和完成重入；直接回落旧
+  autopilot 会重新调用 Provider/分解并丢失 durable candidate，另建执行器又会复制 tool authority。
+- Metadata impact：复用 `IterationTurnRecordMetadata`、`ResponseClaim`、`CompletionObligation`、
+  `GroundingDecision`、`DecisionNeedMetadata`、`CanonicalInitialTaskSnapshot` 和
+  `RuntimeCheckpointMetadata`。仅为 `ResponseCandidate` 增加 optional `claim_manifest_ref`；compact claim
+  仍唯一拥有 ID/hash/source，artifact 仅保存 evidence question 所需 exact text，必须逐项、同序、无重复地
+  通过 ID/hash/source 校验。未新增 `MetadataKind`、权限 owner、project fact、success 或 report contract。
+- 实现修复：`EvidenceEscalationController` 将 open project/current obligation 投影为明确 `read_only=true`
+  的 `project_structure`/`web_search` need；只有用户意图派生的 `read_only_eligible` ceiling 可 materialize
+  read-only task。`response_only` 被 materializer 和 controller 双重拒绝，模型生成的 project claim 不能
+  升级用户权限，read ceiling 不能形成 mutation mode。
+- Evidence/完成门：receipt 必须一对一且无额外项地覆盖 open obligations，绑定 exact artifact/hash、同一个
+  later task checkpoint、read-only mode、无 `core_success`、checkpoint evidence marker、当前 session
+  constraints、canonical + fresh current project fingerprint、`tool_result_applied` boundary 和
+  source-compatible registered reader；typed artifact 同时绑定 obligation/source/observed-at/body，receipt
+  不能重标时间；external-current 另受五分钟 freshness 约束并拒绝未来时间。
+  验证后关闭 obligation、移除 task binding，并用原 response artifact 重新进入同一 grounding/assistant
+  ledger gate，不生成 project success、verification、report、improvement 或 post-core handoff。
+- Recovery：evidence-complete、pending assistant record、assistant ingress 三个 durable write 边界均可从旧
+  active record + 相同 receipt 恢复；重试校验 durable evidence refs/authority，复用 exact message ID、turn
+  index 和 payload，不重复 assistant turn。并发 terminal writer 通过 turn-store CAS/ledger convergence
+  使用同一 durable winner。
+- 验证证据：CRU-2D/response/materializer/reducer 聚焦 **41 passed**；新增 manifest、extra receipt、stale
+  authority/fingerprint/freshness、future-time、authority non-upgrade 与三处 crash recovery 覆盖。完整
+  `Code/tests` **1445 passed**（1 个既有 pytest deprecation warning），touched Ruff、compileall 与
+  `git diff --check` 通过。
+- 剩余限制：CLI 尚不选择 general bounded/evidence task。现有 `handle_streamed_need` 只路由、
+  `absorb_streamed_tool_result` 只吸收外部结果，没有 governed single-task/session execution cursor；因此
+  evidence-required candidate 不得回落 legacy decomposition，也不得另造 parallel executor。真实
+  feature-flagged task execution 随 CRU-3 governed decomposition/cursor 接通。prepared Provider request 的
+  crash replay仍由 CRU-4 recovery package 负责。

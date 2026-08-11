@@ -786,6 +786,13 @@ completion obligations and waiver limits, response claims and grounding, root
 decision budgets, assistant payload commit state, and prepared/active task
 bindings.
 
+`ResponseCandidate.claim_manifest_ref` points to a content-addressed internal
+manifest containing the exact ordered claim text, ID, hash, and Runtime-owned
+source class. `ResponseClaim` remains the compact authoritative control value;
+the manifest is a body-bearing evidence artifact used to form a durable
+`DecisionNeed`, not a second claim-classification owner. Consumers must reject
+missing, reordered, duplicate, extra, or hash/source-mismatched entries.
+
 The contract enforces these boundaries before runtime wiring:
 
 - response-only authority is the default; mutation eligibility requires typed
@@ -803,9 +810,9 @@ The contract enforces these boundaries before runtime wiring:
 - a durable response requires the same response artifact/hash in the outcome
   and committed assistant ledger binding.
 
-The contract and offline persistence/assistant-commit slices do not yet change
-the autonomous entry, answer runtime questions, bypass decomposition, or alter
-Agent Generator behavior.
+The contract and offline persistence/assistant-commit slices do not by
+themselves select the autonomous entry, answer runtime questions, bypass
+decomposition, or alter Agent Generator behavior.
 
 `IterationTurnStore` provides the contract's offline persistence boundary:
 
@@ -842,9 +849,9 @@ conversation/run/project identity, and every snapshot/state/checkpoint digest;
 stale or unavailable facts return a typed fail-closed failure code. Once active,
 the checkpoint is the task truth and the turn record retains references only.
 
-These components are not yet wired to CLI execution. They do not invoke a
-Provider, authorize a write by themselves, or display independently; Controller
-writer migration and the feature-flagged entry remain pending.
+These components do not invoke a Provider, authorize a write by themselves, or
+display independently. The deterministic subset is feature-flagged; governed
+task execution selection is owned by the later decomposition cursor.
 
 `IterationTurnReducer` is the sole pre-task record transition writer. It owns
 generation/record-ID advancement and the legal incomplete → response-pending →
@@ -886,6 +893,32 @@ through the same response reducer and assistant ledger as deterministic
 responses. The CRU-2C controller is not yet selected by CLI; CRU-2D owns the
 evidence/task handoff needed before general model responses can safely enter the
 feature-flagged path.
+
+`EvidenceEscalationController` implements the CRU-2D handoff core. It converts
+each open project/current-external obligation into a source-compatible,
+explicitly read-only `DecisionNeedMetadata`, then materializes one canonical
+read-only task/checkpoint only when the user-derived ceiling is
+`read_only_eligible`. A model-generated project claim cannot upgrade
+response-only authority, and read escalation can never enable mutation,
+verification success, project success, post-core admission, or improvement.
+
+Evidence absorption requires one unique receipt per open obligation and no
+extras. Each receipt binds a content-addressed artifact to one later task-owned
+read-only checkpoint, its integrity digest, current session authority, and the
+canonical plus freshly supplied current project fingerprint. The typed artifact
+body binds obligation ID, source class, observation time, and evidence payload;
+the receipt cannot relabel those provenance fields. The checkpoint must be a successful
+`tool_result_applied` observation from a source-compatible registered reader
+(`file_reader`/`multi_file_reader` for project facts, `web_searcher` for
+current-external facts). Current-external evidence also has a bounded
+freshness window and rejects future timestamps. Once all obligations close, the
+controller removes the task reference and re-enters the same grounding and
+assistant-ledger completion gate with the original response payload. Recovery
+after evidence-complete, pending-ledger, or assistant-ingress writes converges
+without a duplicate assistant turn. CLI execution of this materialized task is
+deliberately deferred to CRU-3's governed single-task/session cursor; an
+evidence-required candidate must not fall through to the legacy decomposition
+pipeline or a parallel executor.
 
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or

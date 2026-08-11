@@ -27,8 +27,10 @@
 ledger 幂等提交/崩溃恢复，以及 canonical prepared/active task binding 与 session
 authority freshness/revocation recovery gate；唯一 pre-task reducer writer migration 也已完成。
 CRU-2B deterministic runtime-fact completion 已接入默认关闭的 once/interactive feature flag；
-CRU-2C bounded zero-tool model response core 已完成，下一切片是 CRU-2D evidence
-escalation 与 feature-flagged handoff。Agent Generator 未进入新路径。
+CRU-2C bounded zero-tool model response core 与 CRU-2D evidence escalation core
+已完成；下一切片是 CRU-3 governed decomposition 和安全的 feature-flagged
+single-task handoff。evidence-required candidate 不回落旧 decomposition，也不复制
+tool executor；Agent Generator 未进入新路径。
 
 ## 归档
 
