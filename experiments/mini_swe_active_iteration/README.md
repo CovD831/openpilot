@@ -3,6 +3,12 @@
 This is an isolated development package for the staged experiment defined in
 [`docs/active_iteration/MINI_SWE_ACTIVE_ITERATION_EXPERIMENT_PROTOCOL.md`](../../docs/active_iteration/MINI_SWE_ACTIVE_ITERATION_EXPERIMENT_PROTOCOL.md).
 
+CRU-7 runtime usability rollout is a separate deterministic canary surface in
+`CRU_7_USABILITY_CANARY_PROTOCOL_V1.json` and `usability_canary.py`. It requires
+the exact 12-category paired matrix and treats traceback leakage, false success,
+scope violation, duplicate mutation, indeterminate replay, credential leakage,
+and core regression as non-compensating gates before any cost comparison.
+
 Current status:
 
 - phase: `0`

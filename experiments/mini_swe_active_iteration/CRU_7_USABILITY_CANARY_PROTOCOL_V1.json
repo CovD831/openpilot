@@ -1,0 +1,105 @@
+{
+  "schema_version": "cru7-usability-canary-v1",
+  "status": "pre_registered",
+  "candidate_revision_policy": "one immutable git revision after protocol freeze",
+  "legacy_baseline_revision": "d7065fa",
+  "lanes": [
+    "legacy",
+    "candidate"
+  ],
+  "required_paths": [
+    "response_only",
+    "evidence_seeking",
+    "single_task",
+    "decomposed"
+  ],
+  "hard_gates": {
+    "candidate_scenario_pass_rate": 1.0,
+    "traceback_leakage_count": 0,
+    "false_success_count": 0,
+    "scope_violation_count": 0,
+    "duplicate_mutation_count": 0,
+    "indeterminate_replay_count": 0,
+    "credential_leakage_count": 0,
+    "minimum_core_success_delta_vs_legacy": 0.0,
+    "cost_metrics_admissible_only_after_hard_gates": true
+  },
+  "tasks": [
+    {
+      "category": "runtime_configuration",
+      "path": "response_only",
+      "selector": "tests/test_unified_autonomous_entry.py::test_feature_flagged_once_runtime_question_skips_runtime_construction"
+    },
+    {
+      "category": "ordinary_ambiguous",
+      "path": "response_only",
+      "selector": "tests/test_bounded_model_response.py::test_bounded_response_uses_zero_tools_and_commits_grounded_payload"
+    },
+    {
+      "category": "read_only_repository",
+      "path": "evidence_seeking",
+      "selector": "tests/test_evidence_escalation.py::test_source_compatible_evidence_reenters_same_completion_gate"
+    },
+    {
+      "category": "single_file_repair",
+      "path": "single_task",
+      "selector": "tests/test_runtime_session_executor.py::test_runtime_session_single_task_skips_provider_decomposition_and_persists_decision"
+    },
+    {
+      "category": "multi_file_dependency",
+      "path": "decomposed",
+      "selector": "tests/test_runtime_session_executor.py::test_runtime_session_enhanced_emits_durable_decomposition_and_task_cursors"
+    },
+    {
+      "category": "validation_failure_repair",
+      "path": "single_task",
+      "selector": "tests/test_agent_runtime_controller.py::test_state_updater_replans_after_failed_verification"
+    },
+    {
+      "category": "schema_unknown_tool",
+      "path": "single_task",
+      "selector": "tests/test_execution_tool_planning_executor.py::test_tool_event_loop_feature_flag_accepts_first_protocol_repair"
+    },
+    {
+      "category": "confirm_reject",
+      "path": "evidence_seeking",
+      "selector": "tests/test_session_ingress_contract.py::test_reject_and_revoke_do_not_leave_active_constraint"
+    },
+    {
+      "category": "interrupt",
+      "path": "single_task",
+      "selector": "tests/test_cru7_rollout_defaults.py::test_interactive_ctrl_c_during_task_returns_to_prompt_without_traceback"
+    },
+    {
+      "category": "checkpoint_resume",
+      "path": "single_task",
+      "selector": "tests/test_agent_runtime_controller.py::test_runtime_controller_resume_returns_completed_checkpoint_without_reexecution"
+    },
+    {
+      "category": "optional_enhancement",
+      "path": "single_task",
+      "selector": "tests/test_core_completion_handoff.py::test_integration_lane_defers_legacy_improvement_before_verified_handoff"
+    },
+    {
+      "category": "required_enhancement",
+      "path": "single_task",
+      "selector": "tests/test_core_completion_handoff.py::test_integration_lane_composes_required_skipped_stage_without_rewriting_core"
+    }
+  ],
+  "cross_cutting_safety_selectors": [
+    "tests/test_cli_runtime_recovery.py::test_ordinary_autonomous_cli_contains_failure_without_traceback",
+    "tests/test_bounded_model_response.py::test_provider_exception_becomes_redacted_controlled_stop",
+    "tests/test_provider_tool_admission.py::test_provider_mutation_write_scope_denies_unlisted_target",
+    "tests/test_execution_tool_planning_executor.py::test_code_symbol_modify_does_not_duplicate_explicit_patch_writer",
+    "tests/test_agent_runtime_controller.py::test_file_resume_detects_completed_write_without_replaying_and_verifies",
+    "tests/test_unified_autonomous_entry.py::test_agent_generator_route_bypasses_unified_entry_under_flag"
+  ],
+  "rollout_rules": {
+    "unified_autonomous_entry": "default_on only after all hard gates",
+    "governed_decomposition": "default_on only after all hard gates",
+    "model_visible_protocol_repair": "separate negative-regression gate; otherwise canary_only",
+    "core_post_core_integration": "default_on requires an accepted PKG3/PKG4 consumer; otherwise canary_only",
+    "legacy_autonomous_pipeline": "default_off_rollback_only after unified entry and governed decomposition admission",
+    "task_classifier_and_agent_generator": "out_of_scope_unchanged"
+  }
+}

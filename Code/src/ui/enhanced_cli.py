@@ -49,12 +49,12 @@ def _runtime_diagnostics_enabled() -> bool:
 
 
 def _unified_autonomous_entry_enabled() -> bool:
-    value = str(os.getenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "0")).strip().lower()
+    value = str(os.getenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")).strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 
 def _governed_decomposition_enabled() -> bool:
-    value = str(os.getenv("OPENPILOT_GOVERNED_DECOMPOSITION", "0")).strip().lower()
+    value = str(os.getenv("OPENPILOT_GOVERNED_DECOMPOSITION", "1")).strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 

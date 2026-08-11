@@ -91,6 +91,8 @@ OpenAI-compatible providers are configured with environment variables:
 | `OPENPILOT_LLM_TOKENIZER_PATH` | No | Local DeepSeek cache | Optional explicit provider tokenizer JSON path; known OpenAI profiles use local `tiktoken` model encodings when available. |
 | `OPENPILOT_CONTEXT_MAX_PROMPT_TOKENS` | No | `4096` | Exact token budget for the memory-context slice when a provider tokenizer is available. |
 | `OPENPILOT_CONTEXT_RESERVED_PROMPT_TOKENS` | No | `128` | Explicit framing/safety reserve deducted from assembled request content budget. |
+| `OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` | No | `true` | Default autonomous pre-task entry for deterministic runtime facts and bounded zero-tool responses. Set `false` with governed decomposition disabled for the legacy rollback lane; Agent Generator is unaffected. |
+| `OPENPILOT_GOVERNED_DECOMPOSITION` | No | `true` | Default Runtime-owned single-task/decomposition admission. Set `false` with unified entry disabled for the legacy rollback lane; it never broadens task authority. |
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_ENABLED` | No | `false` | Explicit opt-in for the provider-native real-task entry point; default JSON planning is unchanged. |
 | `OPENPILOT_PROVIDER_TOOL_INITIAL_CONTEXT_PROJECTION_ENABLED` | No | `false` | Explicit read-only canary flag required when an owner supplies typed segmented/compact initial-context candidates; disabled callers fail closed before transport. |
 | `OPENPILOT_PROVIDER_TOOL_INITIAL_CONTEXT_MUTATION_ENABLED` | No | `false` | Separate default-off mutation projection flag; required with `allow_mutations` and confirmation when typed initial-context candidates are supplied to a mutation task. It never enables read-only projection. |
@@ -897,13 +899,14 @@ constructs a Task/checkpoint/report, calls a Provider/tool, derives project
 success, requests verification, or enters project improvement. Every write
 boundary from initial record through committed assistant record is replay-safe.
 
-CLI once and interactive autonomous routes expose this path only when
-`OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` is true. The flag defaults false;
-Agent Generator is checked first and never enters the unified controller.
+CLI once and interactive autonomous routes expose this path when
+`OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` is true. It defaults true after
+the CRU-7 usability gate; Agent Generator is checked first and never enters the unified controller.
 Unrecognized deterministic goals continue into the bounded model response
 step. A fully grounded response is committed directly; an evidence-required
-candidate may proceed only when the separately disabled
-`OPENPILOT_GOVERNED_DECOMPOSITION` flag is enabled. Evidence execution failure
+candidate may proceed only when the separately controlled, default-on
+`OPENPILOT_GOVERNED_DECOMPOSITION` flag is enabled. Disabling both flags restores
+the bounded legacy autonomous rollback lane. Evidence execution failure
 is credential-redacted and fail-closed and never falls through to the legacy
 decomposition pipeline.
 
