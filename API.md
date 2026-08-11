@@ -731,6 +731,34 @@ projection, so ordinary dialog noise does not stale an unchanged constraint.
 This establishes offline production wiring; it does not authorize a
 full-conversation Provider canary or claim a Token/quality gain.
 
+### Autonomous decomposition failure boundary
+
+`TaskDecomposer` accepts the existing `general` task kind and normalizes an
+omitted kind to `general`. A non-object decomposition root, non-list `subtasks`,
+non-object subtask, missing/blank description, or unsupported explicit kind is
+rejected locally instead of reaching task execution.
+
+Standard and enhanced-UI autonomous sessions absorb expected decomposition
+contract failures at the runtime boundary and return `success=false` with a
+nested `FailureMetadata`. The bounded result includes
+`failure_stage="Task Decomposition"`, `failed_tool="task_decomposer"`,
+`failure_id`, `recoverable`, and `recoverability`. When a task ID is available,
+the failure ID is `<task_id>:task_decomposition`; otherwise it is
+`task_decomposition`. Provider response bodies and raw exception text are not
+projected into this result.
+
+For CRU-1, `recoverable=true` with
+`recoverability="recoverable_after_action"` means that a user may rerun the
+request, or a later governed controller may recover it. This boundary does not
+start another decomposition or Provider call; `retry_recommended` and the
+recovery strategy are advisory metadata only. Bounded automatic protocol retry
+and no-progress policy remain owned by CRU-4.
+
+Ordinary once and interactive autonomous CLI paths render the bounded phase,
+reason, recoverability, and available task/failure identifier without printing
+a traceback or raw exception. This does not create response-only completion,
+claim core success, admit post-core work, or change the Agent Generator route.
+
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or
 otherwise invalid JSON one bounded recovery opportunity; failure after the

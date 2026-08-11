@@ -68,6 +68,7 @@
 | 2026-07-07 | 只读 synthesis 修复、fallback `project_path` 贯穿、最小路径守卫 | 已完成 | 定向 94 passed，全量 503 passed | route contract 仍粗、`runtime_mode` 仍非一等字段、全面 evidence-backed path policy 未完成 |
 | 2026-08-02 | metadata 契约治理、固定上下文预算、选择记录与 prompt 去重 | 已完成 | metadata/上下文定向回归通过、全量 511 passed | 字符预算尚未结合 provider token 计数；对话边界还不是跨会话持久化恢复点 |
 | 2026-08-05 | Session ingress、约束投影、checkpoint、Stage 5A 准入与 Stage 5B canary gates | 真实 Provider 小样本完成（边界受限） | 全量 947 passed；Stage 5B-2 定向 5 passed；Stage 5B-3a/3b 定向 4/17 passed；Stage 5B-3c fake 9 passed；Stage 6 实验层 45 passed；有效 Provider pair 2 calls、0 mutation | 仅 Task Designer 一对样本；raw dialog→ContextLoader/full project runtime 尚未覆盖；Stage 9 V1 冻结报告漂移；动态预算/reasoning 仍独立 |
+| 2026-08-11 | CRU-1 autonomous decomposition 用户错误边界 | 已完成（local/static） | CRU focused 132 passed；Agent Generator parity 38 passed；全量 1350 passed；compileall/touched Ruff 通过 | `recoverable` 仅表示用户重跑或后续治理可恢复；自动 bounded retry 仍由 CRU-4 实现；全仓 Ruff/mypy baseline 未清零 |
 
 # 2026-08-09
 
@@ -8042,3 +8043,29 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：普通 `git worktree add` 本身不会消费 `.worktreeinclude`，因此 OpenPilot 使用 shared
   checkout fallback；如果主 checkout 和 worktree 同时存在 `.env`，后加载的 worktree 配置按
   pydantic-settings 的既有优先级覆盖 shared fallback。
+
+## [已完成] CRU-1：Autonomous decomposition 用户错误边界
+
+- 观察到的失败：普通输入进入 autonomous iteration 后，Provider 返回合法的 `kind=general`，
+  但本地 decomposer alias 表未接受该既有 task kind；schema/validator 失败继续穿透 standard/
+  enhanced runtime，once 与 interactive CLI 最终向普通用户打印原始异常和 traceback。
+- Metadata impact：复用现有 `FailureMetadata` 与 `Recoverability`，不新增 `MetadataKind`、route、
+  权限 owner、checkpoint schema 或 completion contract。runtime failure result 增加现有结果投影字段
+  `failure_id`、`recoverable` 和 `recoverability`；这些字段只描述失败和恢复边界，不授予权限或证明
+  task/core success。
+- 实现修复：`TaskDecomposer` 接受 `general`、把缺失 kind 规范为 `general`，并在创建 Task 前拒绝
+  malformed root/subtask/description。standard 与 enhanced-UI session 在 decomposition 边界把预期
+  contract failure 转为 bounded、credential-redacted `FailureMetadata` 结果；enhanced failure 只通过
+  ownership-guarded helper 停止 runtime-owned tracker。普通 once/interactive CLI 显示 phase、简洁原因、
+  recoverability 与可用 identifier，不再打印 traceback 或原始异常文本。Agent Generator route 和行为未改。
+- 验证证据：冻结实现范围
+  `cd6704dda5d481fe1b0f23b6cab775075155d46c..61b9f2b39473d3767a5b8068db443b3fadf6d19e`
+  的 CRU focused suite **132 passed**，Agent Generator/parity **38 passed**，完整 `Code/tests`
+  **1350 passed**（1 个既有 pytest deprecation warning），compileall 与 touched Ruff 通过；shared
+  tracker 负例先红后绿，secret fixture 不进入 failure result。新增的两处 changed-source mypy
+  `union-attr` 已消除（`enhanced_cli.py` 35 → 33，剩余为既有错误）。
+- 剩余限制：CRU-1 的 `recoverable=true` / `recoverable_after_action` 只表示用户可以重新运行，或未来
+  governed controller 可以恢复；当前 failure boundary 不会自动发起第二次 decomposition/Provider call，
+  `retry_recommended` 也是 advisory。bounded automatic retry/no-progress budget 由 CRU-4 拥有。CRU-1
+  不实现 response-only completion、Phase 2 controller 或 post-core admission，也没有 live Provider/
+  direct 证据；指定项目 `.venv` 缺少 Ruff/mypy，且全仓既有 Ruff/mypy debt 未在本切片清理。
