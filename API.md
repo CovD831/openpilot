@@ -868,6 +868,25 @@ CLI once and interactive autonomous routes expose this path only when
 unrecognized goals fall through to the existing pipeline, and Agent Generator
 is checked first and never enters the unified controller.
 
+`BoundedModelResponseController` implements the CRU-2C zero-tool model step.
+It builds a bounded newest-turn projection that preserves all required active
+session constraints, persists an integrity-bound provider request, and sends a
+provider-neutral `LLMRequest` with `tools=[]`, no `tool_choice`, JSON response
+format, and an explicit token ceiling. The step permits one initial request and
+one complete-replacement repair only. Missing usage is charged at the request
+ceiling; budget, provider, schema, and unexpected tool-call failures become a
+credential-redacted durable controlled-stop outcome.
+
+The model returns response text plus ordered claim spans, but does not control
+claim source. Runtime requires the spans to cover the entire response and
+classifies each as conversation, runtime, project, current-external, or stable
+knowledge. Project/current claims remain open typed evidence obligations and
+the candidate is not committed or displayed. Fully grounded candidates pass
+through the same response reducer and assistant ledger as deterministic
+responses. The CRU-2C controller is not yet selected by CLI; CRU-2D owns the
+evidence/task handoff needed before general model responses can safely enter the
+feature-flagged path.
+
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or
 otherwise invalid JSON one bounded recovery opportunity; failure after the

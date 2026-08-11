@@ -38,9 +38,19 @@ checkpoint written before an active-binding crash is reused only when its exact
 checksum and payload match. Active recovery revalidates the checkpoint rather
 than treating its reference as proof.
 
-These offline recovery primitives are not yet the unified entry. Controller
-writer migration and feature-flagged integration remain mandatory before it can
-be enabled.
+The deterministic response subset uses these primitives behind the default-off
+unified-entry flag. General model responses and evidence/task materialization
+remain offline until their later handoff gates pass.
+
+A bounded model response persists its zero-tool provider request before
+transport and clears that pending request only with a bounded provider-response
+artifact/progress signature. At most one repair request is legal. A project or
+current-external claim produces an evidence-required candidate rather than an
+assistant ledger commit. Provider failure, unexpected tool calls, schema/claim
+coverage failure after repair, or token-budget exhaustion produces a durable
+controlled stop; free-form provider errors never authorize retry or task
+materialization. Full provider-response crash replay is added with the later
+recovery package and must not be inferred from a prepared request alone.
 
 ## Source of truth
 

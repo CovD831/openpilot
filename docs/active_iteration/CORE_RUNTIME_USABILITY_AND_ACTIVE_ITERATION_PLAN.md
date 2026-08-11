@@ -2,7 +2,8 @@
 
 > 状态：实施中；CRU-0、CRU-1 已完成；CRU-2A contract/store/assistant-ledger/
 > task-materialization/reducer writer-migration 与 CRU-2B deterministic first-turn
-> completion 已完成，下一切片为 CRU-2C bounded model-supported completion。
+> completion、CRU-2C bounded model-supported core 已完成，下一切片为 CRU-2D
+> evidence escalation 与 feature-flagged handoff。
 >
 > 日期：2026-08-10
 >

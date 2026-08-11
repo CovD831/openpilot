@@ -8147,3 +8147,27 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   pytest deprecation warning），touched Ruff、compileall 与 `git diff --check` 通过。
 - 剩余限制：本切片不执行 bounded model response、evidence escalation、Task materialization 的 CLI
   handoff 或 default-on；这些分别由 CRU-2C/2D/2A integration 与 CRU-7 拥有。
+
+## [已完成] CRU-2C core：Bounded zero-tool model response
+
+- 观察到的边界缺口：deterministic controller 只覆盖 runtime-owned facts；一般对话如果直接接入模型，
+  仍可能广告/执行 tool、无限 repair、漏报 claim、把 project/current guess 当已 grounded answer，或在
+  token usage 缺失时把消耗记为零。
+- Metadata/authority：复用 turn-owned pending provider request、root budget、ResponseCandidate/Claim、
+  CompletionObligation、GroundingDecision 和 controlled-stop outcome。新增的 bounded session/model schema
+  是 controller-local strict value，不新增 MetadataKind、权限 owner、Task 或 checkpoint。
+- 实现修复：`BoundedModelResponseController` 只发 provider-neutral `LLMRequest(tools=[])`，初始请求加最多
+  一次 complete-replacement repair。newest-turn projection 保留 required constraints 并有硬字符/turn 上限；
+  request/response artifacts、ordinal/hash 和 budget 先后 durable。未知 usage 按每次 2000-token ceiling
+  保守计费；provider exception、unexpected tool call、二次 schema/coverage 失败和 budget exhaustion 均
+  形成 redacted durable controlled stop。
+- Grounding gate：模型只提供覆盖完整 response 的 ordered claim spans，Runtime 忽略模型 source judgment
+  并分类 conversation/runtime/project/current-external/stable。project/current claim 只形成 open evidence
+  obligation 和 durable candidate，不 append assistant turn、不显示；完全 grounded candidate 复用现有
+  response ledger 提交。
+- 验证证据：zero-tool wire、single repair、tool-call rejection、project evidence gate、context budget、
+  unknown-usage conservative charging、provider error redaction 和 reducer budget monotonic tests 已通过；
+  完整 `Code/tests` **1427 passed**（1 个既有 pytest deprecation warning），touched Ruff、compileall 与
+  `git diff --check` 通过。
+- 剩余限制：CLI 尚不选择 CRU-2C；CRU-2D 必须先接通 evidence-seeking/task handoff。prepared provider
+  request 的 crash replay 也不在本切片自证，不能从 request-prepared 状态推断安全重试。
