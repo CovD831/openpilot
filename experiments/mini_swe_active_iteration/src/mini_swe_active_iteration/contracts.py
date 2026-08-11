@@ -43,6 +43,8 @@ class DecisionKind(str, Enum):
 
 class ExperimentArm(str, Enum):
     ORDINARY = "ordinary"
+    FIXED_ORDER = "fixed_order"
+    MODEL_DIRECTED = "model_directed"
     ACTIVE = "active_iteration"
 
 

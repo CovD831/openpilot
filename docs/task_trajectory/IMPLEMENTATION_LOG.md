@@ -8328,3 +8328,113 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：这是本地 `openpilot-dev` 开发 canary，不是 CRU-7 production default switch。evidence-driven
   replacement 当前只接受全部 blocking claims 均为 current-external 的响应；mixed-source 或缺少可验证 subject 的请求
   fail closed，不凭模型自由文本合成答案。`wttr.in` 可用性仍属于外部网络依赖，失败时不会伪造成功。
+## [已完成] CRU-5：Core active diagnostic strengthening
+
+- 观察到的失败：task-owned runtime 只有 known/unknown/resolved string collections 和总体 `risk_level`，
+  conflict/risk lifecycle 与 measure/act/verify/recover/stop disposition 没有 typed owner；`StateUpdater`
+  只比较五个 collection length，等长内容变化会被误报 no-progress，也无法说明新证据改变了什么决策。
+  mini-SWE experiment package 的正式 protocol 只有 ordinary/active 两臂，没有计划要求的
+  fixed/model-directed/active development comparison gate。
+- Metadata/实现：在 `RuntimeStateMetadata` 下新增 bounded owned nested
+  `ActiveDiagnosticConflict`、`ActiveDiagnosticRisk`、`ActiveDiagnosticDecision`，历史 payload 以空集合/
+  `None` 迁移，不新增 `MetadataKind`。`ActiveDiagnosticEvaluator` 计算覆盖 known/unknown/resolved、
+  conflicts/risks、phase/verification、path/file/edit/decomposition/core facts 的 canonical hash；每个 decision
+  记录 state signature、evidence changed、contributing IDs 与具体 need。非补偿层级为 blocking risk →
+  no-progress → failed verification/recover → required verification → conflict/unknown measurement → least-cost
+  bounded work。Capability、Guard、Actor、Verifier 和 completion owner 未改；verification failure 自动形成
+  evidence-linked risk，fresh success 只把它 resolved，不删除历史证据。Report/checkpoint/trajectory 复用
+  同一 state。
+- Experiment interface：experiment-local `ExperimentArm` 增加 `fixed_order`/`model_directed`，新增严格
+  `ThreeArmTrajectoryReceipt`/`ThreeArmComparison`。主比较固定 active vs model-directed；fixed 只作机制
+  baseline。verified success 不一致，或 false success/scope violation/indeterminate replay、trajectory、
+  budget 任一门失败时，cost comparison 不可用。正式 ordinary/active protocol 与 Provider execution
+  authorization 不变。
+- 验证证据：runtime metadata/controller/checkpoint 组合等价范围 **157 passed**；含 diagnostics 的扩展组合
+  等价范围 **192 passed**；three-arm focused **3 passed**；完整 `Code/tests` **1497 passed**（1 个既有
+  pytest deprecation warning），touched Ruff、compileall 与 `git diff --check` 通过。experiment package 的其余测试存在
+  本分支既有缺失冻结 artifacts/module：`exploratory_plan.py`、paired-run plan、candidate evidence receipts
+  和 `core_benefit_screen_v1` protocol 不在工作树，故 package 全量不能作为本切片的 green gate。
+- 剩余限制：CRU-5 提供 production decision contract 和 development comparison interface，不声称新的
+  real-provider 优势。真实用户 task canary/default switch 由 CRU-7；CRU-6 先冻结 verified core source
+  facts 并接入唯一 post-core package builder/admission consumer。
+
+## [已完成] CRU-6：Verified Core/Post-Core integration boundary
+
+- 观察到的失败：legacy project-improvement loop 在 core checkpoint/report durable 之前运行，空 task
+  collection 可因 `all([])` 产生 core success，`core_success` 缺失时又会回落 generic success；policy 的
+  `target_successes` 同时表示 hard requirement、最大成功数和默认循环目标。当前权威 post-core 分支仅有
+  PKG0 语义冻结，没有可安全接收 core completion 的 transaction consumer。
+- Metadata/ownership：新增 task-owned `CoreAcceptanceDecision`，只有 evidence-linked passed 或 user/
+  goal-policy authority 的 typed waiver 能关闭 active acceptance。`CoreCompletionHandoffView`、bounded
+  source references、唯一 `CoreCompletionPackageView`、budget summary 和 build result 均为 frozen derived
+  values，不新增 `MetadataKind`，不写回 RuntimeState；checkpoint/state/session cursor/report/project
+  fingerprint/trajectory artifact 继续拥有 source truth。
+- 实现修复：verified-ready 以非补偿顺序拒绝 response-evidence、false/absent core success、空或不完整 task
+  result、未通过 verification、unresolved acceptance、prepared/observed/indeterminate side effect、未完成
+  finalization、report hash/fact mismatch、非 canonical project/environment identity、unhashed modified file、
+  blocking residual risk 和超界 projection。最终 checkpoint 重新哈希 observed modified files；session cursor
+  新增真实 `completed` boundary。唯一 builder 生成 content-addressed package，stale/ineligible source 不生成
+  partial package。
+- Policy/result migration：`ProjectImprovementPolicy` 区分 `required_accepted_transactions`、
+  `max_accepted_transactions` 与 `max_attempts`；automatic default 为 `0/1/1`。legacy optional target 迁移为
+  hard=0，legacy required target 迁移为 hard=max；新旧冲突 fail closed。stage status 支持独立 post-core
+  lifecycle并保留 historical `succeeded`。`core_success`、stage status、`overall_success` 分层组合，optional
+  failure 不改写 core，required 只接受 `accepted|succeeded`。
+- Integration gate：默认关闭的 `OPENPILOT_CORE_POST_CORE_INTEGRATION` 启用时，legacy pre-finalization
+  improvement 被阻止；durable finalization 后只构建 package。当前没有 PKG3/PKG4 consumer，因此 stage
+  保持 skipped，optional 保留 verified core result，required fail closed；repair 不计 enhancement success。
+- 验证证据：新增 ready/eligible 的完整 negative matrix、acceptance authority、exact source bound、package
+  checksum/JSON migration、optional/required composition、legacy/new policy migration 和 legacy-loop suppression
+  tests；CRU-6 聚焦组合 **272 passed**，完整 `Code/tests` **1528 passed**（1 个既有 pytest 10
+  参数化弃用 warning），touched Ruff、compileall 与 `git diff --check` 通过。
+- 剩余限制：本切片不声称 post-core enhancement benefit，也不实现 opportunity、transaction、dual gate 或
+  rollback consumer；这些仍由 post-core PKG3/PKG4 按其串行计划拥有。CRU-7 只能 canary 已实现的 core
+  entry/handoff 路径，不能把 package-ready 当作 enhancement success。
+
+## [已完成] CRU-7：Controlled usability canary and default switch
+
+- 观察到的问题：计划需要用同一非补偿口径验证模型/配置询问、普通模糊问答、只读仓库分析、单文件修复、
+  多文件依赖、validation repair、schema/unknown tool、confirm/reject、Ctrl+C、checkpoint resume、optional
+  enhancement 和 required enhancement；此前没有冻结的 12 类矩阵、四路径覆盖、hard metric 聚合或逐 flag
+  rollout/deprecation 决策。把正确 fail-closed 的 required enhancement 当作业务成功，或在安全门前比较成本，
+  都会制造 false success。
+- 预注册与实现：新增 immutable `CRU_7_USABILITY_CANARY_PROTOCOL_V1.json` 和 experiment-local
+  `CanaryRunReceipt`/`UsabilityCanaryVerdict` evaluator。exact 24 paired receipts、12 类 task、四种 path、bounded
+  evidence IDs/canonical hash 与 literal non-negative counters 缺一即拒绝。候选 scenario quality、traceback/
+  false-success/scope/duplicate/indeterminate/credential 六个零值门、core non-regression 为非补偿 gate；只有全部
+  通过后 token/call/latency 才可比较。该 derived evaluator 不写 RuntimeState、不授权 Provider 或 mutation。
+- 用户路径与 rollout：新增 interactive task 执行中 Ctrl+C 回到 prompt 且无 traceback 的生产 CLI 测试。
+  冻结 candidate `10c5a9bfba889d27cba6133c612e6e4c05a4afaa` 后，12 类/四路径 focused matrix **21 passed**，
+  canary evaluator/three-arm **15 passed**；冻结 candidate 完整 `Code/tests` **1530 passed**，补充 explicit
+  legacy rollback-path 测试后的最终 suite **1531 passed**（1 个既有 pytest 10 参数化弃用 warning），相对
+  CRU-6 `d7065fa` baseline **1528 passed** 无失败回归。统一入口与 governed decomposition
+  默认开启，显式 false 为 legacy rollback；classifier、Agent Generator route/pipeline 保持不变。
+- 独立 NO-GO：`OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR` 默认开启试验改变 duplicate/no-progress 行为并使
+  focused 226 项中 2 项失败，因此不修改其 default-off canary。`OPENPILOT_CORE_POST_CORE_INTEGRATION` 因
+  无 accepted PKG3/PKG4 consumer 同样保持 default-off；required enhancement 正确 overall fail-closed，不能把
+  package-ready 计为 enhancement success。legacy autonomous pipeline 决策为 default-off rollback-only，不包含
+  task classifier 或 Agent Generator。
+- 验证与限制：touched Ruff、compileall、JSON validation 和 `git diff --check` 通过。当前环境无外部 Provider
+  credential，真实外部 Provider/network/project mutation 均为 0；hard gate 后成本比较已具备 admission，但本结果
+  不声称 live token/call/latency 优势。该限制不放宽 provider/tool/permission/verification gate，未来 live canary
+  只补充性能证据，不反向改变本次安全与默认开关结论。
+
+## [已完成] CRU-1 至 CRU-7 累积开发版合并
+
+- 合并来源：在 `codex/cru-1-to-4b-dev` 的 dev2 release `a06853f` 上合入 CRU-5/6/7 完整来源
+  `c6b33db`；merge base 为 CRU-4B `39b1fab`。保留 CRU-5 typed active diagnostic、CRU-6 verified core
+  handoff/package、CRU-7 default-on/rollback gates，同时保留 dev2 的 real-network weather/evidence rewrite、
+  fresh web result no-replay 和中文 claim coverage 修复。
+- 冲突与边界：唯一 textual conflict 位于本日志的并行追加区，两个历史实施记录均保留。重叠 runtime/CLI
+  自动合并后通过交叉测试。CRU-7 package defaults 为 unified entry/governed decomposition default-on；本地开发版
+  继续对显式 project/file/path 输入采用 typed legacy-project disposition，避免 live smoke 已观察到的零工具
+  文件拒答 false completion；顶层 route 仍为 `autonomous_iteration`，Agent Generator 不变。
+- 验证证据：CRU-7 source branch 聚焦 **33 passed**、完整 **1531 passed**；合并后 CRU-5/6/7 + dev2 overlap
+  **168 passed**，完整 `Code/tests` **1546 passed**，canary evaluator/three-arm **15 passed**；touched Ruff、
+  compileall、JSON validation 与 `git diff --check` 通过。
+- 发布身份：package 升级为 `0.1.0.dev3`，权威发布说明为
+  `docs/active_iteration/CRU_1_TO_7_DEVELOPMENT_RELEASE.md`。isolated wheel
+  `openpilot-0.1.0.dev3-py3-none-any.whl` SHA-256 为
+  `3810cd91f516449c7ccfb360234026dfcb957960f58a9cff54d91522ce4e1412`；editable install 报告
+  `0.1.0.dev3`。同一交互式 `openpilot-dev` session 已验证问候、deterministic model identity 与 fresh 常熟天气；
+  累积 merge 由 tag `v0.1.0-dev.3` 封存。

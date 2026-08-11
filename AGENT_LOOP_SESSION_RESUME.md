@@ -38,10 +38,12 @@ checkpoint written before an active-binding crash is reused only when its exact
 checksum and payload match. Active recovery revalidates the checkpoint rather
 than treating its reference as proof.
 
-The deterministic response subset uses these primitives behind the default-off
-unified-entry flag. General model responses remain outside CLI selection until
-the governed task cursor can execute an evidence-required handoff without
-falling through to legacy decomposition.
+The deterministic and bounded response paths use these primitives behind the
+default-on unified-entry flag. The governed task cursor is also default-on and
+executes an evidence-required handoff without falling through to legacy
+decomposition. Explicitly disabling both flags restores the bounded legacy
+rollback lane; a checkpoint must resume under its recorded compatible path or
+fail closed.
 
 A bounded model response persists its zero-tool provider request before
 transport and clears that pending request only by atomically binding an exact
@@ -82,6 +84,17 @@ the attempt ledger, and the existing checkpoint lifecycle. A process restart may
 resume only from the durable tool/checkpoint boundary already recorded; the
 repair flag does not authorize replay of an unobserved side effect or a fresh
 permission/scope decision.
+
+Task-owned active diagnostic state is part of `RuntimeStateMetadata` and thus
+the existing checkpoint checksum. Resume preserves the exact conflict/risk
+lifecycle, bounded diagnostic decision history, latest decision signature,
+no-progress count, phase, and verification state. The next evaluator decision
+must recompute its canonical signature from current authoritative state; it may
+report unchanged evidence, but it must not reconstruct conflicts/risks from log
+text or treat a new decision-history ordinal as progress. Failed verification
+continues through recover before a fresh verify, and an open blocking risk
+continues to stop automatic action. Guard/permission facts are re-evaluated by
+their existing owners and are not copied into diagnostic risk values.
 
 ## Source of truth
 

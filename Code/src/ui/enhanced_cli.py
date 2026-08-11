@@ -78,12 +78,12 @@ def _runtime_diagnostics_enabled() -> bool:
 
 
 def _unified_autonomous_entry_enabled() -> bool:
-    value = str(os.getenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "0")).strip().lower()
+    value = str(os.getenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")).strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 
 def _governed_decomposition_enabled() -> bool:
-    value = str(os.getenv("OPENPILOT_GOVERNED_DECOMPOSITION", "0")).strip().lower()
+    value = str(os.getenv("OPENPILOT_GOVERNED_DECOMPOSITION", "1")).strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 
@@ -245,17 +245,28 @@ class OpenPilotRuntimeOptions:
             return ProjectImprovementPolicy(
                 requirement=ProjectImprovementRequirement.DISABLED,
                 source=self.improvement_policy_source,
-                target_successes=0,
+                required_accepted_transactions=0,
+                max_accepted_transactions=0,
                 max_attempts=0,
             )
         from autonomous_iteration.agents.iteration_agent import AutonomousIterationAgent
 
+        automatic_optional = (
+            self.improvement_requirement == ProjectImprovementRequirement.OPTIONAL
+            and self.improvement_policy_source == ProjectImprovementPolicySource.AUTOMATIC_DEFAULT
+        )
+        accepted_target = 1 if automatic_optional else self.improvement_iterations
         return ProjectImprovementPolicy(
             requirement=self.improvement_requirement,
             source=self.improvement_policy_source,
-            target_successes=self.improvement_iterations,
-            max_attempts=AutonomousIterationAgent.minimum_attempt_budget(
-                self.improvement_iterations
+            required_accepted_transactions=(
+                0 if automatic_optional else accepted_target
+            ),
+            max_accepted_transactions=accepted_target,
+            max_attempts=(
+                1
+                if automatic_optional
+                else AutonomousIterationAgent.minimum_attempt_budget(accepted_target)
             ),
         )
 

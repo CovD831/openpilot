@@ -33,6 +33,31 @@
   **planning surface** (need catalog + core capability cards + deferred capability cards). The runtime then maps
   `decision_needs` to concrete tools through `ToolRouter`.
 
+### Active Diagnostic Controller
+
+- Input: task-owned `RuntimeStateMetadata` plus one or more bounded
+  `DecisionNeedMetadata` candidates.
+- Output: one typed `measure | act | verify | recover | stop` diagnostic
+  decision and, except for stop, the selected need passed to the existing
+  `ToolRouter`.
+- Responsibility: apply non-compensatory precedence to blocking risks,
+  no-progress, failed verification/recovery, required verification, open
+  conflicts/unknowns, and then least-cost bounded work. It does not select a
+  concrete tool, approve permission/scope, execute an action, or declare task
+  success.
+
+`RuntimeStateMetadata` remains the task owner for known facts, unknowns,
+resolved questions, typed diagnostic conflicts/risks, bounded diagnostic
+decision history, and the latest canonical diagnostic progress signature.
+`ActiveDiagnosticEvaluator` derives that signature from content-bearing state,
+not collection lengths, and records whether evidence changed since the prior
+decision. `ToolRouter`, `RuntimeGuard`, Actor/tool execution, `StateUpdater`, and
+`RuntimeVerifier` retain their existing capability, admission, execution,
+absorption, and verification responsibilities. A failed verification is a
+recover decision even when modified files still require later re-verification;
+successful fresh verification resolves earlier verification-failure risks but
+does not erase their evidence.
+
 ### Executor
 
 - Input: approved plan step and selected tool.
@@ -66,6 +91,8 @@ OpenAI-compatible providers are configured with environment variables:
 | `OPENPILOT_LLM_TOKENIZER_PATH` | No | Local DeepSeek cache | Optional explicit provider tokenizer JSON path; known OpenAI profiles use local `tiktoken` model encodings when available. |
 | `OPENPILOT_CONTEXT_MAX_PROMPT_TOKENS` | No | `4096` | Exact token budget for the memory-context slice when a provider tokenizer is available. |
 | `OPENPILOT_CONTEXT_RESERVED_PROMPT_TOKENS` | No | `128` | Explicit framing/safety reserve deducted from assembled request content budget. |
+| `OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` | No | `true` | Default autonomous pre-task entry for deterministic runtime facts and bounded zero-tool responses. Set `false` with governed decomposition disabled for the legacy rollback lane; Agent Generator is unaffected. |
+| `OPENPILOT_GOVERNED_DECOMPOSITION` | No | `true` | Default Runtime-owned single-task/decomposition admission. Set `false` with unified entry disabled for the legacy rollback lane; it never broadens task authority. |
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_ENABLED` | No | `false` | Explicit opt-in for the provider-native real-task entry point; default JSON planning is unchanged. |
 | `OPENPILOT_PROVIDER_TOOL_INITIAL_CONTEXT_PROJECTION_ENABLED` | No | `false` | Explicit read-only canary flag required when an owner supplies typed segmented/compact initial-context candidates; disabled callers fail closed before transport. |
 | `OPENPILOT_PROVIDER_TOOL_INITIAL_CONTEXT_MUTATION_ENABLED` | No | `false` | Separate default-off mutation projection flag; required with `allow_mutations` and confirmation when typed initial-context candidates are supplied to a mutation task. It never enables read-only projection. |
@@ -73,6 +100,7 @@ OpenAI-compatible providers are configured with environment variables:
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_MAX_ROUNDS` | No | `3` | Upper bound for provider tool-call rounds when the opt-in entry point is used. |
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_BUDGET_PROFILE` | No | `canary` | Typed budget lane: `canary` keeps bounded smoke-test limits; `real_read_only` enables 12,288 prompt tokens, 4,096 per-call completion ceiling, 24,000 total completion tokens, 8 rounds, 40 calls, and 60 file reads with zero edits/creates for explicit non-mutating provider tasks; `real_mutation` has the same context ceilings but admits only one edit, zero creates, and one verification for explicitly confirmed provider-native mutation tasks. |
 | `OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR` | No | `false` | Canary gate for one model-visible unknown-tool/invalid-input correction across local and provider-native tool loops. It does not authorize permission, confirmation, scope, checkpoint, or validation repair. |
+| `OPENPILOT_CORE_POST_CORE_INTEGRATION` | No | `false` | Canary gate for the verified core handoff lane. It suppresses the legacy pre-finalization enhancement call, builds the unique source-linked Core Completion Package only after durable core finalization, and leaves the stage skipped until a package consumer is available. |
 | `OPENPILOT_EMBEDDING_PROVIDER` | No | `openai-compatible` | Embedding provider label. |
 | `OPENPILOT_EMBEDDING_BASE_URL` | No | Inherits `OPENPILOT_LLM_BASE_URL` | OpenAI-compatible embedding endpoint. |
 | `OPENPILOT_EMBEDDING_API_KEY` | No | Inherits `OPENPILOT_LLM_API_KEY` | Embedding API key. |
@@ -871,13 +899,14 @@ constructs a Task/checkpoint/report, calls a Provider/tool, derives project
 success, requests verification, or enters project improvement. Every write
 boundary from initial record through committed assistant record is replay-safe.
 
-CLI once and interactive autonomous routes expose this path only when
-`OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` is true. The flag defaults false;
-Agent Generator is checked first and never enters the unified controller.
+CLI once and interactive autonomous routes expose this path when
+`OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` is true. It defaults true after
+the CRU-7 usability gate; Agent Generator is checked first and never enters the unified controller.
 Unrecognized deterministic goals continue into the bounded model response
 step. A fully grounded response is committed directly; an evidence-required
-candidate may proceed only when the separately disabled
-`OPENPILOT_GOVERNED_DECOMPOSITION` flag is enabled. Evidence execution failure
+candidate may proceed only when the separately controlled, default-on
+`OPENPILOT_GOVERNED_DECOMPOSITION` flag is enabled. Disabling both flags restores
+the bounded legacy autonomous rollback lane. Evidence execution failure
 is credential-redacted and fail-closed and never falls through to the legacy
 decomposition pipeline.
 
@@ -897,7 +926,12 @@ knowledge. Project/current claims remain open typed evidence obligations and
 the candidate is not committed or displayed. Fully grounded candidates pass
 through the same response reducer and assistant ledger as deterministic
 responses. The CRU-2C controller is selected only by the unified autonomous
-canary flag.
+entry flag. CRU-7 advanced unified entry and governed decomposition to
+default-on after the frozen 12-category/four-path hard gate and full regression
+suite passed. Explicit `false` values retain the legacy rollback lane. The
+model-visible protocol repair and core/post-core integration flags remain
+default-off because their independent rollout gates are not satisfied; those
+defaults are not inferred from the unified-entry result.
 
 CRU-4B makes each bounded Provider observation replay-free across process
 failure. `IterationControlCursor.pending_provider_request` and
@@ -1024,15 +1058,43 @@ digest of the authoritative ingress turn ledger. It is replay/evidence metadata
 only; raw `SessionIngressState` and typed constraints remain the authority.
 
 Post-core project improvement has a separate typed completion policy:
-`ProjectImprovementPolicy(requirement, source, target_successes, max_attempts)`.
-`requirement` is `disabled`, `optional`, or `required`. Automatic default
-improvement is optional; an explicit CLI/interactive iteration selection is
-required; zero disables the stage. `required_successful_improvements` remains a
-compatibility view of `target_successes`, not the top-level completion authority.
+`ProjectImprovementPolicy(requirement, source,
+required_accepted_transactions, max_accepted_transactions, max_attempts)`.
+`requirement` is `disabled`, `optional`, or `required`. The new automatic
+default is optional `0/1/1`: no hard accepted count, at most one accepted
+transaction, and at most one attempted transaction. An explicit CLI/interactive
+selection is required and uses its selected count as both the hard and maximum
+accepted count; zero disables the stage. `target_successes` remains a
+historical-read and compatibility projection of `max_accepted_transactions`.
+Legacy optional payloads migrate to hard count zero; legacy required payloads
+migrate their target to both accepted counts. Contradictory old/new counts are
+rejected as `policy_count_conflict`.
+
 Runtime state and reports preserve `core_success`, the policy, and the observed
-improvement status. Optional failure/interruption keeps overall success when the
-core task succeeded and is surfaced as a warning; required failure makes overall
-success false without rewriting completed core task/tool evidence.
+improvement status. `overall_success` is derived: optional stage failure or
+interruption cannot rewrite verified core success, while a required policy
+requires terminal `accepted` (or historical `succeeded`). Repair remains core
+recovery and never increments an enhancement success count.
+
+`CoreCompletionHandoffView` is a strict, read-only decision over the existing
+runtime state, completed `SessionExecutionCursor`, final checkpoint, report
+artifact/state hash, project/environment fingerprint, typed acceptance
+decisions, residual risks, and side-effect state. `ready` and
+`post_core_eligible` are separate and non-compensating. Response-evidence,
+empty-task, incomplete verification, indeterminate side effect, stale report,
+unresolved acceptance/risk, non-canonical identity, read-only analysis, and
+no-output cases fail closed at their corresponding boundary.
+
+`build_core_completion_package` is the only Core Completion Package builder.
+It consumes ready and eligible source facts, emits a content-addressed
+`CoreCompletionPackageView` containing bounded projections and source
+references, and never writes the package back into `RuntimeStateMetadata`.
+Missing or stale sources return a typed build result without a partial package.
+When `OPENPILOT_CORE_POST_CORE_INTEGRATION=true`, legacy pre-finalization
+improvement is deferred; project results expose `core_success`,
+`project_improvement_status`, `overall_success`, the handoff decision, and the
+package build result as separate fields. The flag does not itself execute an
+enhancement transaction.
 Each enhancement attempt takes a pre-iteration Git safety snapshot. If execution
 or evaluation fails after mutation, only its explicit changed-file set is
 restored from that snapshot and `IterationResult` records whether rollback was

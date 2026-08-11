@@ -87,6 +87,9 @@
 ```text
 RuntimeStateMetadata
 ├── budget: RuntimeBudgetMetadata
+├── diagnostic_conflicts: [ActiveDiagnosticConflict]
+├── diagnostic_risks: [ActiveDiagnosticRisk]
+├── diagnostic_decisions: [ActiveDiagnosticDecision]
 ├── path_intents: [PathIntentMetadata]
 ├── path_resolutions: [PathResolutionMetadata]
 ├── planned_edits: [EditPlanMetadata]

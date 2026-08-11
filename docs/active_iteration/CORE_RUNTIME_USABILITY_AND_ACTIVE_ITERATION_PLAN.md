@@ -1,12 +1,14 @@
 # OpenPilot 核心运行时可用性与主动迭代重构总体计划
 
-> 状态：实施中；CRU-0、CRU-1 已完成；CRU-2A contract/store/assistant-ledger/
+> 状态：已完成；CRU-0、CRU-1 已完成；CRU-2A contract/store/assistant-ledger/
 > task-materialization/reducer writer-migration 与 CRU-2B deterministic first-turn
 > completion、CRU-2C bounded model-supported core、CRU-2D evidence escalation
-> core、CRU-3 governed decomposition 与安全的 feature-flagged single-task
+> core、CRU-3 governed decomposition 与安全的 single-task
 > evidence handoff 已完成；CRU-4A model-visible bounded tool protocol repair 与
-> CRU-4B durable Provider-step recovery 已完成，下一阶段为 CRU-5 core active
-> diagnostic strengthening。
+> CRU-4B durable Provider-step recovery 与 CRU-5 core active diagnostic
+> strengthening、CRU-6 core/post-core integration boundary 与 CRU-7 controlled
+> canary/default switch 已完成。统一入口和 governed decomposition 默认开启；
+> model-visible repair 与 core/post-core integration 按各自未满足的独立门保持 canary-only。
 >
 > 日期：2026-08-10
 >
@@ -1472,8 +1474,9 @@ non-expansion 和动态 `Task Planning` UI。CRU-2D 的 exact DecisionNeed 通�
 ToolRouter/ToolEventLoop/Guard/checkpoint 路径执行，跳过 tool-planning Provider 但不
 跳过权限、预算或 durable evidence；每个 obligation 绑定自己的 later applied
 checkpoint。`response_evidence` task purpose 保持 `core_success=None`，禁用 report、
-finalization、post-core 与 task-finished。两个 canary flag 均默认关闭；evidence 失败
-fail closed，不回落 legacy pipeline。Agent Generator 保持不变。
+finalization、post-core 与 task-finished。两个 flag 在本阶段实现时默认关闭，CRU-7
+通过完整 hard gate 后已将其切为默认开启；evidence 失败仍 fail closed，不回落 legacy
+pipeline。Agent Generator 保持不变。
 
 ### CRU-4：Bounded Step Recovery
 
@@ -1504,6 +1507,16 @@ identity 与 response artifact 校验后恢复解析和 grounding。首次 inval
 - measurement/action/recover/stop evidence；
 - experiment fixtures and trajectory gates。
 
+实施状态：已新增 task-owned typed diagnostic conflict/risk/decision 与
+content-sensitive canonical progress signature；`ActiveDiagnosticEvaluator` 在既有
+ToolRouter/Guard/Actor/StateUpdater/Verifier 之前执行 blocking risk、no-progress、
+failed verification/recover、required verification、conflict/unknown measurement 和
+least-cost bounded action 的非补偿选择。每个 decision 记录 evidence changed/unchanged
+及 contributing IDs，checkpoint/report/trajectory 复用同一 state。experiment-local
+三臂 interface 绑定 fixed_order/model_directed/active_iteration、共享 fingerprints/budget、
+active decision IDs 和非补偿 success/safety/trajectory/budget gates；不改变正式 mini-SWE
+ordinary/active protocol，也不授权 Provider run。CRU-5 完成。
+
 ### CRU-6：Core/Post-Core Integration
 
 - verified completion handoff；
@@ -1511,6 +1524,20 @@ identity 与 response artifact 校验后恢复解析和 grounding。首次 inval
 - post-core admission；
 - policy/status/result composition；
 - cross-branch migration tests。
+
+实施状态：已完成 core source completeness、typed acceptance、verified-ready 与
+post-core eligibility 的非补偿判定；空 task、response-evidence、只读无产物、未完成
+verification、indeterminate side effect、stale report/project/environment identity 和
+blocking risk 均 fail closed。`ProjectImprovementPolicy` 已迁移为 hard accepted / max
+accepted / max attempts 三个计数，automatic default 为 `0/1/1`，legacy
+`target_successes` 仅作 historical-read compatibility projection；stage status 扩展并保留
+historical `succeeded`。integration lane 只有一个 content-addressed
+`CoreCompletionPackageView` builder，且不写回 source owners。默认关闭的
+`OPENPILOT_CORE_POST_CORE_INTEGRATION` 会阻止 legacy enhancement 在 core durable
+finalization 前运行；由于权威 post-core 分支尚只有 PKG0、没有 PKG3/PKG4 consumer/
+transaction，package build 后 stage 仍 typed skipped，optional 保留 core success，required
+按 overall composition fail closed。CRU-6 的安全接线完成；真实 enhancement execution
+仍属于 post-core 计划，不以 legacy loop 冒充。
 
 ### CRU-7：Canary and Default Switch
 
@@ -1520,19 +1547,33 @@ identity 与 response artifact 校验后恢复解析和 grounding。首次 inval
 - feature flag rollout；
 - legacy autonomous pipeline/decomposition path deprecation decision；不包含 task classifier、Agent Generator route 或 Agent Generator pipeline。
 
+实施状态：已用冻结的 `CRU_7_USABILITY_CANARY_PROTOCOL_V1.json` 覆盖 12 类用户任务和
+response-only/evidence-seeking/single-task/decomposed 四条路径；候选 focused matrix
+**21 passed**，严格 canary/three-arm gates **15 passed**；冻结 candidate 的完整 `Code/tests`
+**1530 passed**，补充 explicit legacy rollback 测试后的最终 suite **1531 passed**，相对 CRU-6
+baseline **1528 passed** 无回归。traceback leakage、false success、scope
+violation、duplicate mutation、indeterminate replay 和 credential leakage 均为零。
+`OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` 与 `OPENPILOT_GOVERNED_DECOMPOSITION`
+默认开启，显式 false 保留 bounded legacy rollback lane。协议修复的默认开启试验使既有
+duplicate/no-progress 语义发生回归（focused 226 项中 2 项失败），因此维持 default-off
+canary；core/post-core 因尚无 PKG3/PKG4 consumer 同样维持 default-off。classifier 和 Agent
+Generator 未进入弃用范围。当前环境无外部 Provider credential，因此不声称 live token/call/
+latency 优势；hard gate 已通过后成本比较虽合法，但结果 artifact 明确记为未比较。
+
 ## 17. Feature Flag 与回滚
 
-建议在实施期间保持窄 flag：
+实施后保留以下窄 flag：
 
 ```text
-OPENPILOT_UNIFIED_ITERATION_ENTRY
+OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED
 OPENPILOT_GOVERNED_DECOMPOSITION
 OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR
+OPENPILOT_CORE_POST_CORE_INTEGRATION
 ```
 
 原则：
 
-- `OPENPILOT_UNIFIED_ITERATION_ENTRY` 只能在 route 已确定为 `autonomous_iteration` 后读取；
+- `OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` 只能在 route 已确定为 `autonomous_iteration` 后读取；
 - Agent Generator 不进入新 disposition/completion/obligation telemetry；
 - flag 只选择实现路径，不复制第二份权限或状态事实；
 - pre-task 由 `IterationTurnRecord` 记录选择的 protocol/version，Task active 后由匹配的 `RuntimeCheckpointMetadata` 记录并通过 binding 校验；
@@ -1596,16 +1637,17 @@ OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR
 - 现有 knowledge-work 到 Agent Generator 的路由行为作为已知限制保留，不计入本计划成功或失败；
 - 文档、metadata、API、trajectory 和 migration tests 同步。
 
-## 20. 当前建议
+## 20. 完成结论与范围外后续
 
-近期按以下顺序推进：
+CRU-0–CRU-7 已按串行依赖完成。核心 autonomous runtime 已恢复普通问答、证据升级、
+governed single/decomposed execution、bounded recovery、active diagnosis、verified core handoff
+和可回滚默认入口；所有总体验收项均有测试、typed evidence 或明确的 scope exclusion。
 
-1. 提交 CRU-0，只冻结计划；
-2. 实施 CRU-1，先让当前开发版本不再因用户输入崩溃；
-3. 通过真实终端回归后依次实施 CRU-2A、2B、2C、2D；
-4. authoritative control contract、首轮完成和 evidence escalation 稳定后再修改 decomposition admission；
-5. core completion source facts 冻结前，不接入新的 post-core runtime；
-6. post-core 分支继续按其 Phase 0/1 推进，但避免同时修改 shared controller/metadata；
-7. 最终在独立 integration 分支完成两边接线。
+以下事项是独立后续，不阻塞本计划完成：
 
-该顺序优先恢复用户可用性，同时保护主动迭代、小模型引导、Provider 迁移性和 post-core 独立质量提升四个目标。
+1. 修复 model-visible protocol repair 的 duplicate/no-progress 回归后重新运行其独立 default-on gate；
+2. 由 post-core 计划实现并接受 PKG3/PKG4 consumer/transaction 后，再评估
+   `OPENPILOT_CORE_POST_CORE_INTEGRATION` 默认开启；
+3. 在具备外部 Provider credential 的环境补充 live token/call/latency paired canary；该结果只能增加
+   性能证据，不能放宽本计划已经冻结的安全、权限、验证和完成门；
+4. knowledge-work 到 Agent Generator 的现有 classifier 行为继续作为明确的范围外限制单独评审。

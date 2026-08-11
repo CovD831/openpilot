@@ -42,6 +42,8 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "PairedDevelopmentResult": (".development_runner", "PairedDevelopmentResult"),
     "PairedDevelopmentRunner": (".development_runner", "PairedDevelopmentRunner"),
     "PairedSWEbenchRunner": (".swebench_task_runner", "PairedSWEbenchRunner"),
+    "ThreeArmComparison": (".three_arm", "ThreeArmComparison"),
+    "ThreeArmTrajectoryReceipt": (".three_arm", "ThreeArmTrajectoryReceipt"),
     "SWEbenchScreenTask": (".swebench_task_runner", "SWEbenchScreenTask"),
     "LiteLLMControllerModel": (".provider", "LiteLLMControllerModel"),
     "SharedProviderFactory": (".provider", "SharedProviderFactory"),

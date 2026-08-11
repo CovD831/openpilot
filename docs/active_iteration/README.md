@@ -11,9 +11,13 @@
 | 实验审计 | [ACTIVE_ITERATION_EXPERIMENT_LOG.md](./ACTIVE_ITERATION_EXPERIMENT_LOG.md) | 追加式协议、失败、结果和证据等级账本 |
 | 架构设计 | [ACTIVE_ITERATION_EXPERT_ROUTING_ARCHITECTURE.md](./ACTIVE_ITERATION_EXPERT_ROUTING_ARCHITECTURE.md) | 当前主动迭代、信号和专家路由设计 |
 | 核心运行时重构 | [CORE_RUNTIME_USABILITY_AND_ACTIVE_ITERATION_PLAN.md](./CORE_RUNTIME_USABILITY_AND_ACTIVE_ITERATION_PLAN.md) | 用户可用性、任务准入、受治理分解、核心问诊推进与 post-core 交接计划 |
+| CRU-1 至 CRU-7 累积开发版 | [CRU_1_TO_7_DEVELOPMENT_RELEASE.md](./CRU_1_TO_7_DEVELOPMENT_RELEASE.md) | `0.1.0.dev3` 的完整范围、CRU-7 默认开关、dev2 联网加固、验证与回滚边界 |
 | CRU-1 至 CRU-4B 累积开发版 | [CRU_1_TO_4B_DEVELOPMENT_RELEASE.md](./CRU_1_TO_4B_DEVELOPMENT_RELEASE.md) | 从远端基线累积到 `0.1.0.dev2` 的完整范围、开发 canary、验证门禁与已知限制 |
 | CRU-2A metadata gate | [CRU_2A_METADATA_IMPACT_AND_WRITER_INVENTORY.md](./CRU_2A_METADATA_IMPACT_AND_WRITER_INVENTORY.md) | pre-task durable owner、复用/新建决策、控制写入者与原子持久化清单 |
 | CRU-4B recovery metadata gate | [CRU_4B_METADATA_IMPACT_AND_RECOVERY_INVENTORY.md](./CRU_4B_METADATA_IMPACT_AND_RECOVERY_INVENTORY.md) | bounded Provider request/observation owner、replay-free crash recovery 与 fail-closed 清单 |
+| CRU-5 diagnostic metadata gate | [CRU_5_METADATA_IMPACT_AND_DIAGNOSTIC_INVENTORY.md](./CRU_5_METADATA_IMPACT_AND_DIAGNOSTIC_INVENTORY.md) | task-owned conflict/risk、active diagnostic decision、canonical progress 与三臂接口清单 |
+| CRU-6 core handoff metadata gate | [CRU_6_METADATA_IMPACT_AND_CORE_HANDOFF_INVENTORY.md](./CRU_6_METADATA_IMPACT_AND_CORE_HANDOFF_INVENTORY.md) | core source readiness、post-core eligibility、分层结果组合与唯一 package builder 边界 |
+| CRU-7 canary/rollout gate | [CRU_7_CANARY_AND_ROLLOUT_INVENTORY.md](./CRU_7_CANARY_AND_ROLLOUT_INVENTORY.md) | 12 类用户任务、四路径、非补偿 hard metrics、默认切换与 legacy rollback 决策 |
 | Project Improvement 模块研究 | [PROJECT_IMPROVEMENT_ARCHITECTURE_RESEARCH.md](./PROJECT_IMPROVEMENT_ARCHITECTURE_RESEARCH.md) | 模块边界、运行语义、历史问题、根因与重设计约束 |
 | 下一阶段实验协议 | [MINI_SWE_ACTIVE_ITERATION_EXPERIMENT_PROTOCOL.md](./MINI_SWE_ACTIVE_ITERATION_EXPERIMENT_PROTOCOL.md) | mini-SWE 原生轨迹上的分阶段净增益、消融与迁移计划 |
 | 最短收益决策路线 | [MINI_SWE_CORE_BENEFIT_SCREEN_PROTOCOL.md](./MINI_SWE_CORE_BENEFIT_SCREEN_PROTOCOL.md) | 12 个配对任务的强信号筛查：先判断核心 E2--E3 闭环是否值得继续投入 |
@@ -28,11 +32,15 @@
 当前实施状态：CRU-2A 已完成 metadata contract、durable store、assistant
 ledger 幂等提交/崩溃恢复，以及 canonical prepared/active task binding 与 session
 authority freshness/revocation recovery gate；唯一 pre-task reducer writer migration 也已完成。
-CRU-2B deterministic runtime-fact completion 已接入默认关闭的 once/interactive feature flag；
+CRU-2B deterministic runtime-fact completion 已接入 once/interactive 默认入口；
 CRU-2C bounded zero-tool model response core、CRU-2D evidence escalation core
 与 CRU-3 governed decomposition/single-task evidence handoff 已完成；CRU-4A
 model-visible bounded tool protocol repair 与 CRU-4B durable Provider-step
-recovery 已完成，下一阶段是 CRU-5 core active diagnostic strengthening。
+recovery、CRU-5 core active diagnostic strengthening、CRU-6 verified core/post-core
+handoff 与 CRU-7 canary/default switch 已完成。统一 autonomous entry 与 governed
+decomposition 默认开启，显式 false 保留 legacy rollback；model-visible repair 因独立回归门
+未过保持 canary-only。post-core transaction 仍等待权威 PKG3/PKG4 consumer，不回落
+legacy improvement loop。
 evidence-required candidate 复用既有 ToolRouter、
 ToolEventLoop、Guard 和 checkpoint，不回落旧 decomposition，也不复制 tool
 executor；Agent Generator 未进入新路径。

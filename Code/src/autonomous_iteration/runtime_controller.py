@@ -8,12 +8,20 @@ import time
 import uuid
 import shlex
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Literal
 
 from autonomous_iteration.checkpoint_store import RuntimeCheckpointStore
+from autonomous_iteration.core_completion_handoff import (
+    compose_overall_success,
+    core_post_core_integration_enabled,
+    evaluate_core_completion_handoff,
+    runtime_state_source_hash,
+)
+from autonomous_iteration.core_completion_package import build_core_completion_package
 from autonomous_iteration.decomposition_policy import (
     DecompositionPolicyResolver,
     SingleTaskPlanBuilder,
@@ -31,6 +39,11 @@ from core.exceptions import InvalidLLMResponseError, LLMProviderError, LLMTimeou
 from memory.project_path_resolver import ProjectPathResolver, ground_command_paths_within_project
 from memory.session_constraints import session_constraint_violation
 from metadata import (
+    ActiveDiagnosticDecision,
+    ActiveDiagnosticDecisionKind,
+    ActiveDiagnosticItemStatus,
+    ActiveDiagnosticRisk,
+    ActiveDiagnosticRiskSeverity,
     AgentPhase,
     CheckpointBoundary,
     CheckpointFaultPoint,
@@ -160,13 +173,15 @@ def _project_improvement_policy(runtime: Any) -> ProjectImprovementPolicy:
         return ProjectImprovementPolicy(
             requirement=ProjectImprovementRequirement.DISABLED,
             source=ProjectImprovementPolicySource.LEGACY_CONFIG,
-            target_successes=0,
+            required_accepted_transactions=0,
+            max_accepted_transactions=0,
             max_attempts=0,
         )
     return ProjectImprovementPolicy(
         requirement=ProjectImprovementRequirement.REQUIRED,
         source=ProjectImprovementPolicySource.LEGACY_CONFIG,
-        target_successes=targets,
+        required_accepted_transactions=targets,
+        max_accepted_transactions=targets,
         max_attempts=max(
             targets,
             int(getattr(runtime, "max_iteration_attempts", targets) or targets),
@@ -419,6 +434,241 @@ class RuntimeGuard:
 
     def _risk_value(self, risk_level: str | None) -> int:
         return RISK_ORDER.get(str(risk_level or "medium").lower(), 1)
+
+
+def _active_diagnostic_signature(state: RuntimeStateMetadata) -> str:
+    """Hash authoritative task facts that can change the next decision."""
+
+    payload = {
+        "known_facts": sorted(state.known_facts),
+        "unknowns": sorted(state.unknowns),
+        "resolved_questions": sorted(state.resolved_questions),
+        "diagnostic_conflicts": sorted(
+            (
+                item.model_dump(mode="json")
+                for item in state.diagnostic_conflicts
+            ),
+            key=lambda item: str(item["conflict_id"]),
+        ),
+        "diagnostic_risks": sorted(
+            (item.model_dump(mode="json") for item in state.diagnostic_risks),
+            key=lambda item: str(item["risk_id"]),
+        ),
+        "phase": _phase_value(state.phase),
+        "verification_status": str(state.verification_status),
+        "path_resolutions": [item.model_dump(mode="json") for item in state.path_resolutions],
+        "candidate_files": state.candidate_files,
+        "selected_files": state.selected_files,
+        "planned_edits": [item.model_dump(mode="json") for item in state.planned_edits],
+        "modified_files": sorted(state.modified_files),
+        "decomposition_decisions": [
+            item.model_dump(mode="json") for item in state.decomposition_decisions
+        ],
+        "core_success": state.core_success,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True)
+class ActiveDiagnosticSelection:
+    """Runtime-only pairing of a typed decision with its concrete need."""
+
+    decision: ActiveDiagnosticDecision
+    need: DecisionNeedMetadata | None
+
+
+class ActiveDiagnosticEvaluator:
+    """Choose one non-compensatory next step from current task evidence."""
+
+    _COST_ORDER = {"low": 0, "medium": 1, "high": 2}
+    _MUTATION_NEEDS = {
+        "file_write",
+        "write_file",
+        "file_delete",
+        "delete_file",
+        "remove_file",
+        "code_file_create",
+        "directory_generate",
+        "code_unit_generate",
+        "generate_code_unit",
+        "add_symbol",
+        "code_symbol_modify",
+        "code_patch",
+        "modify_symbol",
+        "code_generation",
+        "generate_code",
+        "code_generator",
+        "code_execution",
+        "execute_code",
+        "run_code",
+        "readme_generation",
+        "readme",
+        "documentation",
+    }
+    _RECOVERY_NEEDS = {"bug_fix", "bug_fix_tool", "fix_bug", "repair"}
+    _VERIFY_NEEDS = {"command_check", "smoke_test", "test", "verify_command"}
+
+    def choose(
+        self,
+        state: RuntimeStateMetadata,
+        needs: tuple[DecisionNeedMetadata, ...],
+    ) -> ActiveDiagnosticSelection:
+        signature = _active_diagnostic_signature(state)
+        previous_signature = state.diagnostic_progress_signature
+        evidence_changed = previous_signature is None or previous_signature != signature
+        prefix = (
+            "Initial diagnostic state."
+            if previous_signature is None
+            else (
+                "New evidence changed the diagnostic state."
+                if evidence_changed
+                else "No new evidence changed the diagnostic state."
+            )
+        )
+        open_conflicts = tuple(
+            item
+            for item in state.diagnostic_conflicts
+            if item.status == ActiveDiagnosticItemStatus.OPEN
+        )
+        open_risks = tuple(
+            item
+            for item in state.diagnostic_risks
+            if item.status == ActiveDiagnosticItemStatus.OPEN
+        )
+        blocking_risks = tuple(item for item in open_risks if item.blocking)
+
+        selected: DecisionNeedMetadata | None = None
+        if blocking_risks:
+            kind = ActiveDiagnosticDecisionKind.STOP
+            basis = "A blocking diagnostic risk prevents further automatic action."
+        elif state.no_progress_rounds >= 3:
+            kind = ActiveDiagnosticDecisionKind.STOP
+            basis = "The canonical diagnostic state reached the no-progress limit."
+        elif _phase_is(state.phase, AgentPhase.RECOVER) or (
+            state.verification_status == VerificationStatus.FAILED
+        ):
+            kind = ActiveDiagnosticDecisionKind.RECOVER
+            selected = self._select(needs, state, kind)
+            basis = "Failed execution or verification requires recovery before progress."
+        elif state.modified_files and state.verification_status != VerificationStatus.PASSED:
+            kind = ActiveDiagnosticDecisionKind.VERIFY
+            selected = self._select(needs, state, kind)
+            basis = "Observed project changes require fresh verification."
+        elif open_conflicts or state.unknowns:
+            kind = ActiveDiagnosticDecisionKind.MEASURE
+            selected = self._select(needs, state, kind)
+            basis = "Open conflicts or unknowns require the cheapest available measurement."
+        else:
+            selected, kind = self._select_best_available(needs, state)
+            basis = (
+                "The least-cost bounded next step is admitted by the current facts."
+                if selected is not None
+                else "No executable diagnostic need is available."
+            )
+        if kind != ActiveDiagnosticDecisionKind.STOP and selected is None:
+            kind = ActiveDiagnosticDecisionKind.STOP
+            basis += " No compatible bounded need was supplied."
+
+        ordinal = len(state.diagnostic_decisions) + 1
+        identity_payload = {
+            "ordinal": ordinal,
+            "kind": kind.value,
+            "state_signature": signature,
+            "need_type": selected.need_type if selected is not None else None,
+            "question": selected.question if selected is not None else None,
+        }
+        encoded = json.dumps(
+            identity_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        decision = ActiveDiagnosticDecision(
+            decision_id="diagnostic-" + hashlib.sha256(encoded).hexdigest()[:24],
+            ordinal=ordinal,
+            kind=kind,
+            reason=f"{prefix} {basis}",
+            need_type=selected.need_type if selected is not None else None,
+            question=selected.question if selected is not None else None,
+            state_signature=signature,
+            evidence_changed=evidence_changed,
+            contributing_conflict_ids=tuple(item.conflict_id for item in open_conflicts),
+            contributing_risk_ids=tuple(item.risk_id for item in open_risks),
+        )
+        state.record_diagnostic_decision(decision)
+        return ActiveDiagnosticSelection(decision=decision, need=selected)
+
+    def _select(
+        self,
+        needs: tuple[DecisionNeedMetadata, ...],
+        state: RuntimeStateMetadata,
+        required_kind: ActiveDiagnosticDecisionKind,
+    ) -> DecisionNeedMetadata | None:
+        eligible = [
+            need for need in needs if self._kind_for_need(state, need) == required_kind
+        ]
+        if not eligible:
+            return None
+        return min(
+            eligible,
+            key=lambda need: (
+                self._COST_ORDER.get(str(need.cost_hint).lower(), 1),
+                RISK_ORDER.get(str(need.risk_level).lower(), 1),
+                need.need_type,
+                need.question,
+            ),
+        )
+
+    def _select_best_available(
+        self,
+        needs: tuple[DecisionNeedMetadata, ...],
+        state: RuntimeStateMetadata,
+    ) -> tuple[DecisionNeedMetadata | None, ActiveDiagnosticDecisionKind]:
+        if not needs:
+            return None, ActiveDiagnosticDecisionKind.STOP
+        kind_order = {
+            ActiveDiagnosticDecisionKind.MEASURE: 0,
+            ActiveDiagnosticDecisionKind.ACT: 1,
+            ActiveDiagnosticDecisionKind.VERIFY: 2,
+            ActiveDiagnosticDecisionKind.RECOVER: 3,
+            ActiveDiagnosticDecisionKind.STOP: 4,
+        }
+        selected = min(
+            needs,
+            key=lambda need: (
+                self._COST_ORDER.get(str(need.cost_hint).lower(), 1),
+                kind_order[self._kind_for_need(state, need)],
+                need.need_type,
+                need.question,
+            ),
+        )
+        return selected, self._kind_for_need(state, selected)
+
+    def _kind_for_need(
+        self,
+        state: RuntimeStateMetadata,
+        need: DecisionNeedMetadata,
+    ) -> ActiveDiagnosticDecisionKind:
+        need_type = need.need_type.lower().replace("-", "_")
+        if need_type in self._RECOVERY_NEEDS:
+            return ActiveDiagnosticDecisionKind.RECOVER
+        if need_type in self._VERIFY_NEEDS and (
+            _phase_is(state.phase, AgentPhase.VERIFY)
+            or state.verification_status in {
+                VerificationStatus.REQUIRED,
+                VerificationStatus.FAILED,
+            }
+        ):
+            return ActiveDiagnosticDecisionKind.VERIFY
+        if need_type in self._MUTATION_NEEDS:
+            return ActiveDiagnosticDecisionKind.ACT
+        return ActiveDiagnosticDecisionKind.MEASURE
 
 
 class ToolRouter:
@@ -1203,7 +1453,19 @@ class StateUpdater:
         was_verifying = _phase_is(state.phase, AgentPhase.VERIFY)
         if not success:
             state.add_unknown(error or f"{tool_name} failed")
-            state.verification_status = "failed" if was_verifying else state.verification_status
+            if was_verifying:
+                state.verification_status = "failed"
+                failure_identity = hashlib.sha256(
+                    f"{tool_name}:{selection.step_id}:{error or ''}".encode("utf-8")
+                ).hexdigest()[:20]
+                state.add_diagnostic_risk(
+                    ActiveDiagnosticRisk(
+                        risk_id=f"verification-failure:{failure_identity}",
+                        statement="Latest required verification failed.",
+                        severity=ActiveDiagnosticRiskSeverity.HIGH,
+                        evidence_refs=(f"tool:{tool_name}:{selection.step_id}",),
+                    )
+                )
             replan_reason = self.guard.should_replan(state)
             if replan_reason and state.budget.replan_rounds_used < state.budget.max_replan_rounds:
                 state.request_replan(replan_reason)
@@ -1304,6 +1566,16 @@ class StateUpdater:
             state.verification_status = "passed"
             state.phase = AgentPhase.SUMMARIZE
             state.completion_reason = "verification passed"
+            resolution_ref = f"tool:{selection.tool_name}:{selection.step_id}"
+            for risk in tuple(state.diagnostic_risks):
+                if (
+                    risk.risk_id.startswith("verification-failure:")
+                    and risk.status == ActiveDiagnosticItemStatus.OPEN
+                ):
+                    state.resolve_diagnostic_risk(
+                        risk.risk_id,
+                        evidence_refs=(resolution_ref,),
+                    )
         elif self._execution_changed_project(state, selection):
             state.verification_status = "required"
             state.phase = AgentPhase.VERIFY
@@ -1325,16 +1597,14 @@ class StateUpdater:
                 return True
         return False
 
-    def _progress_signature(self, state: RuntimeStateMetadata) -> tuple[int, int, int, int, int]:
-        return (
-            len(state.known_facts),
-            len(state.unknowns),
-            len(state.resolved_questions),
-            len(state.candidate_files),
-            len(state.modified_files),
-        )
+    def _progress_signature(self, state: RuntimeStateMetadata) -> str:
+        return _active_diagnostic_signature(state)
 
-    def _update_progress_stop_condition(self, state: RuntimeStateMetadata, before: tuple[int, int, int, int, int]) -> None:
+    def _update_progress_stop_condition(
+        self,
+        state: RuntimeStateMetadata,
+        before: str,
+    ) -> None:
         after = self._progress_signature(state)
         if after != before:
             state.no_progress_rounds = 0
@@ -1386,6 +1656,16 @@ class RuntimeReporter:
         residual_risks: list[str] = []
         if state.unknowns:
             residual_risks.append("unresolved runtime questions remain")
+        residual_risks.extend(
+            f"unresolved diagnostic conflict: {item.statement}"
+            for item in state.diagnostic_conflicts
+            if item.status == ActiveDiagnosticItemStatus.OPEN
+        )
+        residual_risks.extend(
+            f"open diagnostic risk: {item.statement}"
+            for item in state.diagnostic_risks
+            if item.status == ActiveDiagnosticItemStatus.OPEN
+        )
         if state.verification_status not in {"passed", "not_required"}:
             residual_risks.append(f"verification status is {state.verification_status}")
         if _phase_value(state.phase) in {AgentPhase.RECOVER.value, AgentPhase.BLOCKED.value}:
@@ -1410,6 +1690,10 @@ class RuntimeReporter:
             verification_status=state.verification_status,
             risk_level=state.risk_level,
             tool_decisions=list(state.decision_history),
+            diagnostic_conflicts=list(state.diagnostic_conflicts),
+            diagnostic_risks=list(state.diagnostic_risks),
+            diagnostic_decisions=list(state.diagnostic_decisions),
+            core_acceptance_decisions=list(state.core_acceptance_decisions),
             tool_history=list(state.tool_history),
             residual_risks=residual_risks,
         )
@@ -1686,7 +1970,9 @@ class _RuntimeSessionExecutor:
                     )
                 ),
             )
-            all_tasks_completed = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
+            all_tasks_completed = bool(decomposition.subtasks) and all(
+                t.status == TaskStatus.COMPLETED for t in decomposition.subtasks
+            )
             stage_statuses["Execution"] = "completed" if all_tasks_completed else "failed"
             runtime.enhanced_ui.set_task_graph_state(
                 stage_statuses=stage_statuses,
@@ -1735,6 +2021,17 @@ class _RuntimeSessionExecutor:
                 success=success,
                 include_final_result=False,
                 execution_failure=execution_failure,
+            )
+            self._emit_cursor(
+                self._cursor(
+                    semantic=semantic,
+                    decomposition=decomposition,
+                    execution_order=execution_order,
+                    next_task_index=len(execution_order),
+                    results=results,
+                    decomposition_decision=decomposition_decision,
+                    mode="enhanced_ui",
+                ).model_copy(update={"stage": SessionStage.COMPLETED})
             )
             self._log(
                 "session_completed",
@@ -2212,7 +2509,9 @@ class _RuntimeSessionExecutor:
                     )
                 ),
             )
-            all_tasks_completed = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
+            all_tasks_completed = bool(decomposition.subtasks) and all(
+                t.status == TaskStatus.COMPLETED for t in decomposition.subtasks
+            )
             readme_result, written_files, project_path, improvement_result = self._finalize_project_outputs(
                 goal,
                 results,
@@ -2246,6 +2545,17 @@ class _RuntimeSessionExecutor:
                 include_final_result=True,
                 final_result=final_result,
                 execution_failure=execution_failure,
+            )
+            self._emit_cursor(
+                self._cursor(
+                    semantic=semantic,
+                    decomposition=decomposition,
+                    execution_order=execution_order,
+                    next_task_index=len(execution_order),
+                    results=results,
+                    decomposition_decision=decomposition_decision,
+                    mode=session_mode,
+                ).model_copy(update={"stage": SessionStage.COMPLETED})
             )
             self._log(
                 "session_completed",
@@ -2333,7 +2643,12 @@ class _RuntimeSessionExecutor:
         ):
             written_files = runtime._collect_written_files(results)
             return None, written_files, None, None
-        readme_result = runtime._finalize_project_readme(goal, results) if all_tasks_completed else None
+        verified_handoff_lane = core_post_core_integration_enabled()
+        readme_result = (
+            runtime._finalize_project_readme(goal, results)
+            if all_tasks_completed and not verified_handoff_lane
+            else None
+        )
         written_files = runtime._collect_written_files(results)
         project_path = runtime._infer_project_path_from_files(goal, written_files) if written_files else None
         can_iterate = bool(all_tasks_completed and project_path and written_files)
@@ -2348,11 +2663,26 @@ class _RuntimeSessionExecutor:
                 "required_successful_improvements": getattr(runtime, "required_successful_improvements", None),
             },
             output_summary={
-                "will_attempt_iteration": can_iterate and improvement_policy.enabled,
+                "will_attempt_iteration": (
+                    can_iterate
+                    and improvement_policy.enabled
+                    and not verified_handoff_lane
+                ),
+                "verified_handoff_lane": verified_handoff_lane,
                 "project_improvement_policy": improvement_policy.model_dump(mode="json"),
             },
         )
-        if can_iterate and improvement_policy.enabled:
+        if not improvement_policy.enabled:
+            improvement_result = None
+            self._append_iteration_skip_note(
+                "Project improvement skipped: disabled by completion policy"
+            )
+        elif verified_handoff_lane:
+            improvement_result = None
+            self._append_iteration_skip_note(
+                "Project improvement deferred: verified core handoff requires the integration builder"
+            )
+        elif can_iterate:
             try:
                 runtime_controller = getattr(runtime, "runtime_controller", None)
                 runtime_state = getattr(runtime_controller, "state", None)
@@ -2378,10 +2708,9 @@ class _RuntimeSessionExecutor:
                 self._append_iteration_skip_note("Project improvement skipped: disabled or 0 iterations selected")
         else:
             improvement_result = None
-            if not improvement_policy.enabled:
-                self._append_iteration_skip_note("Project improvement skipped: disabled by completion policy")
-            else:
-                self._append_iteration_skip_note(self._iteration_skip_reason(all_tasks_completed, written_files, project_path))
+            self._append_iteration_skip_note(
+                self._iteration_skip_reason(all_tasks_completed, written_files, project_path)
+            )
         return readme_result, written_files, project_path, improvement_result
 
     def _iteration_skip_reason(
@@ -2421,7 +2750,9 @@ class _RuntimeSessionExecutor:
 
     def _update_stats(self, decomposition: Any, improvement_result: dict[str, Any] | None) -> tuple[bool, str | None]:
         runtime = self.runtime
-        core_success = all(t.status == TaskStatus.COMPLETED for t in decomposition.subtasks)
+        core_success = bool(decomposition.subtasks) and all(
+            t.status == TaskStatus.COMPLETED for t in decomposition.subtasks
+        )
         success = core_success
         iteration_error_msg = None
         if improvement_result is not None and not improvement_result.get("success", False):
@@ -2615,7 +2946,7 @@ class _RuntimeSessionExecutor:
             "core_success": (
                 None
                 if evidence_only
-                else all(
+                else bool(decomposition.subtasks) and all(
                     getattr(task, "status", None) == TaskStatus.COMPLETED
                     for task in decomposition.subtasks
                 )
@@ -2736,6 +3067,7 @@ class AgentRuntimeController:
         edit_guard: EditGuard | None = None,
         verifier: RuntimeVerifier | None = None,
         reporter: RuntimeReporter | None = None,
+        diagnostic_evaluator: ActiveDiagnosticEvaluator | None = None,
         session_executor: Any | None = None,
         checkpoint_store: RuntimeCheckpointStore | Any | None = None,
         checkpoint_fault_injector: Callable[
@@ -2763,6 +3095,7 @@ class AgentRuntimeController:
         self.edit_guard = edit_guard or EditGuard()
         self.verifier = verifier or RuntimeVerifier()
         self.reporter = reporter or RuntimeReporter()
+        self.diagnostic_evaluator = diagnostic_evaluator or ActiveDiagnosticEvaluator()
         self.session_executor = session_executor or _RuntimeSessionExecutor(
             runtime,
             session_cursor_sink=self._persist_session_cursor,
@@ -2873,7 +3206,8 @@ class AgentRuntimeController:
         if raw_task_purpose == RuntimeTaskPurpose.RESPONSE_EVIDENCE:
             improvement_policy = ProjectImprovementPolicy(
                 requirement=ProjectImprovementRequirement.DISABLED,
-                target_successes=0,
+                required_accepted_transactions=0,
+                max_accepted_transactions=0,
                 max_attempts=0,
             )
         state = RuntimeStateMetadata(
@@ -5079,7 +5413,12 @@ class AgentRuntimeController:
         previous_phase = _phase_value(state.phase)
         previous_verification_status = str(state.verification_status or "")
         success = bool(result.get("success"))
-        core_success = bool(result.get("core_success", success))
+        raw_core_success = result.get("core_success")
+        core_success = (
+            raw_core_success is True
+            if core_post_core_integration_enabled()
+            else bool(success if raw_core_success is None else raw_core_success)
+        )
         evidence_only = state.task_purpose == RuntimeTaskPurpose.RESPONSE_EVIDENCE
         state.core_success = None if evidence_only else core_success
         status = result.get("project_improvement_status")
@@ -5121,23 +5460,7 @@ class AgentRuntimeController:
     @staticmethod
     def _report_source_hash(state: RuntimeStateMetadata) -> str:
         """Hash task outcome facts while excluding resume bookkeeping."""
-        payload = state.to_json_dict()
-        for field_name in (
-            "recovery_status",
-            "recovery_reason_code",
-            "active_resume_attempt_id",
-        ):
-            payload.pop(field_name, None)
-        budget = payload.get("budget")
-        if isinstance(budget, dict):
-            budget.pop("recovery_rounds_used", None)
-        encoded = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+        return runtime_state_source_hash(state)
 
     def _inject_finalization_fault(
         self,
@@ -5160,6 +5483,7 @@ class AgentRuntimeController:
             reason=reason,
             safe_boundary=boundary,
             finalization_cursor=cursor,
+            target_files=list(state.modified_files),
         ):
             raise RuntimeError(f"finalization checkpoint is not durable: {boundary.value}")
 
@@ -5400,8 +5724,37 @@ class AgentRuntimeController:
                 },
                 session_id=str(getattr(self.runtime, "session_id", "") or ""),
             )
+        integration_enabled = core_post_core_integration_enabled()
+        package_build = (
+            build_core_completion_package(
+                checkpoint=self._last_persisted_checkpoint,
+                report=report,
+            )
+            if integration_enabled
+            else None
+        )
+        handoff = (
+            package_build.handoff
+            if package_build is not None
+            else evaluate_core_completion_handoff(
+                checkpoint=self._last_persisted_checkpoint,
+                report=report,
+            )
+        )
+        if integration_enabled:
+            overall_success = compose_overall_success(
+                core_success=state.core_success is True,
+                policy=state.project_improvement_policy,
+                improvement_status=state.project_improvement_status,
+            )
+        else:
+            overall_success = bool(session_result.get("success"))
         result = {
-            "success": bool(session_result.get("success")),
+            "success": overall_success,
+            "overall_success": overall_success,
+            "core_success": state.core_success,
+            "project_improvement_status": state.project_improvement_status,
+            "core_completion_handoff": handoff.model_dump(mode="json"),
             "goal": state.goal,
             "agent_runtime_state": state.to_json_dict(),
             "runtime_report": report.to_json_dict(),
@@ -5414,6 +5767,10 @@ class AgentRuntimeController:
                 else {}
             ),
         }
+        if package_build is not None:
+            result["core_completion_package_build"] = package_build.model_dump(mode="json")
+            if package_build.package is not None:
+                result["core_completion_package"] = package_build.package.model_dump(mode="json")
         for key in (
             "failure_reason",
             "failure_stage",
@@ -5637,16 +5994,32 @@ class AgentRuntimeController:
 
     def handle_streamed_need(self, need: DecisionNeedMetadata) -> list[ToolSelection]:
         """Interrupt generation for one need and route it through the runtime state."""
+        return self.handle_streamed_needs((need,))
+
+    def handle_streamed_needs(
+        self,
+        needs: tuple[DecisionNeedMetadata, ...],
+    ) -> list[ToolSelection]:
+        """Choose one bounded diagnostic need, then route it through Guard."""
+        if not needs:
+            raise ValueError("streamed diagnostic needs must not be empty")
         if self.state is None:
-            self.state = RuntimeStateMetadata(goal=need.question or "streamed need")
+            self.state = RuntimeStateMetadata(goal=needs[0].question or "streamed need")
+        selection = self.diagnostic_evaluator.choose(self.state, needs)
+        need = selection.need
         self.state.record_tool_event(
             {
                 "event_type": "stream_need_interrupt",
                 "phase": _phase_value(self.state.phase),
-                "need_type": need.need_type,
-                "question": need.question,
+                "diagnostic_decision_id": selection.decision.decision_id,
+                "diagnostic_kind": selection.decision.kind,
+                "need_type": need.need_type if need is not None else "",
+                "question": need.question if need is not None else "",
             }
         )
+        if need is None:
+            self.state.block(selection.decision.reason)
+            return []
         return self.router.route(self.state, need)
 
     def absorb_streamed_tool_result(self, selection: ToolSelection, execution_result: Any) -> RuntimeStateMetadata:
