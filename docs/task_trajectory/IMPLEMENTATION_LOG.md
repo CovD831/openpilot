@@ -68,7 +68,7 @@
 | 2026-07-07 | 只读 synthesis 修复、fallback `project_path` 贯穿、最小路径守卫 | 已完成 | 定向 94 passed，全量 503 passed | route contract 仍粗、`runtime_mode` 仍非一等字段、全面 evidence-backed path policy 未完成 |
 | 2026-08-02 | metadata 契约治理、固定上下文预算、选择记录与 prompt 去重 | 已完成 | metadata/上下文定向回归通过、全量 511 passed | 字符预算尚未结合 provider token 计数；对话边界还不是跨会话持久化恢复点 |
 | 2026-08-05 | Session ingress、约束投影、checkpoint、Stage 5A 准入与 Stage 5B canary gates | 真实 Provider 小样本完成（边界受限） | 全量 947 passed；Stage 5B-2 定向 5 passed；Stage 5B-3a/3b 定向 4/17 passed；Stage 5B-3c fake 9 passed；Stage 6 实验层 45 passed；有效 Provider pair 2 calls、0 mutation | 仅 Task Designer 一对样本；raw dialog→ContextLoader/full project runtime 尚未覆盖；Stage 9 V1 冻结报告漂移；动态预算/reasoning 仍独立 |
-| 2026-08-11 | CRU-1 autonomous decomposition 用户错误边界 | 已完成（local/static） | CRU focused 132 passed；Agent Generator parity 38 passed；全量 1350 passed；compileall/touched Ruff 通过 | `recoverable` 仅表示用户重跑或后续治理可恢复；自动 bounded retry 仍由 CRU-4 实现；全仓 Ruff/mypy baseline 未清零 |
+| 2026-08-11 | CRU-1 autonomous decomposition 用户错误边界 | 已完成（local/static） | CRU focused 132 passed；Agent Generator parity 108 passed；全量 1350 passed；compileall/touched Ruff 通过 | `recoverable` 仅表示用户重跑或后续治理可恢复；自动 bounded retry 仍由 CRU-4 实现；全仓 Ruff/mypy baseline 未清零 |
 
 # 2026-08-09
 
@@ -8060,7 +8060,7 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   recoverability 与可用 identifier，不再打印 traceback 或原始异常文本。Agent Generator route 和行为未改。
 - 验证证据：冻结实现范围
   `cd6704dda5d481fe1b0f23b6cab775075155d46c..61b9f2b39473d3767a5b8068db443b3fadf6d19e`
-  的 CRU focused suite **132 passed**，Agent Generator/parity **38 passed**，完整 `Code/tests`
+  的 CRU focused suite **132 passed**，Agent Generator/parity **108 passed**，完整 `Code/tests`
   **1350 passed**（1 个既有 pytest deprecation warning），compileall 与 touched Ruff 通过；shared
   tracker 负例先红后绿，secret fixture 不进入 failure result。新增的两处 changed-source mypy
   `union-attr` 已消除（`enhanced_cli.py` 35 → 33，剩余为既有错误）。
