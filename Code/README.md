@@ -22,10 +22,14 @@ hash-reconciled, while commands without a registered probe fail closed.
 
 The unified autonomous pre-task entry is canary-only and disabled by default.
 Set `OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED=true` to enable deterministic
-runtime-fact completion in once/interactive autonomous routes. Recognized facts
-use zero Provider/tool calls and commit a content-addressed response plus the
-real assistant turn before display. Unrecognized goals retain the existing
-pipeline; Agent Generator routing is unchanged.
+runtime-fact completion followed by the bounded zero-tool response controller
+in once/interactive autonomous routes. Recognized facts use zero Provider/tool
+calls; fully grounded bounded responses use at most one repair and commit the
+real assistant turn before display. Project/current claims remain undisplayed
+evidence obligations. Set `OPENPILOT_GOVERNED_DECOMPOSITION=true` as a separate
+canary to execute those obligations through the existing read-only tool loop
+and durable checkpoints. Either evidence-path failure stops without legacy
+fallback. Agent Generator routing is unchanged.
 
 Project-scoped Python validation is gated by a read-only `.venv` preflight.
 Existing ready environments attach without install/network writes; setup or

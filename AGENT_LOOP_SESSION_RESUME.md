@@ -94,7 +94,8 @@ Before execution resumes, the runtime must validate:
 4. pending side-effect state;
 5. restored budget and stop conditions;
 6. restored root `execution_mode`, its source, and compatibility migration;
-7. session plan hash and contiguous completed-result prefix;
+7. session plan-hash version, governed decomposition decision, single-task
+   shape/stage invariants, and contiguous completed-result prefix;
 8. checksums for referenced LLM/read recovery artifacts;
 9. ordered verification progress as a contiguous command prefix.
 10. finalization cursor stage, report artifact checksum/state hash, and completion event identity.

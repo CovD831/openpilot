@@ -8186,8 +8186,8 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   的 `project_structure`/`web_search` need；只有用户意图派生的 `read_only_eligible` ceiling 可 materialize
   read-only task。`response_only` 被 materializer 和 controller 双重拒绝，模型生成的 project claim 不能
   升级用户权限，read ceiling 不能形成 mutation mode。
-- Evidence/完成门：receipt 必须一对一且无额外项地覆盖 open obligations，绑定 exact artifact/hash、同一个
-  later task checkpoint、read-only mode、无 `core_success`、checkpoint evidence marker、当前 session
+- Evidence/完成门：receipt 必须一对一且无额外项地覆盖 open obligations；每个 receipt 绑定自己的 exact
+  artifact/hash 与 later task checkpoint、read-only mode、无 `core_success`、checkpoint evidence marker、当前 session
   constraints、canonical + fresh current project fingerprint、`tool_result_applied` boundary 和
   source-compatible registered reader；typed artifact 同时绑定 obligation/source/observed-at/body，receipt
   不能重标时间；external-current 另受五分钟 freshness 约束并拒绝未来时间。
@@ -8206,3 +8206,41 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   evidence-required candidate 不得回落 legacy decomposition，也不得另造 parallel executor。真实
   feature-flagged task execution 随 CRU-3 governed decomposition/cursor 接通。prepared Provider request 的
   crash replay仍由 CRU-4 recovery package 负责。
+
+## [已完成] CRU-3：Governed decomposition 与 response-evidence execution bridge
+
+- 观察到的失败：所有 autonomous goal 都先进入 Provider TaskDecomposer；即使 CRU-2D 已经持有 exact
+  obligation/source `DecisionNeed` 与 active read-only checkpoint，legacy task/tool planning 仍会重新调用
+  Provider、丢失 obligation identity，或在失败后回落旧 pipeline。single task 的 cursor 也没有 typed
+  construction decision，resume 可能重新分解；local problem decomposition 未显式证明不扩大 root scope。
+- Metadata impact：复用 `RuntimeStateMetadata`、`SessionExecutionCursor`、`TaskGraphNodeMetadata`、
+  `DecisionNeedMetadata`、`ToolInputMetadata`、`RuntimeCheckpointMetadata` 与 pre-task binding。新增 strict
+  nested `DecompositionPolicyDecision` 及 kind/source/reason enums，并把 `RuntimeTaskPurpose` 加到既有 runtime
+  state；两者都不是新 `MetadataKind`。cursor 继续唯一拥有 plan/resume identity，TaskGraph 继续拥有 plan
+  payload，checkpoint 继续拥有 active task truth，task purpose 不授予权限。
+- 实现修复：`DecompositionPolicyResolver` 对 read-only research/summary/unknown 选择 single bounded task；coding、
+  typed write scope、多 deliverables、用户明确 plan/decompose 与不支持类型保留 initial Provider decomposition。
+  single task 使用 stable IDs、`plan_recorded` 与 `task_fields_v2` hash；legacy cursor 保留 `metadata_v1 +
+  legacy_cursor`，resume 复用 exact decision/plan 且不重新分解。local/replan 写入 typed decision，local subtasks
+  的 read/write/validation/dependency scope 不得超过 root。standard/enhanced UI 使用动态 `Task Planning`。
+- Evidence bridge：preselected typed needs 必须逐项保持 literal `read_only=true`、obligation/source identity，
+  并与 task expected obligations 精确同集合；每个 need 通过既有 ToolRouter 一对一选 tool，第一轮直接注入
+  既有 ToolEventLoop，因此不调用 tool-planning Provider，也不绕过 Guard、预算、executor 或 checkpoint。
+  `EvidenceRuntimeBridge` 在成功 compatible read/search 后保存 typed artifact，把 exact marker 写入 runtime
+  state，并只在真实 `tool_result_applied` checkpoint durable 后生成 receipt。project 仅接受 file readers，
+  current-external 仅接受 web search；多个 obligations 可各自绑定 later checkpoint。project-structure 使用
+  `read_only_listing=true`，只返回 bounded non-hidden path，不读取正文、不刷新 sketch/index；整批 needs 必须
+  在首个 tool 前同时通过剩余 tool-call/file-read budget。
+- Lifecycle/CLI：`response_evidence` 强制 read-only、`core_success=None`、禁用 improvement/report/finalization/
+  `task_finished`，观察到任何 modified file 即失败。unified entry 先 deterministic、再 bounded model；完全
+  grounded 直接提交，evidence-required 仅在 `OPENPILOT_GOVERNED_DECOMPOSITION=true` 且 diagnostics/store
+  可用时执行。任一 evidence failure 返回 credential-redacted failure，绝不进入 legacy pipeline。Agent
+  Generator route/pipeline 未改。
+- 验证证据：新增 decomposition policy、cursor/resume、local scope、response-purpose、preselected routing/
+  batch budget、side-effect-free listing、bridge artifact/checkpoint、mixed-source 和 CLI no-fallback tests；
+  CRU-3 受影响组合 **246 passed**；完整 `Code/tests` **1468 passed**（1 个既有 pytest
+  deprecation warning），touched Ruff 与 `git diff --check` 通过。
+- 剩余限制：两个 canary flag 仍默认关闭，尚未完成 production canary/default switch；prepared bounded
+  Provider request 与 tool protocol 的 model-visible repair/replay 由 CRU-4 负责。response-evidence resume
+  当前只接受 materialized initial checkpoint 的首次 attach；中途恢复继续走现有 explicit resume contract，
+  不从 CLI 自动推测 continuation。

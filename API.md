@@ -872,8 +872,13 @@ boundary from initial record through committed assistant record is replay-safe.
 
 CLI once and interactive autonomous routes expose this path only when
 `OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` is true. The flag defaults false;
-unrecognized goals fall through to the existing pipeline, and Agent Generator
-is checked first and never enters the unified controller.
+Agent Generator is checked first and never enters the unified controller.
+Unrecognized deterministic goals continue into the bounded model response
+step. A fully grounded response is committed directly; an evidence-required
+candidate may proceed only when the separately disabled
+`OPENPILOT_GOVERNED_DECOMPOSITION` flag is enabled. Evidence execution failure
+is credential-redacted and fail-closed and never falls through to the legacy
+decomposition pipeline.
 
 `BoundedModelResponseController` implements the CRU-2C zero-tool model step.
 It builds a bounded newest-turn projection that preserves all required active
@@ -890,9 +895,8 @@ classifies each as conversation, runtime, project, current-external, or stable
 knowledge. Project/current claims remain open typed evidence obligations and
 the candidate is not committed or displayed. Fully grounded candidates pass
 through the same response reducer and assistant ledger as deterministic
-responses. The CRU-2C controller is not yet selected by CLI; CRU-2D owns the
-evidence/task handoff needed before general model responses can safely enter the
-feature-flagged path.
+responses. The CRU-2C controller is selected only by the unified autonomous
+canary flag.
 
 `EvidenceEscalationController` implements the CRU-2D handoff core. It converts
 each open project/current-external obligation into a source-compatible,
@@ -916,9 +920,40 @@ controller removes the task reference and re-enters the same grounding and
 assistant-ledger completion gate with the original response payload. Recovery
 after evidence-complete, pending-ledger, or assistant-ingress writes converges
 without a duplicate assistant turn. CLI execution of this materialized task is
-deliberately deferred to CRU-3's governed single-task/session cursor; an
-evidence-required candidate must not fall through to the legacy decomposition
-pipeline or a parallel executor.
+performed by CRU-3's governed single-task/session cursor; an evidence-required
+candidate never falls through to the legacy decomposition pipeline or a
+parallel executor.
+
+`EvidenceRuntimeBridge` carries the exact obligation/source/read-only identity
+through the existing `ToolRouter`, `ToolEventLoopRunner`, state updater, and
+checkpoint store. Preselected typed needs skip the tool-planning Provider but
+do not bypass Guard, budgets, tool execution, or checkpointing. After a
+successful compatible read/search result, the bridge writes one typed evidence
+artifact, adds its exact marker to runtime state, and binds a receipt only after
+the corresponding `tool_result_applied` checkpoint is durable. Multiple
+obligations may bind separate later checkpoints. Project-structure evidence
+uses the multi-file reader's explicit `read_only_listing=true` mode: it lists
+bounded non-hidden paths without reading file bodies or refreshing project
+sketch/index artifacts. The full preselected batch must fit the remaining tool
+and file-read budgets before the first tool runs.
+
+Governed decomposition is represented by a strict nested
+`DecompositionPolicyDecision` with typed kind, source, reason code, and bounded
+evidence. Read-only research/summary work may use one stable-ID task without a
+TaskDecomposer call; coding, typed writes, multiple deliverables, explicit plan
+requests, and unsupported task types retain initial Provider decomposition.
+Local problem decomposition and replan record their own decisions and may not
+expand root read/write/dependency/validation scope. `SessionExecutionCursor`
+persists the decision, uses `plan_recorded` for a single task, and binds new
+plans with the metadata-noise-independent `task_fields_v2` hash. Historical
+cursors retain `metadata_v1` plus an explicit legacy decision. Standard and
+enhanced UI report the neutral dynamic stage `Task Planning`.
+
+`RuntimeStateMetadata.task_purpose` is a typed lifecycle control fact.
+`project_task` retains normal completion/report/post-core behavior;
+`response_evidence` forces read-only mode, keeps `core_success=None`, disables
+project improvement and runtime report/finalization/`task_finished`, and fails
+if any modified file is observed. It does not grant read authority by itself.
 
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or
@@ -1012,10 +1047,12 @@ Resume rebuilds the in-memory attachment through read-only preflight and blocks
 on missing, stale, or mismatched environment evidence. Legacy checkpoints remain
 readable, but a legacy pending Python verification also requires a fresh ready
 attachment. Resume never creates or installs an environment implicitly; an
-authorized setup/resync is a separate action. The checkpoint may own a strict session bootstrap or execution cursor. Both
-standard and enhanced-UI sessions persist decomposition, plan hash, completed
+authorized setup/resync is a separate action. The checkpoint may own a strict
+session bootstrap or execution cursor. Both standard and enhanced-UI sessions
+persist the governed decomposition decision, versioned plan hash, completed
 result prefix, and next subtask index; exact resume executes only the remaining
-suffix. LLM responses and local read results use checksum-addressed recovery
+suffix and never re-runs decomposition. LLM responses and local read results use
+checksum-addressed recovery
 artifacts plus request/call ledgers so an observed result is applied once rather
 than fetched again. New `provider_bound_v2` LLM request hashes bind provider,
 model, credential-free normalized endpoint (including non-default port),

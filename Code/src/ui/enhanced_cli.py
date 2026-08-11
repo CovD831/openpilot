@@ -53,6 +53,11 @@ def _unified_autonomous_entry_enabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
+def _governed_decomposition_enabled() -> bool:
+    value = str(os.getenv("OPENPILOT_GOVERNED_DECOMPOSITION", "0")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _iteration_turn_store():
     from autonomous_iteration.iteration_turn_store import IterationTurnStore
 
@@ -82,6 +87,100 @@ def _try_deterministic_runtime_response(
         goal,
         ingress=ingress_state,
         facts=facts,
+    )
+
+
+def _runtime_fact_projection(
+    *,
+    ingress_state: SessionIngressState,
+    settings: LLMSettings,
+    runtime_options: "OpenPilotRuntimeOptions",
+):
+    from autonomous_iteration.runtime_facts import RuntimeFactResolver
+
+    return RuntimeFactResolver(settings).resolve(
+        project_path=ingress_state.identity.project_root,
+        project_improvement_policy=runtime_options.project_improvement_policy,
+    )
+
+
+def _execute_response_evidence_task(
+    candidate,
+    *,
+    llm_client,
+    ui: EnhancedUI,
+    tracker: ProgressTracker | None,
+    logger,
+    runtime_options: "OpenPilotRuntimeOptions",
+):
+    if not _governed_decomposition_enabled():
+        raise RuntimeError("response evidence requires governed decomposition")
+    if not _runtime_diagnostics_enabled():
+        raise RuntimeError("response evidence requires durable diagnostics and checkpoint storage")
+
+    hooks = get_default_hooks()
+    from autonomous_iteration.response_evidence_runtime import (
+        execute_response_evidence_task,
+    )
+
+    return execute_response_evidence_task(
+        candidate,
+        turn_store=_iteration_turn_store(),
+        llm_client=llm_client,
+        console=ui.console,
+        logger=logger,
+        tracker=tracker,
+        enhanced_ui=ui,
+        project_improvement_policy=runtime_options.project_improvement_policy,
+        diagnostics_hooks=hooks,
+    )
+
+
+def _try_unified_autonomous_response(
+    goal: str,
+    *,
+    ingress_state: SessionIngressState,
+    settings: LLMSettings,
+    runtime_options: "OpenPilotRuntimeOptions",
+    llm_client,
+    ui: EnhancedUI,
+    tracker: ProgressTracker | None,
+    logger,
+):
+    response = _try_deterministic_runtime_response(
+        goal,
+        ingress_state=ingress_state,
+        settings=settings,
+        runtime_options=runtime_options,
+    )
+    if response is not None:
+        return response
+    if not _unified_autonomous_entry_enabled():
+        return None
+
+    from autonomous_iteration.bounded_model_response import BoundedModelResponseController
+
+    candidate = BoundedModelResponseController(
+        _iteration_turn_store(),
+        llm_client,
+    ).complete(
+        goal,
+        ingress=ingress_state,
+        facts=_runtime_fact_projection(
+            ingress_state=ingress_state,
+            settings=settings,
+            runtime_options=runtime_options,
+        ),
+    )
+    if not candidate.evidence_required:
+        return candidate
+    return _execute_response_evidence_task(
+        candidate,
+        llm_client=llm_client,
+        ui=ui,
+        tracker=tracker,
+        logger=logger,
+        runtime_options=runtime_options,
     )
 
 
@@ -526,11 +625,15 @@ def _run_once_mode(
                     )
                 ],
             )
-            response = _try_deterministic_runtime_response(
+            response = _try_unified_autonomous_response(
                 goal,
                 ingress_state=ingress,
                 settings=settings,
                 runtime_options=runtime_options,
+                llm_client=active_llm_client,
+                ui=ui,
+                tracker=tracker,
+                logger=logger,
             )
             if response is not None:
                 ui.console.print(response.content)
@@ -853,12 +956,28 @@ def _execute_goal_interactive(
     else:
         active_settings = settings or getattr(llm_client, "settings", None)
         if ingress_state is not None and isinstance(active_settings, LLMSettings):
-            response = _try_deterministic_runtime_response(
-                goal,
-                ingress_state=ingress_state,
-                settings=active_settings,
-                runtime_options=runtime_options,
-            )
+            try:
+                response = _try_unified_autonomous_response(
+                    goal,
+                    ingress_state=ingress_state,
+                    settings=active_settings,
+                    runtime_options=runtime_options,
+                    llm_client=llm_client,
+                    ui=ui,
+                    tracker=tracker,
+                    logger=logger,
+                )
+            except Exception as exc:
+                failure = _cli_exception_failure(
+                    exc,
+                    task_id=str(execution_context.get("task_id") or "") or None,
+                )
+                show_error = getattr(ui, "show_error", None)
+                if callable(show_error):
+                    show_error("Response evidence failed", _format_failure_details(failure))
+                else:
+                    ui.console.print(_format_failure_details(failure))
+                return ingress_state
             if response is not None:
                 ui.console.print(response.content)
                 return response.ingress

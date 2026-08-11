@@ -187,6 +187,38 @@ Documentation updates: API, AGENT_LOOP_SESSION_RESUME, CONTRACT_CATALOG nested-v
 prepared/active 恢复重新校验 authority revision/hash、reject/revoke lineage、mutation
 confirmation、project/run identity 与 checkpoint digest，且不调用 Provider。
 
+### 3.9 Governed decomposition decision (CRU-3 review)
+
+```text
+Fact: single_task | initial_decomposition | local_problem_decomposition | replan_decomposition plus typed reason/source evidence
+Authoritative producer: runtime decomposition policy from typed semantic/task/scope facts; local/replan transitions remain Controller-owned
+Consumers: root Task builder, TaskDecomposer admission, SessionExecutionCursor, resume preflight, dynamic UI
+Lifecycle: selected once before initial plan construction and retained in every cursor/checkpoint generation; local/replan decisions create their own subordinate transition facts
+Control impact: Provider admission, task-plan identity, recovery; never permission elevation or completion
+Existing contracts reviewed: SessionExecutionCursor, SessionStage, SessionSemanticSnapshot, TaskGraphNodeMetadata, CanonicalInitialTaskSnapshot, TaskDecompositionResult, DifficultyAssessmentMetadata
+Decision: add strict owned `DecompositionPolicyDecision` and typed enums to the existing session cursor; do not add a MetadataKind or a second plan envelope
+Why no duplicate source of truth is created: the cursor already owns plan/resume identity; decision records how its task list was constructed, while TaskGraph nodes remain the plan payload and RuntimeCheckpoint remains durable task truth
+Serialization and migration: legacy cursor absence maps explicitly to `initial_decomposition + legacy_cursor`; single-task cursors use `plan_recorded`, retain exact task/plan hash, and never reconstruct a missing decision during resume
+Tests: single path performs zero decomposition calls, complex path preserves Provider decomposition, decision/task-shape validation, cursor round-trip/resume identity, local/replan root-scope non-expansion, and dynamic UI stage parity
+Documentation updates: CONTRACT_CATALOG, API, AGENT_LOOP_SESSION_RESUME, active-iteration plan, trajectory implementation log
+```
+
+### 3.10 Response-evidence task purpose and bridge (CRU-3 review)
+
+```text
+Fact: project task versus response-evidence collection lifecycle, plus exact obligation/source artifact-to-checkpoint receipt binding
+Authoritative producer: pre-task evidence materializer selects response_evidence; Runtime Controller enforces the read-only lifecycle and binds the existing tool result/checkpoint
+Consumers: AgentRuntimeController, ToolPlanningTaskExecutor, ToolEventLoopRunner, EvidenceEscalationController, CLI display
+Lifecycle: active evidence task only; every successful compatible observation becomes one content-addressed artifact and one later task checkpoint receipt before completion re-entry
+Control impact: disables project core success/report/finalization/improvement and requires durable read-only execution; does not grant read or mutation authority
+Existing contracts reviewed: RuntimeStateMetadata, RuntimeExecutionMode, DecisionNeedMetadata, ToolInputMetadata, RuntimeCheckpointMetadata, CanonicalInitialTaskSnapshot, IterationTurnRecordMetadata
+Decision: add typed `RuntimeTaskPurpose` to existing RuntimeStateMetadata and a controller-local EvidenceRuntimeBridge; do not add a MetadataKind, executor, success contract, or second checkpoint owner
+Why no duplicate source of truth is created: Task purpose controls lifecycle only; execution mode/Guard own permission, ToolResult owns observation, RuntimeCheckpoint owns applied task truth, and the pre-task record retains references only
+Serialization and migration: project_task is the backward-compatible default; response_evidence must be an enum instance at task entry, remains core_success=None, and prepared checkpoint attachment validates exact task/run/session/project identity
+Tests: purpose strictness, no mutation/report/finalization/task-finished, prepared generation attach, preselected need one-to-one routing and whole-batch budget admission, zero planning-Provider calls, side-effect-free/non-hidden directory listing, artifact marker/checkpoint binding, mixed-source checkpoints, and CLI fail-closed/no-legacy fallback
+Documentation updates: CONTRACT_CATALOG, API, Code README/env example, active-iteration plan/index, trajectory event alignment and implementation log
+```
+
 ## 4. 当前控制写入者 inventory
 
 ### 4.1 Conversation/session owner

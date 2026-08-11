@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from autonomous_iteration.bounded_model_response import BoundedModelResponseController
 from autonomous_iteration.iteration_turn_store import IterationTurnStore
 from core.config import LLMSettings
 from metadata import ConversationIdentity, SessionIngressState, TaskRouteMetadata
@@ -131,3 +134,100 @@ def test_agent_generator_route_bypasses_unified_entry_under_flag(monkeypatch) ->
 
     assert result == "agent-result"
     assert calls == ["Create a reusable research agent"]
+
+
+def test_evidence_required_candidate_uses_governed_runtime_bridge(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_try_deterministic_runtime_response",
+        lambda *_args, **_kwargs: None,
+    )
+    candidate = SimpleNamespace(evidence_required=True, record=object(), ingress=object())
+    monkeypatch.setattr(
+        BoundedModelResponseController,
+        "complete",
+        lambda *_args, **_kwargs: candidate,
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_runtime_fact_projection",
+        lambda **_kwargs: object(),
+    )
+    calls = []
+    expected = SimpleNamespace(content="grounded", ingress=object())
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_execute_response_evidence_task",
+        lambda observed, **_kwargs: calls.append(observed) or expected,
+    )
+    ingress = SessionIngressState(
+        identity=ConversationIdentity(
+            conversation_id="conversation-1",
+            run_id="run-1",
+            turn_index=1,
+            project_root=str(tmp_path),
+        )
+    )
+
+    result = enhanced_cli._try_unified_autonomous_response(
+        "What is in this project?",
+        ingress_state=ingress,
+        settings=_settings(),
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+        llm_client=object(),
+        ui=_UI(),
+        tracker=None,
+        logger=None,
+    )
+
+    assert result is expected
+    assert calls == [candidate]
+
+
+def test_evidence_execution_failure_does_not_fall_back_to_legacy_pipeline(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    ui = _UI()
+    monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")
+    monkeypatch.setattr(enhanced_cli, "_runtime_diagnostics_enabled", lambda: False)
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_classify_task_route",
+        lambda _goal: _route("autonomous_iteration"),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_try_unified_autonomous_response",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sensitive detail")),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_execute_autopilot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("legacy fallback called")),
+    )
+    ingress = SessionIngressState(
+        identity=ConversationIdentity(
+            conversation_id="conversation-1",
+            run_id="run-0",
+            turn_index=0,
+            project_root=str(tmp_path),
+        )
+    )
+
+    result = enhanced_cli._execute_goal_interactive(
+        "What is in this project?",
+        ui,
+        tracker=None,
+        llm_client=object(),
+        logger=None,
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+        ingress_state=ingress,
+        settings=_settings(),
+    )
+
+    assert result.turns[-1].role == "user"
+    rendered = "\n".join(ui.console.messages)
+    assert "Autonomous iteration stopped before completion" in rendered
+    assert "sensitive detail" not in rendered

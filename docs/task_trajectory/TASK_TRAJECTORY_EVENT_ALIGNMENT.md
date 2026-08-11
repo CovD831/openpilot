@@ -357,6 +357,8 @@ Preferred:
 - `RuntimeStateMetadata.execution_mode_source`
 - `RuntimeStateMetadata.execution_mode_reason`
 - `RuntimeStateMetadata.guard_history`
+- `RuntimeStateMetadata.task_purpose`
+- `RuntimeStateMetadata.decomposition_decisions`
 - `correlation.task_id`
 - `correlation.session_id`
 

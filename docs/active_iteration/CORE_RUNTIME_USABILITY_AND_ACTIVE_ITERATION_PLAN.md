@@ -3,8 +3,8 @@
 > 状态：实施中；CRU-0、CRU-1 已完成；CRU-2A contract/store/assistant-ledger/
 > task-materialization/reducer writer-migration 与 CRU-2B deterministic first-turn
 > completion、CRU-2C bounded model-supported core、CRU-2D evidence escalation
-> core 已完成，下一切片为 CRU-3 governed decomposition 与安全的 feature-flagged
-> single-task handoff。
+> core、CRU-3 governed decomposition 与安全的 feature-flagged single-task
+> evidence handoff 已完成，下一切片为 CRU-4 bounded step recovery。
 >
 > 日期：2026-08-10
 >
@@ -1462,6 +1462,15 @@ CRU-2A–2D 的共同非目标：不修改 Agent Generator route、pipeline 或�
 - initial/local/replan decomposition；
 - session cursor/checkpoint migration；
 - UI dynamic stages。
+
+实施状态：已完成 typed single/initial/local/replan decomposition decision、保守
+single-task admission、stable plan IDs/hash migration、cursor exact resume、local scope
+non-expansion 和动态 `Task Planning` UI。CRU-2D 的 exact DecisionNeed 通过既有
+ToolRouter/ToolEventLoop/Guard/checkpoint 路径执行，跳过 tool-planning Provider 但不
+跳过权限、预算或 durable evidence；每个 obligation 绑定自己的 later applied
+checkpoint。`response_evidence` task purpose 保持 `core_success=None`，禁用 report、
+finalization、post-core 与 task-finished。两个 canary flag 均默认关闭；evidence 失败
+fail closed，不回落 legacy pipeline。Agent Generator 保持不变。
 
 ### CRU-4：Bounded Step Recovery
 
