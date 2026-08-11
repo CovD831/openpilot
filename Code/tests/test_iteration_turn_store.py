@@ -117,6 +117,27 @@ def test_turn_store_artifacts_are_checksum_bound_and_reject_secrets(tmp_path) ->
         )
 
 
+def test_turn_store_artifacts_are_content_addressed_and_idempotent(tmp_path) -> None:
+    store = IterationTurnStore(tmp_path)
+    payload = {"message_id": "message-assistant-1", "content": "hello"}
+
+    first = store.save_artifact(
+        "conversation-1",
+        "run-1",
+        kind="response_payload",
+        payload=payload,
+    )
+    second = store.save_artifact(
+        "conversation-1",
+        "run-1",
+        kind="response_payload",
+        payload=payload,
+    )
+
+    assert second == first
+    assert first.artifact_id == first.integrity_checksum.removeprefix("sha256:")
+
+
 def test_session_ingress_store_uses_compare_and_swap_and_checksum(tmp_path) -> None:
     store = IterationTurnStore(tmp_path)
     ingress = SessionIngressState(identity=_identity(run_id="run-0", turn_index=0))

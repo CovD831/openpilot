@@ -17,10 +17,19 @@ record to the newest previous valid generation, but a writer must fail closed
 when any existing turn history or ingress snapshot is unreadable. Corruption
 must never be interpreted as generation/revision zero.
 
-This store is not yet a resume authorization. Assistant ledger commit/replay,
-prepared-task materialization, authority freshness, and the transition to an
-active `RuntimeCheckpointMetadata` remain mandatory gates before the unified
-entry can be enabled.
+Response artifacts are content-addressed. `IterationTurnCommitter` recovers the
+response path in the fixed order pending turn record → assistant ingress turn →
+committed turn record. The assistant message ID, turn index, payload reference,
+and canonical payload hash must match at every boundary. An identical retry
+reuses the same terminal record/payload; an existing message ID with different
+content fails closed. A crash after the ingress write must not append another
+turn, and recovery after the terminal record write may replay only the exact
+durable display payload. This replay never invokes or authorizes a Provider.
+
+This response recovery is not task-resume authorization. Prepared-task
+materialization, current session-authority freshness/revocation checks, and the
+transition to an active `RuntimeCheckpointMetadata` remain mandatory gates
+before the unified entry can be enabled.
 
 ## Source of truth
 

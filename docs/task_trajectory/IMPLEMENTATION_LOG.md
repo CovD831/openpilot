@@ -8100,8 +8100,16 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   record generations、atomic latest pointer、CAS、checksum-first validation、previous-valid read fallback、
   secret-rejecting 且 checksum/size/kind-bound 的 artifacts，以及 revisioned durable
   `SessionIngressState`。已有损坏 history/ingress
-  禁止被 writer 当作空状态覆盖。
-- 验证证据：contract/store/metadata catalog 聚焦 **73 passed**；完整 `Code/tests`
-  **1381 passed**（1 个既有 pytest deprecation warning）。
-- 剩余限制：store 尚未接入 assistant ledger commit/replay、prepared snapshot materialization、
-  Controller reducer 或 feature-flagged entry；因此当前 CLI 行为保持 CRU-1。
+  禁止被 writer 当作空状态覆盖。artifact 现以 envelope checksum 作为稳定 ID；同内容重写返回同一
+  reference，已有不可读对象或理论 collision 均 fail closed。
+- assistant ledger 修复：新增 `IterationTurnCommitter`，严格执行 response artifact → pending record →
+  assistant ingress → committed record 顺序。它校验 stable message ID、turn index、payload ref/hash 与
+  outcome 一致；相同 ID/相同 payload 重试及并发终态 writer 收敛到同一 committed generation，相同 ID/
+  不同 payload 拒绝。每一 durable write 后的注入崩溃均从原 artifact 恢复，不重复 append、不改变
+  turn index、不重新调用 Provider，并只返回 exact durable display content。
+- 验证证据：contract/ingress/store/commit 聚焦 **42 passed**；store/commit 边界 **15 passed**，包含
+  三个 fault boundaries、冲突与并发收敛；完整 `Code/tests` **1390 passed**（1 个既有 pytest
+  deprecation warning），touched Ruff、compileall 与 `git diff --check` 通过。
+- 剩余限制：prepared snapshot materialization、authority freshness/revocation、Controller reducer 和
+  feature-flagged entry 尚未接入；因此当前 CLI 行为保持 CRU-1，assistant committer 本身不调用 Provider
+  或显示 UI。

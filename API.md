@@ -803,8 +803,8 @@ The contract enforces these boundaries before runtime wiring:
 - a durable response requires the same response artifact/hash in the outcome
   and committed assistant ledger binding.
 
-This slice defines contracts only. It does not yet change the autonomous entry,
-persist turn records, answer runtime questions, bypass decomposition, or alter
+The contract and offline persistence/assistant-commit slices do not yet change
+the autonomous entry, answer runtime questions, bypass decomposition, or alter
 Agent Generator behavior.
 
 `IterationTurnStore` provides the contract's offline persistence boundary:
@@ -813,15 +813,26 @@ Agent Generator behavior.
   latest pointer;
 - checksum validation before model parsing, identity validation after parsing,
   and fallback to the newest previous valid record for reads;
-- checksum/size/kind-bound response and canonical-task artifacts with recognized
-  secret-key rejection;
+- content-addressed, checksum/size/kind-bound response and canonical-task
+  artifacts with recognized secret-key rejection and idempotent identical
+  writes;
 - a separate checksum-bound `SessionIngressState` snapshot with conversation
   revision compare-and-swap;
 - fail-closed writes when existing record history or ingress state is unreadable,
   so corruption cannot be treated as an empty conversation.
 
-The store is not yet wired to CLI execution. Persistence alone does not commit
-an assistant turn, display a response, create a Task, or resume an active task.
+`IterationTurnCommitter` implements the response-only durable ordering around
+that store: it validates the exact response artifact/message ID/turn index/hash,
+persists a pending turn-record generation, idempotently appends the matching
+assistant `SessionTurn`, then persists a committed terminal generation before
+returning the exact durable display payload. Same-ID/same-payload retries and a
+concurrent terminal writer converge; same-ID/different-payload retries fail
+closed. Recovery after any durable write boundary reuses the artifact and never
+appends a second turn or changes its index.
+
+The store and committer are not yet wired to CLI execution. They do not create
+a Task, invoke a Provider, authorize resume, or display independently; prepared
+task materialization and authority-freshness gates remain pending.
 
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or

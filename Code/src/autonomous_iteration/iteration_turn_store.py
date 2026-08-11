@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import tempfile
-import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
@@ -160,12 +159,25 @@ class IterationTurnStore:
         sensitive_path = self._find_sensitive_key(payload)
         if sensitive_path:
             raise IterationTurnSecretError(f"iteration artifact contains sensitive field: {sensitive_path}")
-        artifact_id = uuid.uuid4().hex
         envelope = {"kind": kind, "payload": payload}
         encoded = self._encode(envelope)
         checksum = "sha256:" + hashlib.sha256(encoded).hexdigest()
+        artifact_id = checksum.removeprefix("sha256:")
         path = self._run_dir(conversation_id, run_id) / "artifacts" / f"{artifact_id}.json"
-        self._atomic_write_json(path, envelope)
+        with self._lock(path.parent / ".artifact.lock"):
+            if path.exists():
+                try:
+                    existing = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    raise IterationTurnConflictError(
+                        f"existing iteration artifact is unreadable: {artifact_id}"
+                    ) from exc
+                if existing != envelope:
+                    raise IterationTurnConflictError(
+                        f"content-addressed artifact collision: {artifact_id}"
+                    )
+            else:
+                self._atomic_write_json(path, envelope)
         return DurableArtifactReference(
             artifact_id=artifact_id,
             kind=kind,

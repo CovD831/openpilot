@@ -1,6 +1,7 @@
 # OpenPilot 核心运行时可用性与主动迭代重构总体计划
 
-> 状态：实施中；CRU-0、CRU-1 已完成，下一提交包为 CRU-2A。
+> 状态：实施中；CRU-0、CRU-1 已完成；CRU-2A contract/store/assistant-ledger
+> 切片已完成，下一切片为 prepared/active task binding 与 authority freshness。
 >
 > 日期：2026-08-10
 >
