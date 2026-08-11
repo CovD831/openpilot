@@ -73,6 +73,126 @@ def test_feature_flagged_interactive_runtime_question_skips_autopilot(
     assert any("Model: gpt-test" in message for message in ui.console.messages)
 
 
+def test_feature_flagged_greeting_completes_inside_autonomous_iteration_without_autopilot(
+    tmp_path, monkeypatch
+) -> None:
+    store = IterationTurnStore(tmp_path)
+    ui = _UI()
+    monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")
+    monkeypatch.setattr(enhanced_cli, "_runtime_diagnostics_enabled", lambda: False)
+    monkeypatch.setattr(enhanced_cli, "_iteration_turn_store", lambda: store)
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_classify_task_route",
+        lambda _goal: _route("autonomous_iteration"),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_try_deterministic_runtime_response",
+        lambda *_args, **_kwargs: None,
+    )
+    ingress = SessionIngressState(
+        identity=ConversationIdentity(
+            conversation_id="conversation-1",
+            run_id="run-0",
+            turn_index=0,
+            project_root=str(tmp_path.resolve()),
+        )
+    )
+    completed = SimpleNamespace(
+        evidence_required=False,
+        content="你好！有什么我可以帮你的吗？",
+        ingress=ingress,
+    )
+    monkeypatch.setattr(
+        BoundedModelResponseController,
+        "complete",
+        lambda *_args, **_kwargs: completed,
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_runtime_fact_projection",
+        lambda **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_execute_autopilot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("autopilot called")),
+    )
+
+    result = enhanced_cli._execute_goal_interactive(
+        "你好",
+        ui,
+        tracker=None,
+        llm_client=object(),
+        logger=None,
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+        ingress_state=ingress,
+        settings=_settings(),
+    )
+
+    assert result is ingress
+    assert any("Task route: autonomous_iteration" in message for message in ui.console.messages)
+    assert any("你好！有什么我可以帮你的吗？" in message for message in ui.console.messages)
+
+
+def test_feature_flagged_project_file_request_keeps_legacy_autopilot(monkeypatch) -> None:
+    ui = _UI()
+    calls: list[str] = []
+    monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")
+    monkeypatch.setattr(enhanced_cli, "_runtime_diagnostics_enabled", lambda: False)
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_classify_task_route",
+        lambda _goal: _route("autonomous_iteration"),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_try_deterministic_runtime_response",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        BoundedModelResponseController,
+        "complete",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("bounded response called")
+        ),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_execute_autopilot",
+        lambda goal, *_args, **_kwargs: calls.append(goal) or "legacy-result",
+    )
+    ingress = SessionIngressState(
+        identity=ConversationIdentity(
+            conversation_id="conversation-1",
+            run_id="run-0",
+            turn_index=0,
+            project_root="/tmp/project",
+        )
+    )
+
+    result = enhanced_cli._execute_goal_interactive(
+        "读取 Code/pyproject.toml 的项目版本号并回答，不要修改文件",
+        ui,
+        tracker=None,
+        llm_client=object(),
+        logger=None,
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+        ingress_state=ingress,
+        settings=_settings(),
+    )
+
+    assert result.turns[-1].content == "Execution result: legacy-result"
+    assert calls == ["读取 Code/pyproject.toml 的项目版本号并回答，不要修改文件"]
+
+
+def test_unified_response_scope_does_not_match_project_word_substrings() -> None:
+    assert enhanced_cli._unified_autonomous_entry_scope(
+        "What is your profile?"
+    ) == enhanced_cli._UnifiedAutonomousEntryScope.RESPONSE_CANARY
+
+
 def test_feature_flagged_once_runtime_question_skips_runtime_construction(
     tmp_path, monkeypatch
 ) -> None:
@@ -136,7 +256,7 @@ def test_agent_generator_route_bypasses_unified_entry_under_flag(monkeypatch) ->
     assert calls == ["Create a reusable research agent"]
 
 
-def test_evidence_required_candidate_uses_governed_runtime_bridge(monkeypatch, tmp_path) -> None:
+def test_current_external_candidate_uses_governed_runtime_bridge(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")
     monkeypatch.setattr(
         enhanced_cli,
@@ -171,7 +291,7 @@ def test_evidence_required_candidate_uses_governed_runtime_bridge(monkeypatch, t
     )
 
     result = enhanced_cli._try_unified_autonomous_response(
-        "What is in this project?",
+        "What is the latest weather?",
         ingress_state=ingress,
         settings=_settings(),
         runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),

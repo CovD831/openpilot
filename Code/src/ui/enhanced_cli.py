@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import os
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -34,6 +36,33 @@ if TYPE_CHECKING:
 
 DEFAULT_IMPROVEMENT_ITERATIONS = 2
 _CONSTRAINT_COMMANDS = frozenset({"/constraints", "/confirm", "/reject", "/revoke"})
+
+
+class _UnifiedAutonomousEntryScope(str, Enum):
+    RESPONSE_CANARY = "response_canary"
+    LEGACY_AUTOPILOT = "legacy_autopilot"
+
+
+def _unified_autonomous_entry_scope(goal: str) -> _UnifiedAutonomousEntryScope:
+    """Keep the development canary on response-only traffic it can complete safely."""
+
+    text = str(goal).casefold()
+    chinese_project_markers = ("仓库", "代码库", "项目", "文件", "目录", "源码")
+    english_project_marker = re.search(
+        r"\b(?:repository|repo|codebase|project|file|directory|folder|git)\b|\bsource\s+code\b",
+        text,
+    )
+    path_or_extension = re.search(
+        r"(?:[/\\]|\.(?:py|toml|md|json|ya?ml|tsx?|jsx?|rs|go|java|sh)\b)",
+        text,
+    )
+    if (
+        path_or_extension
+        or english_project_marker
+        or any(marker in text for marker in chinese_project_markers)
+    ):
+        return _UnifiedAutonomousEntryScope.LEGACY_AUTOPILOT
+    return _UnifiedAutonomousEntryScope.RESPONSE_CANARY
 
 
 def _is_constraint_command(user_input: str) -> bool:
@@ -156,6 +185,8 @@ def _try_unified_autonomous_response(
     if response is not None:
         return response
     if not _unified_autonomous_entry_enabled():
+        return None
+    if _unified_autonomous_entry_scope(goal) == _UnifiedAutonomousEntryScope.LEGACY_AUTOPILOT:
         return None
 
     from autonomous_iteration.bounded_model_response import BoundedModelResponseController

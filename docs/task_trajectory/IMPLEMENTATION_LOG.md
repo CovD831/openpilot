@@ -8289,3 +8289,42 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：三个 canary flag 仍默认关闭，真实用户 canary/default switch 由 CRU-7 负责。CRU-5 继续强化
   active diagnostic facts/decision hierarchy 与 trajectory/experiment gates；CRU-4 不引入未观察 transport
   的 replay authority。
+
+## [已完成] CRU-1 至 CRU-4B 开发 canary 联网与轻量对话加固
+
+- 观察到的失败：统一入口开启后，中文问候的多个 claim segment 会因 Runtime 人为插入 ASCII 空格而两次
+  contract validation 失败；未开启时则绕过 pre-task completion，回落旧 heavyweight autopilot。天气等
+  current-external 请求把模型的拒答 claim 当搜索词，Bing HTML 返回无关结果；即使工具取得新证据，完成门
+  仍提交搜索前的旧拒答，形成“联网成功但回答未更新”的假完成风险。
+- Metadata impact note：新增事实是 fresh current-external observation 派生的 replacement response candidate。
+  producer 为 `EvidenceEscalationController`；consumer 为 completion reducer、assistant ledger commit 与 CLI；
+  lifecycle 是 durable iteration-turn record + content-addressed response/claim-manifest artifact；control impact 是
+  completion。复用 `ResponseCandidate`、`ResponseClaim`、`GroundingDecision`、`CompletionObligation`、
+  `EvidenceReceipt`、`IterationTurnRecordMetadata` 与既有 cursor，不新增 contract、`MetadataKind`、route、权限
+  owner 或第二份 authoritative fact。历史记录无需迁移；只有成功验证全 current-external evidence 后才产生
+  candidate revision，旧 candidate 保留在历史 generation 中。
+- 实现修复：claim coverage 对 response/claim concatenation 仅忽略 Unicode whitespace；顶层 route 仍为
+  `autonomous_iteration`。current-external `DecisionNeed` 使用 durable original user input。单一 external
+  obligation 必须提供非空且命中原问题 subject token 的 `research_summary`，否则 `SOURCE_INCOMPATIBLE`
+  fail-closed；通过后保存新 assistant payload/claim manifest，并由 `IterationTurnReducer.complete_evidence`
+  原子更新 candidate、completion hash 与 grounding。recovery 会从相同 receipt 重建并核对 exact replacement
+  candidate，保持 evidence-complete/ledger crash 幂等。多个、且全部属于 current-external 的 blocking claims
+  保留原 claim IDs，并把 evidence summary 确定性切分为完整覆盖的新 claim manifest；mixed-source 仍保持原
+  行为。`web_searcher` 在既有工具合同内识别天气查询，使用独立 bounded provider helper 从 `wttr.in` 获取
+  structured current/daily 数据，限制 location、response bytes、hourly cardinality、数值与摘要长度后返回普通
+  `SearchArtifactMetadata`。response-evidence `web_searcher` checkpoint 不再误写仅允许
+  `file_reader`/`multi_file_reader` 的 `ReadToolReplayEntry`；fresh external result 不获得本地 read replay 权限。
+  本地 canary admission 只接收 deterministic runtime、轻量对话和 current-external 请求；显式 project/file/path
+  工作保持顶层 `autonomous_iteration`，但继续进入 legacy project autopilot，避免把“无法读取文件”的零工具拒答
+  当作成功 completion。该内部 scope 使用 typed disposition，不新增公开 route。
+- 验证证据：新增中文多 claim、原始查询、结构化天气、证据改写、无关证据拒绝、改写后 crash recovery、
+  unified-entry greeting no-autopilot tests；真实网络请求确认 `今天常熟的天气怎么样` 返回 provider
+  `wttr_in`、source domain `wttr.in` 与包含温度/湿度/降雨概率的 fresh summary。最终完整 `Code/tests`
+  **1506 passed**；touched Ruff、compileall、release-version test 与 `git diff --check` 通过。isolated wheel
+  `openpilot-0.1.0.dev2-py3-none-any.whl` SHA-256 为
+  `583ea7a40cc073dd488701d2c637833535d8a28b2ce8f555b321bc4f369ff8da`；editable install 报告
+  `0.1.0.dev2`。交互式 launcher smoke 中问候、模型身份和常熟天气成功；一次 Provider 临时 timeout 明确
+  fail closed，后续重试返回 fresh weather response。
+- 剩余限制：这是本地 `openpilot-dev` 开发 canary，不是 CRU-7 production default switch。evidence-driven
+  replacement 当前只接受全部 blocking claims 均为 current-external 的响应；mixed-source 或缺少可验证 subject 的请求
+  fail closed，不凭模型自由文本合成答案。`wttr.in` 可用性仍属于外部网络依赖，失败时不会伪造成功。

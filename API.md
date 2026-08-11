@@ -932,14 +932,33 @@ the receipt cannot relabel those provenance fields. The checkpoint must be a suc
 `tool_result_applied` observation from a source-compatible registered reader
 (`file_reader`/`multi_file_reader` for project facts, `web_searcher` for
 current-external facts). Current-external evidence also has a bounded
-freshness window and rejects future timestamps. Once all obligations close, the
-controller removes the task reference and re-enters the same grounding and
-assistant-ledger completion gate with the original response payload. Recovery
+freshness window and rejects future timestamps. Its search need uses the durable
+original user question rather than an ungrounded candidate claim. When every
+blocking claim is current-external, completion additionally requires a non-empty,
+subject-relevant sourced `research_summary` for every receipt; the controller derives a replacement
+`ResponseCandidate` and claim manifest from that observation and updates the
+candidate/cursor/grounding hashes in the reducer-owned transition. Mixed-source
+responses retain their prior fail-closed behavior. Once all obligations close,
+the controller removes the task reference and re-enters the same grounding and
+assistant-ledger completion gate with the evidence-grounded response payload. Recovery
 after evidence-complete, pending-ledger, or assistant-ingress writes converges
 without a duplicate assistant turn. CLI execution of this materialized task is
 performed by CRU-3's governed single-task/session cursor; an evidence-required
 candidate never falls through to the legacy decomposition pipeline or a
 parallel executor.
+
+`web_searcher` recognizes explicit weather questions and uses the existing
+search tool contract to fetch structured current/daily data from `wttr.in`.
+The result remains a normal `SearchArtifactMetadata` payload with provider,
+source domain, bounded research summary, key points, freshness timestamp, and
+warnings; no new route, tool authority, or metadata kind is introduced.
+
+The local development canary is response-scoped. Deterministic runtime facts,
+lightweight conversation, and current-external questions enter the unified
+pre-task response path. Explicit repository, project, path, or file work keeps
+the same top-level `autonomous_iteration` route but continues through the
+legacy project-task autopilot until project-evidence answer synthesis is ready;
+the canary never commits a zero-tool file-access refusal as a successful answer.
 
 `EvidenceRuntimeBridge` carries the exact obligation/source/read-only identity
 through the existing `ToolRouter`, `ToolEventLoopRunner`, state updater, and
