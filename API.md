@@ -98,6 +98,7 @@ OpenAI-compatible providers are configured with environment variables:
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_MAX_ROUNDS` | No | `3` | Upper bound for provider tool-call rounds when the opt-in entry point is used. |
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_BUDGET_PROFILE` | No | `canary` | Typed budget lane: `canary` keeps bounded smoke-test limits; `real_read_only` enables 12,288 prompt tokens, 4,096 per-call completion ceiling, 24,000 total completion tokens, 8 rounds, 40 calls, and 60 file reads with zero edits/creates for explicit non-mutating provider tasks; `real_mutation` has the same context ceilings but admits only one edit, zero creates, and one verification for explicitly confirmed provider-native mutation tasks. |
 | `OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR` | No | `false` | Canary gate for one model-visible unknown-tool/invalid-input correction across local and provider-native tool loops. It does not authorize permission, confirmation, scope, checkpoint, or validation repair. |
+| `OPENPILOT_CORE_POST_CORE_INTEGRATION` | No | `false` | Canary gate for the verified core handoff lane. It suppresses the legacy pre-finalization enhancement call, builds the unique source-linked Core Completion Package only after durable core finalization, and leaves the stage skipped until a package consumer is available. |
 | `OPENPILOT_EMBEDDING_PROVIDER` | No | `openai-compatible` | Embedding provider label. |
 | `OPENPILOT_EMBEDDING_BASE_URL` | No | Inherits `OPENPILOT_LLM_BASE_URL` | OpenAI-compatible embedding endpoint. |
 | `OPENPILOT_EMBEDDING_API_KEY` | No | Inherits `OPENPILOT_LLM_API_KEY` | Embedding API key. |
@@ -1030,15 +1031,43 @@ digest of the authoritative ingress turn ledger. It is replay/evidence metadata
 only; raw `SessionIngressState` and typed constraints remain the authority.
 
 Post-core project improvement has a separate typed completion policy:
-`ProjectImprovementPolicy(requirement, source, target_successes, max_attempts)`.
-`requirement` is `disabled`, `optional`, or `required`. Automatic default
-improvement is optional; an explicit CLI/interactive iteration selection is
-required; zero disables the stage. `required_successful_improvements` remains a
-compatibility view of `target_successes`, not the top-level completion authority.
+`ProjectImprovementPolicy(requirement, source,
+required_accepted_transactions, max_accepted_transactions, max_attempts)`.
+`requirement` is `disabled`, `optional`, or `required`. The new automatic
+default is optional `0/1/1`: no hard accepted count, at most one accepted
+transaction, and at most one attempted transaction. An explicit CLI/interactive
+selection is required and uses its selected count as both the hard and maximum
+accepted count; zero disables the stage. `target_successes` remains a
+historical-read and compatibility projection of `max_accepted_transactions`.
+Legacy optional payloads migrate to hard count zero; legacy required payloads
+migrate their target to both accepted counts. Contradictory old/new counts are
+rejected as `policy_count_conflict`.
+
 Runtime state and reports preserve `core_success`, the policy, and the observed
-improvement status. Optional failure/interruption keeps overall success when the
-core task succeeded and is surfaced as a warning; required failure makes overall
-success false without rewriting completed core task/tool evidence.
+improvement status. `overall_success` is derived: optional stage failure or
+interruption cannot rewrite verified core success, while a required policy
+requires terminal `accepted` (or historical `succeeded`). Repair remains core
+recovery and never increments an enhancement success count.
+
+`CoreCompletionHandoffView` is a strict, read-only decision over the existing
+runtime state, completed `SessionExecutionCursor`, final checkpoint, report
+artifact/state hash, project/environment fingerprint, typed acceptance
+decisions, residual risks, and side-effect state. `ready` and
+`post_core_eligible` are separate and non-compensating. Response-evidence,
+empty-task, incomplete verification, indeterminate side effect, stale report,
+unresolved acceptance/risk, non-canonical identity, read-only analysis, and
+no-output cases fail closed at their corresponding boundary.
+
+`build_core_completion_package` is the only Core Completion Package builder.
+It consumes ready and eligible source facts, emits a content-addressed
+`CoreCompletionPackageView` containing bounded projections and source
+references, and never writes the package back into `RuntimeStateMetadata`.
+Missing or stale sources return a typed build result without a partial package.
+When `OPENPILOT_CORE_POST_CORE_INTEGRATION=true`, legacy pre-finalization
+improvement is deferred; project results expose `core_success`,
+`project_improvement_status`, `overall_success`, the handoff decision, and the
+package build result as separate fields. The flag does not itself execute an
+enhancement transaction.
 Each enhancement attempt takes a pre-iteration Git safety snapshot. If execution
 or evaluation fails after mutation, only its explicit changed-file set is
 restored from that snapshot and `IterationResult` records whether rollback was

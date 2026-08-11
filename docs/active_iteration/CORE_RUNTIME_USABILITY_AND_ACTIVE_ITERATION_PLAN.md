@@ -1522,6 +1522,20 @@ ordinary/active protocol，也不授权 Provider run。CRU-5 完成。
 - policy/status/result composition；
 - cross-branch migration tests。
 
+实施状态：已完成 core source completeness、typed acceptance、verified-ready 与
+post-core eligibility 的非补偿判定；空 task、response-evidence、只读无产物、未完成
+verification、indeterminate side effect、stale report/project/environment identity 和
+blocking risk 均 fail closed。`ProjectImprovementPolicy` 已迁移为 hard accepted / max
+accepted / max attempts 三个计数，automatic default 为 `0/1/1`，legacy
+`target_successes` 仅作 historical-read compatibility projection；stage status 扩展并保留
+historical `succeeded`。integration lane 只有一个 content-addressed
+`CoreCompletionPackageView` builder，且不写回 source owners。默认关闭的
+`OPENPILOT_CORE_POST_CORE_INTEGRATION` 会阻止 legacy enhancement 在 core durable
+finalization 前运行；由于权威 post-core 分支尚只有 PKG0、没有 PKG3/PKG4 consumer/
+transaction，package build 后 stage 仍 typed skipped，optional 保留 core success，required
+按 overall composition fail closed。CRU-6 的安全接线完成；真实 enhancement execution
+仍属于 post-core 计划，不以 legacy loop 冒充。
+
 ### CRU-7：Canary and Default Switch
 
 - shadow metrics；

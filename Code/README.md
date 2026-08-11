@@ -56,10 +56,16 @@ content-sensitive progress signature and decision history survive checkpoints;
 the evaluator selects the next need, while `ToolRouter`, Guard, executors, and
 the verifier keep their existing capability and authority boundaries.
 
-Project improvement runs after a verified core project result. The automatic
-default is an optional enhancement; `--improvement-iterations N` with `N > 0`
-is an explicit required quality gate, while `0` disables improvement. Optional
-failure is reported as a warning without changing completed core task evidence.
+The verified core/post-core boundary is canary-only. Set
+`OPENPILOT_CORE_POST_CORE_INTEGRATION=true` to defer the legacy
+pre-finalization improvement call and derive the unique, content-addressed Core
+Completion Package after the core checkpoint/report is durable. Until a
+post-core package consumer is present, the stage remains skipped; this flag
+does not authorize mutation. The automatic policy is optional `0/1/1` (zero
+hard accepted transactions, at most one accepted transaction and one attempt).
+`--improvement-iterations N` with `N > 0` is an explicit required quality gate,
+while `0` disables improvement. Optional failure is reported without changing
+completed core task evidence.
 If an optional improvement mutates files and then fails, its explicit changed
 files are restored from the pre-iteration Git safety snapshot before the run
 returns; rollback failure remains a visible enhancement failure.

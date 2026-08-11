@@ -8319,3 +8319,36 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：CRU-5 提供 production decision contract 和 development comparison interface，不声称新的
   real-provider 优势。真实用户 task canary/default switch 由 CRU-7；CRU-6 先冻结 verified core source
   facts 并接入唯一 post-core package builder/admission consumer。
+
+## [已完成] CRU-6：Verified Core/Post-Core integration boundary
+
+- 观察到的失败：legacy project-improvement loop 在 core checkpoint/report durable 之前运行，空 task
+  collection 可因 `all([])` 产生 core success，`core_success` 缺失时又会回落 generic success；policy 的
+  `target_successes` 同时表示 hard requirement、最大成功数和默认循环目标。当前权威 post-core 分支仅有
+  PKG0 语义冻结，没有可安全接收 core completion 的 transaction consumer。
+- Metadata/ownership：新增 task-owned `CoreAcceptanceDecision`，只有 evidence-linked passed 或 user/
+  goal-policy authority 的 typed waiver 能关闭 active acceptance。`CoreCompletionHandoffView`、bounded
+  source references、唯一 `CoreCompletionPackageView`、budget summary 和 build result 均为 frozen derived
+  values，不新增 `MetadataKind`，不写回 RuntimeState；checkpoint/state/session cursor/report/project
+  fingerprint/trajectory artifact 继续拥有 source truth。
+- 实现修复：verified-ready 以非补偿顺序拒绝 response-evidence、false/absent core success、空或不完整 task
+  result、未通过 verification、unresolved acceptance、prepared/observed/indeterminate side effect、未完成
+  finalization、report hash/fact mismatch、非 canonical project/environment identity、unhashed modified file、
+  blocking residual risk 和超界 projection。最终 checkpoint 重新哈希 observed modified files；session cursor
+  新增真实 `completed` boundary。唯一 builder 生成 content-addressed package，stale/ineligible source 不生成
+  partial package。
+- Policy/result migration：`ProjectImprovementPolicy` 区分 `required_accepted_transactions`、
+  `max_accepted_transactions` 与 `max_attempts`；automatic default 为 `0/1/1`。legacy optional target 迁移为
+  hard=0，legacy required target 迁移为 hard=max；新旧冲突 fail closed。stage status 支持独立 post-core
+  lifecycle并保留 historical `succeeded`。`core_success`、stage status、`overall_success` 分层组合，optional
+  failure 不改写 core，required 只接受 `accepted|succeeded`。
+- Integration gate：默认关闭的 `OPENPILOT_CORE_POST_CORE_INTEGRATION` 启用时，legacy pre-finalization
+  improvement 被阻止；durable finalization 后只构建 package。当前没有 PKG3/PKG4 consumer，因此 stage
+  保持 skipped，optional 保留 verified core result，required fail closed；repair 不计 enhancement success。
+- 验证证据：新增 ready/eligible 的完整 negative matrix、acceptance authority、exact source bound、package
+  checksum/JSON migration、optional/required composition、legacy/new policy migration 和 legacy-loop suppression
+  tests；CRU-6 聚焦组合 **272 passed**，完整 `Code/tests` **1528 passed**（1 个既有 pytest 10
+  参数化弃用 warning），touched Ruff、compileall 与 `git diff --check` 通过。
+- 剩余限制：本切片不声称 post-core enhancement benefit，也不实现 opportunity、transaction、dual gate 或
+  rollback consumer；这些仍由 post-core PKG3/PKG4 按其串行计划拥有。CRU-7 只能 canary 已实现的 core
+  entry/handoff 路径，不能把 package-ready 当作 enhancement success。
