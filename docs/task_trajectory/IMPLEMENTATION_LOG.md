@@ -8124,5 +8124,26 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   lineage、missing confirmation 与 concurrent active-writer convergence；完整 `Code/tests`
   **1404 passed**（1 个既有 pytest deprecation
   warning），touched Ruff、compileall 与 `git diff --check` 通过。
-- 剩余限制：Controller reducer/root writer migration 和 feature-flagged entry 尚未接入；因此当前 CLI
-  行为保持 CRU-1，offline committer/materializer 本身不调用 Provider 或显示 UI。
+- 剩余限制：feature-flagged entry 当前只接入 CRU-2B deterministic response；general model response、
+  evidence escalation 与 Task handoff 尚未接线。offline materializer 本身仍不调用 Provider 或显示 UI。
+
+## [已完成] CRU-2B：Deterministic first-turn runtime response
+
+- 观察到的缺口：`RuntimeFactResolver` 只能生成 secret-free facts，但 ordinary autonomous route 仍强制
+  进入 semantic/decomposition/Provider pipeline；CLI 最后又用 `str(result)` 伪造 assistant turn，无法
+  证明 response-only completion、真实消息持久化或 crash replay。
+- Metadata/authority：复用 `IterationTurnRecordMetadata`、runtime-fact obligations、runtime-sourced claims、
+  approved `GroundingDecision`、strict response outcome 和 response ledger，不新增 MetadataKind、Task、
+  checkpoint/report、project success、verification 或 improvement owner。recognized intent 仅覆盖当前
+  model/provider/project path/config readiness；模型建议等相似问题不会被 fast completion 抢占。
+- 实现修复：新增 `DeterministicRuntimeResponseController`，消费 `RuntimeFactProjection` 并零 Provider、
+  零 tool 生成 exact durable response。initial record、response artifact、pending record、assistant ingress、
+  committed record 五个 fault boundary 均可从稳定 IDs/content-addressed artifact 恢复，且不重复 turn。
+  once/interactive autonomous route 仅在默认关闭的
+  `OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` 下启用；unrecognized goal 回落旧 pipeline，Agent Generator
+  在新入口前完成 route 分流并保持原返回行为。
+- 验证证据：controller fault/replay/negative-intent 与 CLI once/interactive/Agent Generator flag tests
+  已通过；Agent Generator/entry parity 组合 **220 passed**；完整 `Code/tests` **1417 passed**（1 个既有
+  pytest deprecation warning），touched Ruff、compileall 与 `git diff --check` 通过。
+- 剩余限制：本切片不执行 bounded model response、evidence escalation、Task materialization 的 CLI
+  handoff 或 default-on；这些分别由 CRU-2C/2D/2A integration 与 CRU-7 拥有。

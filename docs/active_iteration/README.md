@@ -26,8 +26,8 @@
 当前实施状态：CRU-2A 已完成 metadata contract、durable store、assistant
 ledger 幂等提交/崩溃恢复，以及 canonical prepared/active task binding 与 session
 authority freshness/revocation recovery gate；唯一 pre-task reducer writer migration 也已完成。
-下一切片是 feature-flagged 统一入口。
-统一 CLI 入口尚未启用。
+CRU-2B deterministic runtime-fact completion 已接入默认关闭的 once/interactive feature flag；
+下一切片是 CRU-2C bounded model-supported completion。Agent Generator 未进入新路径。
 
 ## 归档
 

@@ -48,6 +48,43 @@ def _runtime_diagnostics_enabled() -> bool:
     return value not in {"0", "false", "no", "off"}
 
 
+def _unified_autonomous_entry_enabled() -> bool:
+    value = str(os.getenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "0")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _iteration_turn_store():
+    from autonomous_iteration.iteration_turn_store import IterationTurnStore
+
+    recorder = get_default_hooks().recorder
+    return IterationTurnStore(recorder.trajectory_dir / "iteration_turns")
+
+
+def _try_deterministic_runtime_response(
+    goal: str,
+    *,
+    ingress_state: SessionIngressState,
+    settings: LLMSettings,
+    runtime_options: "OpenPilotRuntimeOptions",
+):
+    if not _unified_autonomous_entry_enabled():
+        return None
+    from autonomous_iteration.deterministic_runtime_response import (
+        DeterministicRuntimeResponseController,
+    )
+    from autonomous_iteration.runtime_facts import RuntimeFactResolver
+
+    facts = RuntimeFactResolver(settings).resolve(
+        project_path=ingress_state.identity.project_root,
+        project_improvement_policy=runtime_options.project_improvement_policy,
+    )
+    return DeterministicRuntimeResponseController(_iteration_turn_store()).try_complete(
+        goal,
+        ingress=ingress_state,
+        facts=facts,
+    )
+
+
 def _build_task_execution_context(*, source: str, classification: "TaskRouteMetadata") -> dict[str, object]:
     """Create a stable task context before runtime execution begins."""
     return {
@@ -469,6 +506,36 @@ def _run_once_mode(
         if classification.route == "agent_generator":
             return 0 if _execute_agent_generator(goal, ui, active_llm_client, logger) else 2
 
+        if _unified_autonomous_entry_enabled():
+            identity = ConversationIdentity(
+                conversation_id=f"conversation_{uuid4().hex}",
+                run_id=f"run_{uuid4().hex}",
+                turn_index=1,
+                project_root=str(
+                    Path(project_path or Path.cwd()).expanduser().resolve()
+                ),
+            )
+            ingress = SessionIngressState(
+                identity=identity,
+                turns=[
+                    SessionTurn(
+                        identity=identity,
+                        message_id=f"message_{uuid4().hex}",
+                        role="user",
+                        content=goal,
+                    )
+                ],
+            )
+            response = _try_deterministic_runtime_response(
+                goal,
+                ingress_state=ingress,
+                settings=settings,
+                runtime_options=runtime_options,
+            )
+            if response is not None:
+                ui.console.print(response.content)
+                return 0
+
         # Create autopilot with enhanced UI support
         autopilot = IntelligentAutopilot(
             llm_client=active_llm_client,
@@ -716,6 +783,7 @@ def _run_interactive_mode(
                         logger,
                         runtime_options,
                         ingress_state=ingress_state,
+                        settings=settings,
                     )
                 else:
                     ui.console.print(f"[yellow]Unknown command: {user_input}[/yellow]")
@@ -742,6 +810,7 @@ def _execute_goal_interactive(
     runtime_options: OpenPilotRuntimeOptions,
     *,
     ingress_state: SessionIngressState | None = None,
+    settings: LLMSettings | None = None,
 ):
     """Execute a goal in interactive mode."""
     if _handle_shell_state_command(goal, ui):
@@ -782,6 +851,17 @@ def _execute_goal_interactive(
     if classification.route == "agent_generator":
         result = _execute_agent_generator(goal, ui, llm_client, logger)
     else:
+        active_settings = settings or getattr(llm_client, "settings", None)
+        if ingress_state is not None and isinstance(active_settings, LLMSettings):
+            response = _try_deterministic_runtime_response(
+                goal,
+                ingress_state=ingress_state,
+                settings=active_settings,
+                runtime_options=runtime_options,
+            )
+            if response is not None:
+                ui.console.print(response.content)
+                return response.ingress
         result = _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options, context=execution_context)
     if ingress_state is None:
         return result

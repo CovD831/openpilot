@@ -854,6 +854,20 @@ they no longer patch record lifecycle fields independently. Active task-state
 mutations remain owned by the existing `AgentRuntimeController` and its
 `RuntimeCheckpointMetadata`, outside this pre-task reducer.
 
+`DeterministicRuntimeResponseController` implements CRU-2B for a narrow,
+runtime-owned intent set (current model/provider/project path/configuration
+readiness). It consumes only the secret-free `RuntimeFactProjection`, creates
+satisfied runtime-fact obligations and runtime-sourced response claims, applies
+complete grounding locally, and commits through the response ledger. It never
+constructs a Task/checkpoint/report, calls a Provider/tool, derives project
+success, requests verification, or enters project improvement. Every write
+boundary from initial record through committed assistant record is replay-safe.
+
+CLI once and interactive autonomous routes expose this path only when
+`OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` is true. The flag defaults false;
+unrecognized goals fall through to the existing pipeline, and Agent Generator
+is checked first and never enters the unified controller.
+
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or
 otherwise invalid JSON one bounded recovery opportunity; failure after the
