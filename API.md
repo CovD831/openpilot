@@ -846,6 +846,14 @@ These components are not yet wired to CLI execution. They do not invoke a
 Provider, authorize a write by themselves, or display independently; Controller
 writer migration and the feature-flagged entry remain pending.
 
+`IterationTurnReducer` is the sole pre-task record transition writer. It owns
+generation/record-ID advancement and the legal incomplete → response-pending →
+assistant-committed and unbound → prepared → active transitions. The ledger
+committer and task materializer propose existing typed values to this reducer;
+they no longer patch record lifecycle fields independently. Active task-state
+mutations remain owned by the existing `AgentRuntimeController` and its
+`RuntimeCheckpointMetadata`, outside this pre-task reducer.
+
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or
 otherwise invalid JSON one bounded recovery opportunity; failure after the

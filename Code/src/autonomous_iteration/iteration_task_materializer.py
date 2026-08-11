@@ -15,6 +15,7 @@ from autonomous_iteration.iteration_turn_store import (
     IterationTurnConflictError,
     IterationTurnStore,
 )
+from autonomous_iteration.iteration_turn_reducer import IterationTurnReducer
 from metadata import (
     ActiveTaskBinding,
     CanonicalInitialTaskSnapshot,
@@ -102,22 +103,17 @@ class IterationTaskMaterializer:
             kind="canonical_initial_task",
             payload=snapshot.model_dump(mode="json"),
         )
-        prepared = latest.model_copy(
-            update={
-                "record_id": f"{latest.record_id}-task-prepared",
-                "generation": latest.generation + 1,
-                "task_binding": PreparedTaskBinding(
-                    task_id=snapshot.initial_checkpoint.root_task_id,
-                    state_digest=self._runtime_state_digest(snapshot),
-                    snapshot_ref=reference,
-                    snapshot_hash=snapshot.canonical_hash,
-                    authority_revision=snapshot.session_authority_revision,
-                    authority_hash=snapshot.session_authority_hash,
-                ),
-                "integrity_digest": "",
-            }
+        prepared = IterationTurnReducer.prepare_task(
+            latest,
+            PreparedTaskBinding(
+                task_id=snapshot.initial_checkpoint.root_task_id,
+                state_digest=self._runtime_state_digest(snapshot),
+                snapshot_ref=reference,
+                snapshot_hash=snapshot.canonical_hash,
+                authority_revision=snapshot.session_authority_revision,
+                authority_hash=snapshot.session_authority_hash,
+            ),
         )
-        prepared = IterationTurnRecordMetadata.model_validate(prepared.model_dump(mode="python"))
         try:
             prepared = self.turn_store.save(
                 prepared,
@@ -210,19 +206,14 @@ class IterationTaskMaterializer:
                 TaskMaterializationFailureCode.BINDING_CONFLICT,
                 "task activation requires a prepared binding",
             )
-        active = prepared.model_copy(
-            update={
-                "record_id": f"{prepared.record_id}-active",
-                "generation": prepared.generation + 1,
-                "task_binding": ActiveTaskBinding(
-                    **binding.model_dump(exclude={"state"}),
-                    checkpoint_id=checkpoint.checkpoint_id,
-                    checkpoint_digest=checkpoint.integrity_checksum,
-                ),
-                "integrity_digest": "",
-            }
+        active = IterationTurnReducer.activate_task(
+            prepared,
+            ActiveTaskBinding(
+                **binding.model_dump(exclude={"state"}),
+                checkpoint_id=checkpoint.checkpoint_id,
+                checkpoint_digest=checkpoint.integrity_checksum,
+            ),
         )
-        active = IterationTurnRecordMetadata.model_validate(active.model_dump(mode="python"))
         try:
             active = self.turn_store.save(active, expected_generation=prepared.generation)
         except IterationTurnConflictError:

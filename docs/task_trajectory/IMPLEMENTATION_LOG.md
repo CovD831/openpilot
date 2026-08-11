@@ -8113,12 +8113,16 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   提交；三个写边界均可恢复且不重新生成 Task/调用 Provider。恢复重新验证 session revision/hash、
   reject/revoke lineage、mutation confirmation、project/run identity、snapshot/state/checkpoint digest；active
   binding 之后仍重新读取 checkpoint，损坏或漂移返回 typed fail-closed code。
+- writer migration：新增唯一 `IterationTurnReducer`，集中应用 pre-task record ID/generation、
+  response pending/committed 和 task prepared/active transition；assistant committer 与 task materializer
+  不再直接 patch lifecycle 字段。active task truth 和旧 runtime mutator 仍由既有
+  `AgentRuntimeController`/checkpoint owner 管理，没有新增平行 task 状态机。
 - 验证证据：contract/ingress/store/commit 聚焦 **42 passed**；store/commit 边界 **15 passed**，包含
   三个 fault boundaries、冲突与并发收敛。task materialization/metadata 新增聚焦测试 **26 passed**，
   覆盖 prepared/
   checkpoint/active fault injection、snapshot corruption、checkpoint tamper、authority revision、reject
   lineage、missing confirmation 与 concurrent active-writer convergence；完整 `Code/tests`
-  **1402 passed**（1 个既有 pytest deprecation
+  **1404 passed**（1 个既有 pytest deprecation
   warning），touched Ruff、compileall 与 `git diff --check` 通过。
 - 剩余限制：Controller reducer/root writer migration 和 feature-flagged entry 尚未接入；因此当前 CLI
   行为保持 CRU-1，offline committer/materializer 本身不调用 Provider 或显示 UI。

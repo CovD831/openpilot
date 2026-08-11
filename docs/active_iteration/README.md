@@ -25,7 +25,8 @@
 
 当前实施状态：CRU-2A 已完成 metadata contract、durable store、assistant
 ledger 幂等提交/崩溃恢复，以及 canonical prepared/active task binding 与 session
-authority freshness/revocation recovery gate；下一切片是 Controller writer migration。
+authority freshness/revocation recovery gate；唯一 pre-task reducer writer migration 也已完成。
+下一切片是 feature-flagged 统一入口。
 统一 CLI 入口尚未启用。
 
 ## 归档

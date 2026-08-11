@@ -220,6 +220,12 @@ improvement 的固定 session pipeline，并产生 generic `dict + success` resu
 返回 typed transition proposal，由 `AgentRuntimeController` 应用。不得先在旧 pipeline 外增加第三个
 自由状态机。`RuntimeStateMetadata` mutator 在兼容期只由 Controller 调用。
 
+实施结果：新增唯一 `IterationTurnReducer`，集中拥有 pre-task record ID/generation 与
+incomplete→response-pending→assistant-committed、unbound→prepared→active 状态迁移。
+`IterationTurnCommitter` 和 `IterationTaskMaterializer` 只提交 typed transition inputs；active
+checkpoint 之后仍由现有 `AgentRuntimeController`/`RuntimeCheckpointMetadata` 拥有 task truth，
+没有新增第三套 task 状态机。
+
 ### 4.3 Diagnostic/report consumers（非 authority）
 
 - `runtime_diagnostics.collector/recorder/hooks` 读取 phase、verification、completion；

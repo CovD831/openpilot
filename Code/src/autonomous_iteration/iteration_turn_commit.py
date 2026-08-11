@@ -12,7 +12,6 @@ from memory.session_ingress import SessionIngress
 from metadata import (
     AssistantLedgerCommitState,
     CompletedResponseOutcome,
-    IterationBoundary,
     IterationTurnRecordMetadata,
     SessionTurn,
 )
@@ -21,6 +20,7 @@ from autonomous_iteration.iteration_turn_store import (
     IterationTurnConflictError,
     IterationTurnStore,
 )
+from autonomous_iteration.iteration_turn_reducer import IterationTurnReducer
 
 
 def assistant_payload_hash(payload: dict[str, Any]) -> str:
@@ -127,20 +127,7 @@ class IterationTurnCommitter:
             self.store.save_ingress(updated, expected_revision=revision)
             self._after_write("assistant_ingress")
 
-        committed = durable_pending.model_copy(
-            update={
-                "record_id": f"{durable_pending.record_id}-assistant-committed",
-                "generation": durable_pending.generation + 1,
-                "boundary": IterationBoundary.TURN_RESPONSE_DURABLE,
-                "assistant_commit": durable_pending.assistant_commit.model_copy(
-                    update={"state": AssistantLedgerCommitState.COMMITTED}
-                ),
-                "integrity_digest": "",
-            }
-        )
-        committed = IterationTurnRecordMetadata.model_validate(
-            committed.model_dump(mode="python")
-        )
+        committed = IterationTurnReducer.commit_assistant(durable_pending)
         try:
             saved = self.store.save(
                 committed,

@@ -1,7 +1,7 @@
 # OpenPilot 核心运行时可用性与主动迭代重构总体计划
 
 > 状态：实施中；CRU-0、CRU-1 已完成；CRU-2A contract/store/assistant-ledger/
-> task-materialization 切片已完成，下一切片为 Controller writer migration 与统一入口。
+> task-materialization/reducer writer-migration 切片已完成，下一切片为 feature-flagged 统一入口。
 >
 > 日期：2026-08-10
 >
