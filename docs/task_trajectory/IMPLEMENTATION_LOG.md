@@ -8080,3 +8080,24 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   bounded retry/no-progress budget 由 CRU-4 拥有。CRU-1
   不实现 response-only completion、Phase 2 controller 或 post-core admission，也没有 live Provider/
   direct 证据；指定项目 `.venv` 缺少 Ruff/mypy，且全仓既有 Ruff/mypy debt 未在本切片清理。
+
+## [进行中] CRU-2A：Pre-task authoritative control contract
+
+- 观察到的边界缺口：`SessionIngressState` 只在 interactive 进程内持有，或作为 task checkpoint
+  的 nested snapshot 持久化；`SessionExecutionCursor` 又从 semantic/decomposition 之后开始，因此
+  response-only、evidence escalation 和 Task materialize 前没有独立 durable owner。把这些事实放入
+  `RuntimeStateMetadata` 会继承 task-owned mutation/improvement 默认值并伪造 Task lifecycle。
+- Metadata impact：完成 80 个 public contract、exports、producer/consumer/store 和 root writer inventory。
+  新增唯一 public `IterationTurnRecordMetadata`，其余 disposition、authority、obligation、grounding、
+  root budget、outcome、assistant commit 和 task binding 都是 strict owned values。raw turn/constraint
+  继续由 `SessionIngressState` 拥有，active task truth 继续由 `RuntimeCheckpointMetadata` 拥有，不新增
+  第二份 `core_success`、project fact、message ledger 或 task runtime state。
+- 当前实现：contract 已拒绝 mutation-without-confirmation、budget overrun、无 evidence 的 satisfied、
+  非法 waiver、incomplete grounding approval、无 payload identity 的 assistant commit、无 canonical
+  snapshot 的 prepared binding、无 checkpoint 的 active binding、cursor/obligation drift，以及
+  response-only + active task 的非法组合。response completion round-trip 固定为 taskless，且
+  `core_success` 只作为恒 `None` 的非序列化 property 暴露。
+- 验证证据：contract + metadata catalog/completeness TDD **67 passed**；完整 `Code/tests`
+  **1375 passed**（1 个既有 pytest deprecation warning）。
+- 剩余限制：尚未实现 turn/ingress store、integrity generation、assistant ledger commit/replay、prepared
+  snapshot materialization、Controller reducer 或 feature-flagged entry；因此当前 CLI 行为保持 CRU-1。

@@ -776,6 +776,37 @@ policy, and existing configuration readiness/missing-field facts. CRU-1 does
 not wire this projection to a user response or completion decision, and the
 projection never grants read, mutation, checkpoint, or post-core authority.
 
+### Pre-task iteration turn contract
+
+`IterationTurnRecordMetadata` is the durable conversation/run envelope for the
+new autonomous pre-task controller. It is separate from entry routing,
+`SessionIngressState`, and task-owned runtime checkpoints. Its strict owned
+values cover disposition, authority ceiling and confirmation lineage,
+completion obligations and waiver limits, response claims and grounding, root
+decision budgets, assistant payload commit state, and prepared/active task
+bindings.
+
+The contract enforces these boundaries before runtime wiring:
+
+- response-only authority is the default; mutation eligibility requires typed
+  confirmation lineage but still does not grant a write;
+- satisfied obligations require evidence, and permission, confirmation,
+  verification, side-effect, and indeterminate-side-effect obligations cannot
+  be waived;
+- approved grounding requires complete claim coverage and no open obligations;
+- root decision/provider/token/repair/decomposition/no-progress usage cannot
+  exceed typed limits;
+- response-only completion has no task binding and exposes no project
+  `core_success` fact;
+- prepared tasks require a content-addressed canonical snapshot; active tasks
+  additionally require an integrity-bound checkpoint reference;
+- a durable response requires the same response artifact/hash in the outcome
+  and committed assistant ledger binding.
+
+This slice defines contracts only. It does not yet change the autonomous entry,
+persist turn records, answer runtime questions, bypass decomposition, or alter
+Agent Generator behavior.
+
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or
 otherwise invalid JSON one bounded recovery opportunity; failure after the

@@ -40,7 +40,7 @@ existing typed field.
 
 ## Current inventory
 
-There are 79 public concrete contracts, one for each `MetadataKind`.
+There are 80 public concrete contracts, one for each `MetadataKind`.
 
 | Family / owner | Contracts | Boundary and lifecycle |
 | --- | --- | --- |
@@ -49,6 +49,7 @@ There are 79 public concrete contracts, one for each `MetadataKind`.
 | Tool orchestration (`metadata/tooling.py`) | `ToolInputMetadata`, `FileReadWindowSpec`, `ToolSelectionMetadata`, `ToolContractMetadata`, `ToolChainMetadata`, `ToolContextMetadata`, `ToolCallMetadata`, `ToolErrorMetadata`, `ToolEventMetadata`, `ToolLoopMetadata` | Planner-to-router-to-executor contracts and the typed tool-loop trace. `FileReadWindowSpec` is a task-owned declaration of sufficient bounded evidence for a named source path. `ToolInputMetadata.artifact_ref` is a provider-only, checksum/source-linked handoff view for a generated code artifact; it never authorizes a mutation. After writer execution, the full `generated_unit` remains runtime-internal and post-mutation context carries only a bounded receipt plus the exact validation command. `ToolLoopMetadata.retry_count` and `fallback_count` are runner-derived recovery counters; downstream receipts must not infer them from successful provider responses. Runtime handles are deliberately excluded from serialization. |
 | Execution runtime (`metadata/runtime.py`) | `LLMRequestMetadata`, `LLMResponseMetadata`, `ExecutionContextMetadata`, `LogEventMetadata`, `ToolExecutionEnvelopeMetadata`, `AgentExecutionMetadata`, `ModuleExecutionMetadata` | LLM, execution, logging, and aggregate runtime envelopes. `ReasoningPolicy` and `ResolvedReasoningPolicy` are strict owned values inside LLM envelopes, not new public metadata kinds. These are execution observations, not autonomous state-machine ownership. |
 | Agent runtime (`metadata/agent_runtime.py`) | `RuntimeBudgetMetadata`, `ProviderBudgetDiagnostic`, `ContextSelectionMetadata`, `EditPlanMetadata`, `VerificationPlanMetadata`, `PathIntentMetadata`, `PathResolutionMetadata`, `DecisionNeedMetadata`, `ToolDecisionMetadata`, `GuardDecisionMetadata`, `RuntimeStateMetadata`, `RuntimeCheckpointMetadata`, `RuntimeResumeDecisionMetadata`, `RuntimeReportMetadata` | Mutable phase-driven task state, strict per-attempt budget evidence, prompt-context selection, bounded tool/recovery and tool-event completion budgets, evidence-backed decisions, path grounding, durable recovery checkpoints and finalization cursor, explainable resume preflight, and the final derived report. `ContextSelectionMetadata.compaction_attempts` nests body-free `ContextCompactionAttempt` values owned by the same assembly snapshot; they distinguish provider acceptance from builder selection without creating a second compact authority. |
+| Conversation iteration (`metadata/iteration.py`) | `IterationTurnRecordMetadata` | Durable conversation/run-owned pre-task control record. Strict owned values type disposition, authority ceiling, obligations, grounding, root budget, outcome, assistant ledger commit, and task binding. It never owns project-task success; response-only remains taskless, while active task truth stays in `RuntimeCheckpointMetadata`. |
 | Entry routing (`metadata/routing.py`) | `TaskRouteMetadata` | UI/entry-point decision between supported execution routes. |
 | Project and autonomy (`metadata/project.py`) | `ProjectStateMetadata`, `ProblemSignalMetadata`, `ProblemJudgmentMetadata`, `DifficultyAssessmentMetadata`, `ResolutionPlanMetadata`, `TaskGraphNodeMetadata`, `TaskGraphEdgeMetadata`, `ExecutionStateMetadata`, `ProductIntentMetadata`, `ProjectObjectiveMetadata`, `SuccessMetricMetadata`, `ProjectDimensionAssessmentMetadata`, `ReferenceInsightMetadata`, `ProjectDependencyMetadata`, `DependencyStrategyMetadata`, `ProjectStackPresetMetadata`, `FileContentSectionMetadata`, `FileContentIndexMetadata`, `DirectorySketchMetadata`, `TaskFileResolutionRequestMetadata`, `RelatedProjectFileMetadata`, `TaskFileResolutionMetadata`, `GitRepositoryMetadata`, `GitSnapshotMetadata`, `GitDiffContextMetadata`, `ImprovementCandidateMetadata`, `ProjectDiagnosisMetadata`, `ValidationIssueMetadata`, `ImprovementAnalysisMetadata`, `EnvironmentSyncMetadata`, `AutonomyDecisionMetadata` | Project facts, diagnosis, planning graph, file indexes, environment state, and improvement decisions shared across autonomy modules. Persist only the models required by the owning store or trajectory. |
 | Bug and environment repair (`metadata/bugfix.py`) | `BugFixAttemptMetadata`, `BugFixResultMetadata`, `EnvironmentFailureMetadata`, `EnvironmentFixResultMetadata` | Bounded repair attempts and their final evidence. |
@@ -61,6 +62,17 @@ existing `ToolInputMetadata` fields, not a second source of tool-input truth;
 operation-specific omissions must fail closed before execution.
 
 ## Similar-looking contracts that are not currently duplicates
+
+- `IterationTurnRecordMetadata` owns the interval before a project `Task` and
+  its checkpoint exist. `SessionIngressState` continues to own raw conversation
+  turns and constraint authority, while `RuntimeStateMetadata` and
+  `RuntimeCheckpointMetadata` own active task truth. The iteration record binds
+  those owners by identity, hashes, artifact references, and typed commit state;
+  it does not copy an active runtime state or infer `core_success`.
+- `RootDecisionBudget` is an owned pre-task value inside the iteration record.
+  `RuntimeBudgetMetadata` remains the task/tool/enhancement budget owner. A
+  future materialization transition must perform an explicit lineage-bound
+  mapping instead of sharing mutable counters.
 
 - `ReasoningDecisionComplexity` is a typed request-owner routing input and is
   not a provider capability or a completion-budget authority. It separates
