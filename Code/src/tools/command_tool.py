@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
@@ -19,6 +20,7 @@ from core.tool_contracts import (
     PermissionLevel,
     ToolCapability,
     ToolDefinition,
+    ToolExecutionContext,
     ToolFailureMode,
 )
 
@@ -58,6 +60,8 @@ class CommandResult(BaseModel):
     stderr: str
     exit_code: int
     duration: float
+    process_id: int | None = None
+    detached: bool = False
     risk_assessment: dict[str, Any] | None = None
 
 
@@ -270,10 +274,13 @@ class CommandTool:
                 risk_assessment=risk_assessment.__dict__
             )
 
-        # Handle interactive mode (would need user confirmation in real implementation)
-        if mode == ExecutionMode.INTERACTIVE and risk_assessment.requires_confirmation:
-            # In real implementation, prompt user here
-            pass
+        if mode == ExecutionMode.INTERACTIVE:
+            return self._launch_interactive(
+                command,
+                cwd=cwd,
+                env=env,
+                risk_assessment=risk_assessment,
+            )
 
         # Execute command
         timeout = timeout or self.default_timeout
@@ -329,6 +336,71 @@ class CommandTool:
                 risk_assessment=risk_assessment.__dict__
             )
 
+    def _launch_interactive(
+        self,
+        command: str,
+        *,
+        cwd: str | None,
+        env: dict[str, str] | None,
+        risk_assessment: RiskAssessment,
+    ) -> CommandResult:
+        """Start a user-confirmed interactive process independently from the CLI."""
+
+        import time
+
+        started = time.time()
+        try:
+            argv = shlex.split(command)
+            if not argv:
+                raise ValueError("Interactive command is empty")
+            process_env = os.environ.copy()
+            if env:
+                process_env.update(env)
+            process = subprocess.Popen(
+                argv,
+                cwd=cwd,
+                env=process_env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            time.sleep(0.1)
+            return_code = process.poll()
+            if return_code is not None:
+                return CommandResult(
+                    command=command,
+                    success=False,
+                    stdout="",
+                    stderr=f"Interactive application exited during startup with code {return_code}",
+                    exit_code=return_code,
+                    duration=time.time() - started,
+                    process_id=process.pid,
+                    detached=False,
+                    risk_assessment=risk_assessment.__dict__,
+                )
+            return CommandResult(
+                command=command,
+                success=True,
+                stdout="",
+                stderr="",
+                exit_code=0,
+                duration=time.time() - started,
+                process_id=process.pid,
+                detached=True,
+                risk_assessment=risk_assessment.__dict__,
+            )
+        except Exception as exc:
+            return CommandResult(
+                command=command,
+                success=False,
+                stdout="",
+                stderr=str(exc),
+                exit_code=-1,
+                duration=time.time() - started,
+                risk_assessment=risk_assessment.__dict__,
+            )
+
     def _extract_paths(self, command: str) -> list[str]:
         """Extract file paths from command."""
         # Simple path extraction (can be improved)
@@ -375,6 +447,12 @@ def command_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
     except ValueError as exc:
         allowed = ", ".join(item.value for item in ExecutionMode)
         raise ValueError(f"Invalid input: unsupported command execution mode: {mode_value}. Allowed modes: {allowed}") from exc
+    execution_context = params.get("_tool_execution_context")
+    if mode == ExecutionMode.INTERACTIVE and not (
+        isinstance(execution_context, ToolExecutionContext)
+        and execution_context.user_confirmed is True
+    ):
+        raise PermissionError("Interactive application launch requires explicit user confirmation.")
 
     timeout = params.get("timeout", 30)
     cwd = params.get("cwd")

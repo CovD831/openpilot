@@ -562,7 +562,13 @@ def test_failed_optional_improvement_restores_pre_iteration_files(tmp_path) -> N
 def test_project_iteration_prompt_expands_attempt_budget(monkeypatch, tmp_path) -> None:
     from ui.question_ui import QuestionUI
 
-    monkeypatch.setattr(QuestionUI, "ask_integer", lambda *args, **kwargs: 5)
+    prompt: dict[str, object] = {}
+
+    def ask_integer(*args, **kwargs):
+        prompt.update(kwargs)
+        return 5
+
+    monkeypatch.setattr(QuestionUI, "ask_integer", ask_integer)
     autopilot = SimpleNamespace(
         prompt_for_project_improvement_iterations=True,
         _project_improvement_iterations_prompted=False,
@@ -587,3 +593,5 @@ def test_project_iteration_prompt_expands_attempt_budget(monkeypatch, tmp_path) 
     assert autopilot.iterative_improvement.max_iteration_attempts == 8
     assert autopilot.project_improvement_policy.requirement == "required"
     assert autopilot.project_improvement_policy.source == "user_selected"
+    assert "代码优化轮数" in str(prompt["description"])
+    assert "不会启动或重新启动应用" in str(prompt["description"])

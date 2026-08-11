@@ -8624,3 +8624,26 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   `0.1.0.dev10`；完整证据记录在 `DEV10_BOUNDED_INTERACTIVE_VALIDATION_RELEASE.md`。
 - 剩余限制：`py_compile` 只证明 Python 编译语法，不宣称 UI 行为正确；更强的 headless smoke 必须由任务显式提供
   可自行终止的测试入口，并继续作为唯一 typed validation command。
+
+## [已完成] dev11：交互应用交付启动与迭代结果可见性
+
+- 观察到的失败：真实 pygame 贪吃蛇在用户选择 1 次代码改进后，CLI 只显示聚合 `1/1`，没有展示该轮实际选择的
+  “增加可见分数显示”、`snake_game.py` 8 行 diff、验证结论或新版启动入口。迭代次数问题也没有说明这是代码升级
+  轮数而非应用运行次数。
+- Metadata/架构影响：不新增 schema/`MetadataKind`。复用 ready `EnvironmentSyncMetadata` 的 project path、cwd、env、
+  exact run command 与 stack preset；复用现有 typed `ToolExecutionContext.user_confirmed`。确认只通过 excluded
+  `runtime_handles` 进入 executor，Provider 字段不能自证。launch 是交付 action，不是 validation evidence。
+- 实现修复：完成视图展示每轮 applied actions、changed file basenames、validation 与 run command；提示说明优化不会
+  启动应用。interactive CLI 在 ready `interactive_runtime` 项目完成后单独询问是否启动；确认后 command executor
+  以 argv、typed cwd/env 和 detached process group 启动并返回 PID。once/non-interactive 只展示命令。
+- 真实 canary 追加发现并修复：GUI evaluator 不再 import pygame 主循环，而以 compile-only + warning/static-loop gate
+  验证；checkpoint durable tool input 排除含线程锁的 runtime handles；长文件改为 head/tail bounded evidence，避免选择
+  已实现的分数功能；CLI 从 durable wrapper 的 authoritative `session_result` 读取迭代与交付环境。
+- 验证与发布：最终 focused **185 passed**、完整 `Code/tests` **1623 passed**，touched Ruff、compileall 与
+  `git diff --check` 通过。fresh 项目 `/tmp/openpilot-dev11-final-snake.j9936j` 完成生成、精确 `py_compile`、1 轮真实
+  restart/game-over UX 改进，并展示 action、`snake_game.py`、验证和运行命令。确认启动返回 PID `5322`；退出 CLI 后
+  进程仍存活且 PPID 为 `1`，取证后已显式终止。isolated wheel SHA-256 为
+  `435d07b0c9e05d581dfa446e00fbf5c4f96cf98a6dab369074507899a347f77b`，editable package/source 均为
+  `0.1.0.dev11`；完整证据记录在 `DEV11_INTERACTIVE_DELIVERY_HANDOFF_RELEASE.md`。
+- 剩余限制：detached launch 只证明进程成功启动，不持续监督窗口健康；关闭、重启、崩溃检测与再次打开需要独立 typed
+  lifecycle contract，不能复用 validation evidence。

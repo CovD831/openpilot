@@ -11,6 +11,7 @@
 | 实验审计 | [ACTIVE_ITERATION_EXPERIMENT_LOG.md](./ACTIVE_ITERATION_EXPERIMENT_LOG.md) | 追加式协议、失败、结果和证据等级账本 |
 | 架构设计 | [ACTIVE_ITERATION_EXPERT_ROUTING_ARCHITECTURE.md](./ACTIVE_ITERATION_EXPERT_ROUTING_ARCHITECTURE.md) | 当前主动迭代、信号和专家路由设计 |
 | 核心运行时重构 | [CORE_RUNTIME_USABILITY_AND_ACTIVE_ITERATION_PLAN.md](./CORE_RUNTIME_USABILITY_AND_ACTIVE_ITERATION_PLAN.md) | 用户可用性、任务准入、受治理分解、核心问诊推进与 post-core 交接计划 |
+| dev11 interactive delivery handoff | [DEV11_INTERACTIVE_DELIVERY_HANDOFF_RELEASE.md](./DEV11_INTERACTIVE_DELIVERY_HANDOFF_RELEASE.md) | 迭代结果展示具体 actions/files/validation；确认后用 typed project run command 独立启动最新版交互应用 |
 | dev10 bounded interactive validation | [DEV10_BOUNDED_INTERACTIVE_VALIDATION_RELEASE.md](./DEV10_BOUNDED_INTERACTIVE_VALIDATION_RELEASE.md) | 交互式/长运行 Python 应用不再以直接启动作为权威验证；已约束目标改为有界 `py_compile` |
 | dev9 scoped README post-processing | [DEV9_SCOPED_README_POST_PROCESSING_RELEASE.md](./DEV9_SCOPED_README_POST_PROCESSING_RELEASE.md) | planner 只能在 typed write scope 授权时生成 README；未授权可选 README 不再阻断核心代码交付 |
 | dev8 typed validation handoff | [DEV8_TYPED_VALIDATION_HANDOFF_RELEASE.md](./DEV8_TYPED_VALIDATION_HANDOFF_RELEASE.md) | 已有精确 `validation_command` 的验证子任务跳过模型复述，直接进入受治理 command execution 与 completion evidence |

@@ -73,6 +73,17 @@ update this file together with `API.md`.
   reads and before a scoped writer succeeds, do not expose `command_executor`
   as an exploratory action; after the writer, expose it only for the exact
   typed validation command. Read-only command routes remain unchanged.
+- Post-completion interactive application launch is a delivery action, never
+  validation evidence. It may use only the ready typed project environment's
+  exact `run_command`, requires a runtime-only typed
+  `ToolExecutionContext.user_confirmed=True`, and must start independently from
+  the CLI. Provider/model fields cannot self-attest that confirmation. Once and
+  non-interactive routes may display the run command but must not launch it.
+- Project-improvement analysis of bounded source previews must preserve evidence
+  from both the beginning and end of a long file and must not propose behavior
+  already visible in that evidence. Durable runtime result wrappers remain the
+  public transport; delivery UI must read iteration facts from the wrapped
+  authoritative `session_result` rather than treating the wrapper as empty.
 - Typed initial-context projection is read-only by default. A mutation task may
   supply projected candidates only with the separate default-off mutation
   projection opt-in, explicit `allow_mutations`, user confirmation, and the

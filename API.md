@@ -714,6 +714,33 @@ target fails closed. This producer-side normalization does not change later
 exact-command matching and does not reinterpret pytest, existing bounded checks,
 or ordinary terminating scripts.
 
+Successful interactive-project delivery has a separate, user-confirmed launch
+handoff. The CLI derives eligibility only from a ready typed
+`EnvironmentSyncMetadata` whose stack preset declares
+`delivery_surface=interactive_runtime`, displays its exact project-owned
+`run_command`, and asks the user before execution. Confirmation is carried in a
+runtime-only typed `ToolExecutionContext`; it is excluded from Provider schemas
+and persisted tool-input projections, so model text cannot grant launch
+authority. Confirmed `command_executor` `interactive` mode parses the command as
+argv, starts a detached process group with inherited project cwd/environment,
+and returns PID/detached evidence immediately. It is not validation, does not
+satisfy completion evidence, and is not offered by once/non-interactive routes.
+
+Project-improvement completion now renders each accepted iteration's applied
+actions, changed file basenames, validation result, and final run command. The
+iteration-count question explicitly states that it controls code-upgrade rounds,
+not application runs, and that the application is launched only through the
+separate post-completion confirmation.
+
+Checkpointed executions return the ordinary execution payload under
+`session_result`. Success rendering and interactive delivery unwrap that
+authoritative payload before reading iteration and project-file facts; the
+durable wrapper remains unchanged. Project-improvement analysis also uses a
+bounded head-and-tail source preview instead of a prefix-only preview, with an
+explicit instruction not to propose behavior already present in the supplied
+evidence. Runtime-only handles are excluded from durable tool-input copies so
+non-serializable clients, locks, and callbacks never enter checkpoint state.
+
 Tool-planning prompts project the current typed `Task.write_files` list as the
 authoritative write scope. README generation is optional
 post-processing: an unscoped README need is dropped with diagnostic evidence

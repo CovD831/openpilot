@@ -84,7 +84,9 @@ class ProjectIterationHelper:
                     title="Project Improvement Iterations",
                     description=(
                         f"项目路径: {Path(project_path).expanduser()}\n"
-                        "0 表示只生成并验证项目；1-5 表示继续完成对应次数的可验证代码升级。"
+                        "这里选择的是代码优化轮数，不是应用运行次数。\n"
+                        "0 表示只生成并验证项目；1-5 表示继续完成对应次数的可验证代码升级。\n"
+                        "代码优化和验证不会启动或重新启动应用；全部完成后会展示改动摘要，并询问是否启动最新版。"
                     ),
                     default=autopilot.required_successful_improvements,
                     min_value=0,
