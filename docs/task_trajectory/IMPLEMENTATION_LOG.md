@@ -8352,3 +8352,31 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：本切片不声称 post-core enhancement benefit，也不实现 opportunity、transaction、dual gate 或
   rollback consumer；这些仍由 post-core PKG3/PKG4 按其串行计划拥有。CRU-7 只能 canary 已实现的 core
   entry/handoff 路径，不能把 package-ready 当作 enhancement success。
+
+## [已完成] CRU-7：Controlled usability canary and default switch
+
+- 观察到的问题：计划需要用同一非补偿口径验证模型/配置询问、普通模糊问答、只读仓库分析、单文件修复、
+  多文件依赖、validation repair、schema/unknown tool、confirm/reject、Ctrl+C、checkpoint resume、optional
+  enhancement 和 required enhancement；此前没有冻结的 12 类矩阵、四路径覆盖、hard metric 聚合或逐 flag
+  rollout/deprecation 决策。把正确 fail-closed 的 required enhancement 当作业务成功，或在安全门前比较成本，
+  都会制造 false success。
+- 预注册与实现：新增 immutable `CRU_7_USABILITY_CANARY_PROTOCOL_V1.json` 和 experiment-local
+  `CanaryRunReceipt`/`UsabilityCanaryVerdict` evaluator。exact 24 paired receipts、12 类 task、四种 path、bounded
+  evidence IDs/canonical hash 与 literal non-negative counters 缺一即拒绝。候选 scenario quality、traceback/
+  false-success/scope/duplicate/indeterminate/credential 六个零值门、core non-regression 为非补偿 gate；只有全部
+  通过后 token/call/latency 才可比较。该 derived evaluator 不写 RuntimeState、不授权 Provider 或 mutation。
+- 用户路径与 rollout：新增 interactive task 执行中 Ctrl+C 回到 prompt 且无 traceback 的生产 CLI 测试。
+  冻结 candidate `10c5a9bfba889d27cba6133c612e6e4c05a4afaa` 后，12 类/四路径 focused matrix **21 passed**，
+  canary evaluator/three-arm **15 passed**；冻结 candidate 完整 `Code/tests` **1530 passed**，补充 explicit
+  legacy rollback-path 测试后的最终 suite **1531 passed**（1 个既有 pytest 10 参数化弃用 warning），相对
+  CRU-6 `d7065fa` baseline **1528 passed** 无失败回归。统一入口与 governed decomposition
+  默认开启，显式 false 为 legacy rollback；classifier、Agent Generator route/pipeline 保持不变。
+- 独立 NO-GO：`OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR` 默认开启试验改变 duplicate/no-progress 行为并使
+  focused 226 项中 2 项失败，因此不修改其 default-off canary。`OPENPILOT_CORE_POST_CORE_INTEGRATION` 因
+  无 accepted PKG3/PKG4 consumer 同样保持 default-off；required enhancement 正确 overall fail-closed，不能把
+  package-ready 计为 enhancement success。legacy autonomous pipeline 决策为 default-off rollback-only，不包含
+  task classifier 或 Agent Generator。
+- 验证与限制：touched Ruff、compileall、JSON validation 和 `git diff --check` 通过。当前环境无外部 Provider
+  credential，真实外部 Provider/network/project mutation 均为 0；hard gate 后成本比较已具备 admission，但本结果
+  不声称 live token/call/latency 优势。该限制不放宽 provider/tool/permission/verification gate，未来 live canary
+  只补充性能证据，不反向改变本次安全与默认开关结论。

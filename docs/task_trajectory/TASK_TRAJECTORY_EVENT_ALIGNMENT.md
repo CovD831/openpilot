@@ -391,6 +391,9 @@ checkpoint. Each decision records the canonical state signature it evaluated
 and whether evidence changed since the prior decision. Tool, Guard, and
 verification events remain distinct downstream evidence; trajectory consumers
 must not infer diagnostic progress from decision ordinals or free-form reasons.
+CRU-7's default switch adds no event type or success writer: unified entry and
+governed decomposition select existing paths, explicit false values retain the
+legacy rollback path, and checkpoint resume must validate its recorded path.
 
 ---
 

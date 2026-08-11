@@ -8,6 +8,9 @@ CRU-7 runtime usability rollout is a separate deterministic canary surface in
 the exact 12-category paired matrix and treats traceback leakage, false success,
 scope violation, duplicate mutation, indeterminate replay, credential leakage,
 and core regression as non-compensating gates before any cost comparison.
+The immutable result is `CRU_7_USABILITY_CANARY_RESULT_V1.json`: unified entry
+and governed decomposition passed the default switch; protocol repair and
+core/post-core integration remain separate default-off canaries.
 
 Current status:
 

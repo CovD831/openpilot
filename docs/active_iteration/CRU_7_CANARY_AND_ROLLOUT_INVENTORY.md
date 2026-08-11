@@ -1,6 +1,6 @@
 # CRU-7 Canary and Rollout Inventory
 
-> Status: pre-registered implementation gate
+> Status: accepted partial rollout at `10c5a9bfba889d27cba6133c612e6e4c05a4afaa`
 >
 > Scope: autonomous entry, governed decomposition, bounded protocol repair,
 > verified core handoff rollout, and legacy autonomous fallback only.
@@ -107,3 +107,22 @@ consumer must fail overall while preserving verified core evidence.
   bounded/hash-linked.
 - Maintainability: approved; protocol, evaluator tests, runtime rollout tests,
   result artifact, and documentation are independently reviewable.
+
+## 5. Executed verdict
+
+`CRU_7_USABILITY_CANARY_RESULT_V1.json` records the immutable candidate result:
+
+- 12/12 categories and 4/4 paths passed; focused selection was **21 passed**;
+- canary evaluator plus three-arm gates were **15 passed**;
+- frozen candidate Code suite was **1530 passed**, and the final suite after an
+  explicit legacy rollback-path test was **1531 passed**, versus the CRU-6
+  baseline **1528 passed**; all had zero failures;
+- every pre-registered safety metric remained zero;
+- unified entry and governed decomposition advanced to default-on with explicit
+  false rollback switches;
+- model-visible repair stayed canary-only after a real default-on regression
+  trial produced 2 failures in a 226-test focused suite;
+- core/post-core integration stayed canary-only because the authoritative
+  package consumer is absent;
+- no external Provider credentials were available, so the result makes no live
+  token/call/latency superiority claim.

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -187,3 +190,28 @@ def test_receipt_rejects_self_attested_or_unbounded_evidence() -> None:
         replace(receipt, evidence_ids=())
     with pytest.raises(ValueError, match="literal non-negative integers"):
         replace(receipt, false_success_count=True)
+
+
+def test_committed_result_is_bound_to_protocol_and_non_compensating_verdict() -> None:
+    package_root = Path(__file__).resolve().parents[1]
+    protocol_path = package_root / "CRU_7_USABILITY_CANARY_PROTOCOL_V1.json"
+    result_path = package_root / "CRU_7_USABILITY_CANARY_RESULT_V1.json"
+    protocol_bytes = protocol_path.read_bytes()
+    protocol = json.loads(protocol_bytes)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert len(protocol["tasks"]) == 12
+    assert {task["path"] for task in protocol["tasks"]} == {
+        path.value for path in CanaryPath
+    }
+    assert result["protocol"]["sha256"] == (
+        "sha256:" + hashlib.sha256(protocol_bytes).hexdigest()
+    )
+    assert result["task_matrix"]["passed_categories"] == 12
+    assert result["task_matrix"]["covered_paths"] == 4
+    assert all(value == 0 for key, value in result["hard_metrics"].items() if key.endswith("_count"))
+    assert result["hard_metrics"]["core_non_regression_passed"] is True
+    assert result["cost_metrics"]["admissible"] is True
+    assert result["cost_metrics"]["comparison_claimed"] is False
+    assert result["rollout"]["model_visible_protocol_repair"] == "canary_only"
+    assert result["rollout"]["core_post_core_integration"] == "canary_only"

@@ -926,7 +926,12 @@ knowledge. Project/current claims remain open typed evidence obligations and
 the candidate is not committed or displayed. Fully grounded candidates pass
 through the same response reducer and assistant ledger as deterministic
 responses. The CRU-2C controller is selected only by the unified autonomous
-canary flag.
+entry flag. CRU-7 advanced unified entry and governed decomposition to
+default-on after the frozen 12-category/four-path hard gate and full regression
+suite passed. Explicit `false` values retain the legacy rollback lane. The
+model-visible protocol repair and core/post-core integration flags remain
+default-off because their independent rollout gates are not satisfied; those
+defaults are not inferred from the unified-entry result.
 
 CRU-4B makes each bounded Provider observation replay-free across process
 failure. `IterationControlCursor.pending_provider_request` and

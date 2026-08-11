@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import prompt_toolkit
 
 from autonomous_iteration.core_completion_handoff import (
@@ -90,3 +92,44 @@ def test_interactive_ctrl_c_during_task_returns_to_prompt_without_traceback(
     assert tracker.stopped is True
     assert any("Interrupted. Type /exit to quit." in message for message in ui.console.messages)
     assert not any("Traceback" in message for message in ui.console.messages)
+
+
+def test_explicit_false_flags_select_legacy_autonomous_rollback(monkeypatch) -> None:
+    monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "false")
+    monkeypatch.setenv("OPENPILOT_GOVERNED_DECOMPOSITION", "false")
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_classify_task_route",
+        lambda _goal: SimpleNamespace(
+            route="autonomous_iteration",
+            confidence=1.0,
+            reason="rollback test",
+        ),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_try_unified_autonomous_response",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unified path called")
+        ),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_execute_autopilot",
+        lambda goal, *_args, **_kwargs: calls.append(goal) or "legacy-result",
+    )
+
+    result = enhanced_cli._execute_goal_interactive(
+        "Inspect the project",
+        _UI(),
+        tracker=None,
+        llm_client=object(),
+        logger=None,
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+        ingress_state=None,
+        settings=None,
+    )
+
+    assert result == "legacy-result"
+    assert calls == ["Inspect the project"]

@@ -1,0 +1,75 @@
+{
+  "schema_version": "cru7-usability-canary-result-v1",
+  "protocol": {
+    "path": "CRU_7_USABILITY_CANARY_PROTOCOL_V1.json",
+    "sha256": "sha256:07c0ca1d32e812d40eaa80c778072756e25385ad4aa8dba8c9db0a60a74e2adf"
+  },
+  "candidate_revision": "10c5a9bfba889d27cba6133c612e6e4c05a4afaa",
+  "legacy_baseline_revision": "d7065fa",
+  "execution_mode": "deterministic_production_path_offline",
+  "task_matrix": {
+    "required_categories": 12,
+    "passed_categories": 12,
+    "required_paths": 4,
+    "covered_paths": 4,
+    "focused_pytest": {
+      "passed": 21,
+      "failed": 0
+    }
+  },
+  "hard_metrics": {
+    "traceback_leakage_count": 0,
+    "false_success_count": 0,
+    "scope_violation_count": 0,
+    "duplicate_mutation_count": 0,
+    "indeterminate_replay_count": 0,
+    "credential_leakage_count": 0,
+    "candidate_scenario_pass_rate": 1.0,
+    "core_non_regression_passed": true
+  },
+  "regression_evidence": {
+    "legacy_code_suite": {
+      "revision": "d7065fa",
+      "passed": 1528,
+      "failed": 0
+    },
+    "candidate_code_suite": {
+      "revision": "10c5a9bfba889d27cba6133c612e6e4c05a4afaa",
+      "passed": 1530,
+      "failed": 0,
+      "warnings": 1,
+      "warning_scope": "existing pytest 10 parametrization deprecation"
+    },
+    "canary_evaluator_and_three_arm_tests": {
+      "passed": 15,
+      "failed": 0
+    }
+  },
+  "cost_metrics": {
+    "admissible": true,
+    "comparison_claimed": false,
+    "reason": "Hard gates passed, but no external Provider credentials were available; token, call, and latency superiority is not claimed from offline fixtures."
+  },
+  "rollout": {
+    "unified_autonomous_entry": "default_on",
+    "governed_decomposition": "default_on",
+    "model_visible_protocol_repair": "canary_only",
+    "model_visible_protocol_repair_reason": "A default-on trial changed existing duplicate/no-progress behavior and produced 2 failures in a 226-test focused suite; explicit opt-in remains required.",
+    "core_post_core_integration": "canary_only",
+    "core_post_core_integration_reason": "No accepted PKG3/PKG4 package consumer exists; package-ready is not enhancement success.",
+    "legacy_autonomous_pipeline": "default_off_rollback_only",
+    "task_classifier": "unchanged",
+    "agent_generator_route_and_pipeline": "unchanged"
+  },
+  "side_effects": {
+    "external_provider_calls": 0,
+    "network_calls": 0,
+    "project_mutations_from_canary": 0
+  },
+  "limitations": [
+    "The accepted gate is deterministic production-path coverage, not a claim of live Provider cost or latency benefit.",
+    "Model-visible protocol repair remains default-off until its independent regression is resolved and re-canary-tested.",
+    "Post-core integration remains default-off until the authoritative enhancement consumer and transaction are accepted."
+  ],
+  "verdict": "accepted_partial_rollout"
+}

@@ -38,10 +38,12 @@ checkpoint written before an active-binding crash is reused only when its exact
 checksum and payload match. Active recovery revalidates the checkpoint rather
 than treating its reference as proof.
 
-The deterministic response subset uses these primitives behind the default-off
-unified-entry flag. General model responses remain outside CLI selection until
-the governed task cursor can execute an evidence-required handoff without
-falling through to legacy decomposition.
+The deterministic and bounded response paths use these primitives behind the
+default-on unified-entry flag. The governed task cursor is also default-on and
+executes an evidence-required handoff without falling through to legacy
+decomposition. Explicitly disabling both flags restores the bounded legacy
+rollback lane; a checkpoint must resume under its recorded compatible path or
+fail closed.
 
 A bounded model response persists its zero-tool provider request before
 transport and clears that pending request only by atomically binding an exact
