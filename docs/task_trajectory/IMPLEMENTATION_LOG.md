@@ -8052,20 +8052,31 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - Metadata impact：复用现有 `FailureMetadata` 与 `Recoverability`，不新增 `MetadataKind`、route、
   权限 owner、checkpoint schema 或 completion contract。runtime failure result 增加现有结果投影字段
   `failure_id`、`recoverable` 和 `recoverability`；这些字段只描述失败和恢复边界，不授予权限或证明
-  task/core success。
-- 实现修复：`TaskDecomposer` 接受 `general`、把缺失 kind 规范为 `general`，并在创建 Task 前拒绝
-  malformed root/subtask/description。standard 与 enhanced-UI session 在 decomposition 边界把预期
+  task/core success。新增的内部 frozen `RuntimeFactProjection` 是现有 config/runtime owner 的无密钥
+  只读投影，不是 public metadata contract、第二份配置权威或 completion/permission owner。
+- 实现修复：`TaskDecomposer` 从同一个 alias contract 生成 Prompt canonical kind 集并执行本地规范化，
+  接受 `general`、把缺失 kind 规范为 `general`，在创建 Task 前拒绝 malformed root、空 task set、
+  subtask 和 description。非法 JSON 或 semantic contract mismatch 只获得一次完整替换 repair；repair
+  输入有 depth/cardinality/text 上限并按敏感字段名脱敏，第二次仍非法则产生 bounded typed failure。
+  standard 与 enhanced-UI session 在 decomposition 边界把预期
   contract failure 转为 bounded、credential-redacted `FailureMetadata` 结果；enhanced failure 只通过
   ownership-guarded helper 停止 runtime-owned tracker。普通 once/interactive CLI 显示 phase、简洁原因、
-  recoverability 与可用 identifier，不再打印 traceback 或原始异常文本。Agent Generator route 和行为未改。
+  recoverability 与可用 identifier，不再打印 traceback 或原始异常文本。新增只读 `RuntimeFactResolver`
+  与 fixtures，可确定性读取 Provider、model、project path、execution/checkpoint/improvement 状态和既有
+  config readiness，但本阶段不生成回答或 completion。Agent Generator route 和行为未改。
 - 验证证据：冻结实现范围
   `cd6704dda5d481fe1b0f23b6cab775075155d46c..61b9f2b39473d3767a5b8068db443b3fadf6d19e`
   的 CRU focused suite **132 passed**，Agent Generator/parity **108 passed**，完整 `Code/tests`
   **1350 passed**（1 个既有 pytest deprecation warning），compileall 与 touched Ruff 通过；shared
   tracker 负例先红后绿，secret fixture 不进入 failure result。新增的两处 changed-source mypy
   `union-attr` 已消除（`enhanced_cli.py` 35 → 33，剩余为既有错误）。
-- 剩余限制：CRU-1 的 `recoverable=true` / `recoverable_after_action` 只表示用户可以重新运行，或未来
-  governed controller 可以恢复；当前 failure boundary 不会自动发起第二次 decomposition/Provider call，
-  `retry_recommended` 也是 advisory。bounded automatic retry/no-progress budget 由 CRU-4 拥有。CRU-1
+- 补充验证：task-kind single-source、非法 JSON/semantic replacement repair、exact two-step bound、
+  credential redaction、empty task-set rejection 和 runtime-fact secret-free projection 的新增测试
+  **16 passed**；CRU-1 受影响组合回归 **250 passed**，context/constraint/contract/fact 聚焦回归
+  **49 passed**，完整 `Code/tests` **1361 passed**（1 个既有 pytest deprecation warning），touched
+  Ruff 和 compileall 通过。
+- 剩余限制：CRU-1 的 `recoverable=true` / `recoverable_after_action` 只表示单次 contract repair 已耗尽后，
+  用户可以重新运行或未来 governed controller 可以恢复；`retry_recommended` 仍是 advisory。跨 step 的
+  bounded retry/no-progress budget 由 CRU-4 拥有。CRU-1
   不实现 response-only completion、Phase 2 controller 或 post-core admission，也没有 live Provider/
   direct 证据；指定项目 `.venv` 缺少 Ruff/mypy，且全仓既有 Ruff/mypy debt 未在本切片清理。

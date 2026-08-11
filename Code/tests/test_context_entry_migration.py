@@ -29,7 +29,7 @@ PHASE_3A_FUNCTIONS = [
     ("core/tool_event_loop.py", "run"),
     ("autonomous_iteration/agents/tool_planning_executor.py", "_retry_empty_decision_plan"),
     ("autonomous_iteration/agents/execution_task_decomposer.py", "_estimate_complexity"),
-    ("autonomous_iteration/agents/execution_task_decomposer.py", "_generate_decomposition"),
+    ("autonomous_iteration/agents/execution_task_decomposer.py", "_request_decomposition"),
     ("autonomous_iteration/agents/iteration_agent.py", "_complete_json_candidates"),
     ("autonomous_iteration/tool/project_improvement_tool.py", "project_improvement_tool_executor"),
     ("autonomous_iteration/agents/project_evaluator.py", "_call_llm_text"),

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 
 from autonomous_iteration.agents.execution_task_decomposer import TaskDecomposer
@@ -78,6 +77,10 @@ def test_task_decomposer_projects_active_constraints_once() -> None:
     assert prompt.count("calculator.py") == 1
     assert "python -m pytest -q" in prompt
     assert "SessionConstraintState(" not in prompt
+    assert (
+        f'"kind": "{"|".join(TaskDecomposer.task_kind_prompt_values())}"'
+        in prompt
+    )
 
 
 def test_task_decomposer_keeps_constraint_when_unrelated_context_is_truncated() -> None:

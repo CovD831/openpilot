@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import inspect
+import json
 import re
 import uuid
 from typing import Any, Callable
 
 from core.graph import Graph, GraphNode, GraphEdge, GraphType
+from core.exceptions import (
+    ContextAssemblyBudgetError,
+    ContextAssemblyGovernanceError,
+    InvalidLLMResponseError,
+)
 from core.llm import LLMClient, LLMMessage
 from memory.context_assembly import build_context_candidate_request, build_context_llm_request
 from memory.session_constraints import build_session_constraint_candidate
@@ -33,6 +39,10 @@ from autonomous_iteration.task_models import (
 class TaskDecomposer:
     """Agent for decomposing complex tasks into subtasks."""
 
+    _SENSITIVE_REPAIR_KEY = re.compile(
+        r"(?:api[_-]?key|token|secret|password|authorization|cookie|credential|env)",
+        re.IGNORECASE,
+    )
     _TASK_KIND_ALIASES = {
         "analysis": "inspect",
         "check": "inspect",
@@ -51,6 +61,41 @@ class TaskDecomposer:
         "validation": "validate",
         "verify": "validate",
     }
+
+    @classmethod
+    def task_kind_prompt_values(cls) -> tuple[str, ...]:
+        """Return canonical task kinds derived from the validator contract."""
+
+        return tuple(dict.fromkeys(cls._TASK_KIND_ALIASES.values()))
+
+    @classmethod
+    def _bounded_repair_payload(cls, value: object) -> object:
+        remaining_nodes = 200
+
+        def walk(item: object, *, depth: int) -> object:
+            nonlocal remaining_nodes
+            if depth >= 5 or remaining_nodes <= 0:
+                return "[TRUNCATED]"
+            remaining_nodes -= 1
+            if isinstance(item, dict):
+                bounded: dict[str, object] = {}
+                for raw_key, child in list(item.items())[:50]:
+                    key = str(raw_key)[:120]
+                    bounded[key] = (
+                        "[REDACTED]"
+                        if cls._SENSITIVE_REPAIR_KEY.search(key)
+                        else walk(child, depth=depth + 1)
+                    )
+                return bounded
+            if isinstance(item, list):
+                return [walk(child, depth=depth + 1) for child in item[:50]]
+            if isinstance(item, str):
+                return item[:1000]
+            if item is None or isinstance(item, (bool, int, float)):
+                return item
+            return str(item)[:1000]
+
+        return walk(value, depth=0)
 
     def __init__(
         self,
@@ -152,12 +197,10 @@ class TaskDecomposer:
         )
 
         # Analyze task and generate decomposition
-        decomposition = self._generate_decomposition(original_task, context)
-        if not isinstance(decomposition, dict):
-            raise ValueError("Task decomposition response must be a JSON object.")
-        raw_subtasks = decomposition.get("subtasks")
-        if not isinstance(raw_subtasks, list):
-            raise ValueError("Task decomposition subtasks must be a JSON array.")
+        decomposition = self._validate_decomposition_contract(
+            self._generate_decomposition(original_task, context)
+        )
+        raw_subtasks = decomposition["subtasks"]
         if self._is_simple_code_artifact(task_description):
             decomposition["subtasks"] = self._compact_simple_code_subtasks(raw_subtasks)
 
@@ -473,6 +516,56 @@ Respond with just a number between 0.0 and 1.0."""
         Returns:
             Dictionary with subtasks and rationale
         """
+        try:
+            initial_payload = self._request_decomposition(task, context)
+        except InvalidLLMResponseError as exc:
+            initial_payload = exc.response_text
+        except (
+            ContextAssemblyBudgetError,
+            ContextAssemblyGovernanceError,
+            TypeError,
+            ValueError,
+        ):
+            raise
+        except Exception:
+            return self._fallback_decomposition(task)
+
+        try:
+            return self._validate_decomposition_contract(initial_payload)
+        except (ValueError, TypeError, KeyError):
+            try:
+                repaired_payload = self._request_decomposition(
+                    task,
+                    context,
+                    repair_payload=initial_payload,
+                )
+            except (
+                ContextAssemblyBudgetError,
+                ContextAssemblyGovernanceError,
+                TypeError,
+                ValueError,
+            ):
+                raise
+            except Exception as exc:
+                raise InvalidLLMResponseError(
+                    "Task decomposition response remained invalid after one repair."
+                ) from exc
+            try:
+                return self._validate_decomposition_contract(repaired_payload)
+            except (ValueError, TypeError, KeyError) as exc:
+                raise InvalidLLMResponseError(
+                    "Task decomposition response remained invalid after one repair."
+                ) from exc
+
+    def _request_decomposition(
+        self,
+        task: Task,
+        context: dict[str, Any],
+        *,
+        repair_payload: object | None = None,
+    ) -> object:
+        """Execute one bounded decomposition Provider step."""
+
         context_without_ingress = {
             key: value
             for key, value in (context or {}).items()
@@ -495,14 +588,15 @@ Respond with just a number between 0.0 and 1.0."""
                 raise ValueError("session ingress and constraint state differ")
             constraint_state = raw_ingress.session_constraints
 
-        instruction = """You decompose one task into a strict executable subtask contract.
+        task_kinds = "|".join(self.task_kind_prompt_values())
+        instruction = f"""You decompose one task into a strict executable subtask contract.
 Return JSON only with this shape:
 {{
     "rationale": "Why this decomposition makes sense",
     "subtasks": [
         {{
             "description": "Subtask description",
-            "kind": "inspect|implement|repair|validate|document|general",
+            "kind": "{task_kinds}",
             "read_files": [],
             "support_context_files": [],
             "write_files": [],
@@ -534,8 +628,19 @@ Task: {task.description}
 Context:
 {context_str}"""
 
-        try:
-            candidates = [
+        if repair_payload is not None:
+            serialized = json.dumps(
+                self._bounded_repair_payload(repair_payload),
+                ensure_ascii=False,
+                default=str,
+            )
+            prompt += (
+                "\n\nThe previous response did not match the contract. "
+                "Repair it once and return a complete replacement JSON object.\n"
+                f"Previous response (bounded): {serialized[:4000]}"
+            )
+
+        candidates = [
                 ContextCandidate(
                     candidate_id="task_decomposition:instruction",
                     kind=ContextCandidateKind.INSTRUCTION,
@@ -562,39 +667,51 @@ Context:
                     trust=ContextCandidateTrust.DIRECT,
                     freshness=ContextCandidateFreshness.CURRENT,
                 ),
-            ]
-            if isinstance(constraint_state, SessionConstraintState):
-                constraint_candidate = build_session_constraint_candidate(constraint_state)
-                if constraint_candidate is not None:
-                    candidates.append(constraint_candidate)
-            request = build_context_candidate_request(
-                self.llm_client,
-                candidates=candidates,
-                purpose=ContextRequestPurpose.TASK_DECOMPOSITION,
-                response_format="json_object",
-                temperature=0.5,
-                max_tokens=3200,
-                timeout_seconds=45.0,
-                transport_retries=0,
-            )
+        ]
+        if isinstance(constraint_state, SessionConstraintState):
+            constraint_candidate = build_session_constraint_candidate(constraint_state)
+            if constraint_candidate is not None:
+                candidates.append(constraint_candidate)
+        request = build_context_candidate_request(
+            self.llm_client,
+            candidates=candidates,
+            purpose=ContextRequestPurpose.TASK_DECOMPOSITION,
+            response_format="json_object",
+            temperature=0.5,
+            max_tokens=3200,
+            timeout_seconds=45.0,
+            transport_retries=0,
+        )
 
-            complete = self.llm_client.complete
-            parameters = inspect.signature(complete).parameters
-            accepts_kwargs = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
-            kwargs = {"max_retries": 1} if accepts_kwargs or "max_retries" in parameters else {}
-            response = complete(request, **kwargs)
+        complete = self.llm_client.complete
+        parameters = inspect.signature(complete).parameters
+        accepts_kwargs = any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values())
+        kwargs = {"max_retries": 1} if accepts_kwargs or "max_retries" in parameters else {}
+        response = complete(request, **kwargs)
 
-            # Parse JSON response
-            if response.parsed_json:
-                return response.parsed_json
-
-            # Fallback parsing
-            import json
+        if response.parsed_json is not None:
+            return response.parsed_json
+        try:
             return json.loads(response.content)
+        except (json.JSONDecodeError, TypeError):
+            return str(response.content or "")
 
-        except Exception:
-            # Fallback to simple decomposition
-            return self._fallback_decomposition(task)
+    @classmethod
+    def _validate_decomposition_contract(cls, payload: object) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("Task decomposition response must be a JSON object.")
+        raw_subtasks = payload.get("subtasks")
+        if not isinstance(raw_subtasks, list):
+            raise ValueError("Task decomposition subtasks must be a JSON array.")
+        if not raw_subtasks:
+            raise ValueError("Task decomposition must include at least one subtask.")
+        if len(raw_subtasks) > 7:
+            raise ValueError("Task decomposition cannot exceed seven subtasks.")
+        normalized = dict(payload)
+        normalized["subtasks"] = [
+            cls._normalize_subtask_contract(item) for item in raw_subtasks
+        ]
+        return normalized
 
     def _fallback_decomposition(self, task: Task) -> dict[str, Any]:
         """Generate simple fallback decomposition.

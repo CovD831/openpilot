@@ -735,8 +735,18 @@ full-conversation Provider canary or claim a Token/quality gain.
 
 `TaskDecomposer` accepts the existing `general` task kind and normalizes an
 omitted kind to `general`. A non-object decomposition root, non-list `subtasks`,
-non-object subtask, missing/blank description, or unsupported explicit kind is
-rejected locally instead of reaching task execution.
+empty or over-seven task set, non-object subtask, missing/blank description, or
+unsupported explicit kind is rejected locally instead of reaching task execution. The
+Provider Prompt renders its allowed `kind` values from the same canonical alias
+contract used by local normalization; it is not a second handwritten enum.
+
+Structured decomposition performs at most two semantic/schema attempts: the
+initial request and one complete replacement repair. Invalid JSON and valid JSON
+that violates the executable subtask contract use the same bounded repair path.
+The repair projection is depth/cardinality/text bounded and redacts fields whose
+names indicate credentials. If the replacement remains invalid, the runtime
+receives a generic `InvalidLLMResponseError`; raw Provider content is not
+projected into the user-facing failure.
 
 Standard and enhanced-UI autonomous sessions absorb expected decomposition
 contract failures at the runtime boundary and return `success=false` with a
@@ -749,15 +759,22 @@ projected into this result.
 
 For CRU-1, `recoverable=true` with
 `recoverability="recoverable_after_action"` means that a user may rerun the
-request, or a later governed controller may recover it. This boundary does not
-start another decomposition or Provider call; `retry_recommended` and the
-recovery strategy are advisory metadata only. Bounded automatic protocol retry
-and no-progress policy remain owned by CRU-4.
+request, or a later governed controller may recover it. The decomposer has
+already consumed its single CRU-1 contract-repair opportunity before returning
+this failure; `retry_recommended` does not authorize an additional automatic
+attempt. Cross-step retry and no-progress policy remain owned by CRU-4.
 
 Ordinary once and interactive autonomous CLI paths render the bounded phase,
 reason, recoverability, and available task/failure identifier without printing
 a traceback or raw exception. This does not create response-only completion,
 claim core success, admit post-core work, or change the Agent Generator route.
+
+`RuntimeFactResolver` reads validated `LLMSettings` and explicit runtime-owned
+values into a frozen, secret-free `RuntimeFactProjection`: provider, model,
+canonical project path, execution mode, checkpoint status, project-improvement
+policy, and existing configuration readiness/missing-field facts. CRU-1 does
+not wire this projection to a user response or completion decision, and the
+projection never grants read, mutation, checkpoint, or post-core authority.
 
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or
