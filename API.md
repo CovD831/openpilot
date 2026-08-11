@@ -807,6 +807,22 @@ This slice defines contracts only. It does not yet change the autonomous entry,
 persist turn records, answer runtime questions, bypass decomposition, or alter
 Agent Generator behavior.
 
+`IterationTurnStore` provides the contract's offline persistence boundary:
+
+- immutable per-run record generations with compare-and-swap and an atomic
+  latest pointer;
+- checksum validation before model parsing, identity validation after parsing,
+  and fallback to the newest previous valid record for reads;
+- checksum/size/kind-bound response and canonical-task artifacts with recognized
+  secret-key rejection;
+- a separate checksum-bound `SessionIngressState` snapshot with conversation
+  revision compare-and-swap;
+- fail-closed writes when existing record history or ingress state is unreadable,
+  so corruption cannot be treated as an empty conversation.
+
+The store is not yet wired to CLI execution. Persistence alone does not commit
+an assistant turn, display a response, create a Task, or resume an active task.
+
 Tool-event structured completion performs at most two Provider attempts: the
 initial request and one JSON-repair request. This gives empty, truncated, or
 otherwise invalid JSON one bounded recovery opportunity; failure after the

@@ -478,6 +478,7 @@ class IterationTurnRecordMetadata(MetadataBase):
 
     kind: Literal[MetadataKind.ITERATION_TURN_RECORD] = MetadataKind.ITERATION_TURN_RECORD
     protocol_version: Literal["cru-2a-v1"] = "cru-2a-v1"
+    record_id: str = Field(min_length=1)
     identity: ConversationIdentity
     pre_task_state: PreTaskState
     generation: int = Field(default=1, ge=1)

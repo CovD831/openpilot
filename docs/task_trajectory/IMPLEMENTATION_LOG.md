@@ -8096,8 +8096,12 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   非法 waiver、incomplete grounding approval、无 payload identity 的 assistant commit、无 canonical
   snapshot 的 prepared binding、无 checkpoint 的 active binding、cursor/obligation drift，以及
   response-only + active task 的非法组合。response completion round-trip 固定为 taskless，且
-  `core_success` 只作为恒 `None` 的非序列化 property 暴露。
-- 验证证据：contract + metadata catalog/completeness TDD **67 passed**；完整 `Code/tests`
-  **1375 passed**（1 个既有 pytest deprecation warning）。
-- 剩余限制：尚未实现 turn/ingress store、integrity generation、assistant ledger commit/replay、prepared
-  snapshot materialization、Controller reducer 或 feature-flagged entry；因此当前 CLI 行为保持 CRU-1。
+  `core_success` 只作为恒 `None` 的非序列化 property 暴露。新增 `IterationTurnStore`，提供 immutable
+  record generations、atomic latest pointer、CAS、checksum-first validation、previous-valid read fallback、
+  secret-rejecting 且 checksum/size/kind-bound 的 artifacts，以及 revisioned durable
+  `SessionIngressState`。已有损坏 history/ingress
+  禁止被 writer 当作空状态覆盖。
+- 验证证据：contract/store/metadata catalog 聚焦 **73 passed**；完整 `Code/tests`
+  **1381 passed**（1 个既有 pytest deprecation warning）。
+- 剩余限制：store 尚未接入 assistant ledger commit/replay、prepared snapshot materialization、
+  Controller reducer 或 feature-flagged entry；因此当前 CLI 行为保持 CRU-1。

@@ -6,6 +6,22 @@ This document is the normative short-form contract for restarting an OpenPilot
 runtime session. The staged implementation and test matrix live in
 `docs/runtime_recovery/RUNTIME_CHECKPOINT_RECOVERY_PLAN.md`.
 
+## Pre-task iteration records
+
+The feature-flagged unified autonomous entry uses a conversation-owned
+`IterationTurnRecordMetadata` before any task checkpoint exists. Its offline
+`IterationTurnStore` is separate from `RuntimeCheckpointStore`: it persists
+immutable turn generations, checksum-bound artifacts, and a revisioned
+`SessionIngressState` snapshot. Reads may fall back from a corrupt latest turn
+record to the newest previous valid generation, but a writer must fail closed
+when any existing turn history or ingress snapshot is unreadable. Corruption
+must never be interpreted as generation/revision zero.
+
+This store is not yet a resume authorization. Assistant ledger commit/replay,
+prepared-task materialization, authority freshness, and the transition to an
+active `RuntimeCheckpointMetadata` remain mandatory gates before the unified
+entry can be enabled.
+
 ## Source of truth
 
 `RuntimeStateMetadata.recovery_status` is the current operational status;

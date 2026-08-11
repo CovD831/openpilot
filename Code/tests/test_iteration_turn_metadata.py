@@ -80,6 +80,7 @@ def _cursor(
 
 def _record(**updates) -> IterationTurnRecordMetadata:
     values = {
+        "record_id": "record-1",
         "identity": _identity(),
         "pre_task_state": PreTaskState(
             user_message_id="message-user-1",
