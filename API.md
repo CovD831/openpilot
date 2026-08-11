@@ -703,6 +703,14 @@ to the project interpreter. Missing commands, model-proposed substitutes on
 non-deterministic paths, shell wrappers, and additional validation commands
 remain fail-closed.
 
+Tool-planning prompts project the current typed `Task.write_files` list as the
+authoritative write scope. README generation is optional
+post-processing: an unscoped README need is dropped with diagnostic evidence
+when the same plan still contains authorized core work, while the code task
+continues. An explicitly scoped README remains routable. Other unscoped
+mutations are not treated as optional and continue to fail closed at Subtask
+Write Scope.
+
 Offline context quality uses `ContextQualityExpectation` and
 `ContextQualityEvaluation`. The evaluator checks explicit expected-present and
 expected-absent candidate IDs plus structural invariants: ready status, character

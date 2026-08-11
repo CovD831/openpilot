@@ -8581,3 +8581,23 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   `0.1.0.dev8`；完整发布证据记录在 `DEV8_TYPED_VALIDATION_HANDOFF_RELEASE.md`。
 - 剩余限制：该衔接只保证“执行 decomposition 已选定的精确命令”，不判断命令本身是否是最佳验证；错误的 typed
   command 仍会在既有 command policy 下精确执行，命令选择质量属于独立 decomposition 改进。
+
+## [已完成] dev9：未授权 README 后处理不再阻断核心代码任务
+
+- 观察到的失败：真实任务 `e0a97c3c-9f24-4db0-b841-01d3485f95c0` 只授权 `snake_game.py`，但 tool planner
+  受 prompt 中“完成代码后生成 README”影响，额外提出
+  `/Users/abab/Developer/openpilot-experiment/README.md`。Subtask Write Scope 正确拒绝越界写，但因为过滤发生在整轮
+  路由中，未授权的可选文档使同轮已正确规划的 source generation/write/validation 全部没有执行。
+- Metadata/架构影响：不修改 schema；`Task.write_files` 继续是唯一写 authority。新增的 prompt scope 只是
+  model-facing 投影。运行时只把 readme/readme_generation 识别为可跳过 post-processing；代码、patch、delete、普通
+  file write 等其他越界 mutation 继续硬失败，授权 README 仍经过完整 Router/Guard/writer/completion 链。
+- 实现修复：prompt 明示 exact typed write targets，并把 README 规则改为“仅当目标明确在 scope 中”。contract filter
+  对 scope 外的 `readme_generation | readme` 记录 dropped diagnostic 后保留同轮授权 core needs；
+  若只剩未授权 README，则仍因无 actionable authorized need 而失败。
+- 验证与发布：tool-planning **118 passed**、完整 `Code/tests` **1604 passed**，touched Ruff、compileall 与
+  `git diff --check` 通过。最终安装后的 fresh project `/tmp/openpilot-dev9-final-snake.wKEpJ6` 真实原始请求只生成并持久化
+  `snake_game.py`，完成 mutation verification、exact typed AST validation、overall Success 与独立 `py_compile`；
+  planner response 不再包含 README need。isolated dev9 wheel SHA-256 为
+  `bb095fbfb92fcf3542f32a4481ca8bdfa452a1b872e45e057af49653c43ec469`，editable package/source 均报告
+  `0.1.0.dev9`；完整证据记录在 `DEV9_SCOPED_README_POST_PROCESSING_RELEASE.md`。
+- 剩余限制：本次不会自动扩展 write scope 或补写 README；文档必须由 decomposition 显式授权，或成为独立 typed task。

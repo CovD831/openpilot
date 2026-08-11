@@ -793,6 +793,107 @@ def test_code_file_create_synthesizes_writer_from_typed_write_scope(tmp_path) ->
     assert result.attributes["observed_modified_files"] == [str(target)]
 
 
+def test_code_file_create_skips_unscoped_readme_post_processing(tmp_path) -> None:
+    target = tmp_path / "snake_game.py"
+    readme = tmp_path / "README.md"
+    task = Task(
+        id="implement",
+        description="Implement a Snake game in snake_game.py",
+        kind="implement",
+        write_files=[str(target)],
+    )
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "code_file_create",
+                    "question": "Create the Snake game",
+                    "target_path": str(target),
+                    "operation_kind": "create_file",
+                    "attributes": {"language": "python"},
+                },
+                {
+                    "need_type": "readme_generation",
+                    "question": "Generate run instructions",
+                    "target_path": str(readme),
+                },
+            ]
+        },
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "code_generator",
+        "file_writer",
+    ]
+    assert result.attributes["observed_modified_files"] == [str(target)]
+    assert not readme.exists()
+
+
+def test_authorized_readme_generation_remains_routable(tmp_path) -> None:
+    readme = tmp_path / "README.md"
+    task = Task(
+        id="document",
+        description="Create README instructions",
+        kind="implement",
+        write_files=[str(readme)],
+    )
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    executor._active_task = task
+    executor._active_task_id = task.id
+    executor._active_task_description = task.description
+    executor._active_goal = "Document the project"
+    executor._active_context = _context(task)
+    payload = {
+        "decision_needs": [
+            {
+                "need_type": "readme_generation",
+                "question": "Generate run instructions",
+                "target_path": str(readme),
+            }
+        ]
+    }
+
+    requests = executor._parse_decision_needs(
+        SimpleNamespace(parsed_json=payload, content=json.dumps(payload))
+    )
+
+    assert [request["tool_name"] for request in requests] == ["readme_tool"]
+
+
+def test_plan_with_only_unscoped_readme_still_fails_closed(tmp_path) -> None:
+    target = tmp_path / "snake_game.py"
+    readme = tmp_path / "README.md"
+    task = Task(
+        id="implement",
+        description="Implement Snake",
+        kind="implement",
+        write_files=[str(target)],
+    )
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "readme_generation",
+                    "question": "Generate run instructions",
+                    "target_path": str(readme),
+                }
+            ]
+        },
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.FAILED
+    assert runtime.tool_executor.selections == []
+    assert not readme.exists()
+
+
 def test_code_file_create_does_not_duplicate_explicit_writer(tmp_path) -> None:
     target = tmp_path / "snake_game.py"
     task = Task(
@@ -3652,6 +3753,31 @@ def test_tool_planning_prompt_includes_current_project_context(tmp_path) -> None
     )
 
     assert f"Project root: {tmp_path}" in prompt
+
+
+def test_tool_planning_prompt_projects_authoritative_write_scope(tmp_path) -> None:
+    target = tmp_path / "snake_game.py"
+    runtime = FakeRuntime(tmp_path, {"decision_needs": []})
+    executor = ToolPlanningTaskExecutor(runtime)
+    task = Task(
+        id="implement",
+        description="Implement Snake",
+        kind="implement",
+        write_files=[str(target)],
+    )
+    executor._active_task = task
+
+    prompt = executor._build_tool_plan_prompt(
+        task.description,
+        "Build a Snake game",
+        "Planning Surface:\nNeed Catalog",
+        _context(task),
+    )
+
+    assert "Typed Write Scope (authoritative)" in prompt
+    assert str(target) in prompt
+    assert "README" in prompt
+    assert "only when" in prompt
 
 
 def test_intelligent_autopilot_normalizes_execution_context_and_propagates_parent_context(tmp_path, monkeypatch) -> None:
