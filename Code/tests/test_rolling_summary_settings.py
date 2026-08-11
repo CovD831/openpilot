@@ -20,6 +20,30 @@ def test_rolling_summary_settings_are_default_off_and_bounded() -> None:
 
     assert settings.rolling_summary_enabled is False
     assert settings.rolling_summary_token_limit == 256
+    assert settings.provider_context_window_tokens is None
+    assert settings.provider_max_output_tokens is None
+    assert settings.context_soft_limit_ratio == 0.7
+    assert settings.context_safety_reserve_tokens == 1_024
+
+
+def test_provider_budget_settings_parse_typed_environment_values(monkeypatch) -> None:
+    monkeypatch.setenv("OPENPILOT_LLM_CONTEXT_WINDOW_TOKENS", "1000000")
+    monkeypatch.setenv("OPENPILOT_LLM_MAX_OUTPUT_TOKENS", "128000")
+    monkeypatch.setenv("OPENPILOT_CONTEXT_SOFT_LIMIT_RATIO", "0.75")
+    monkeypatch.setenv("OPENPILOT_CONTEXT_SAFETY_RESERVE_TOKENS", "20000")
+
+    settings = LLMSettings()
+
+    assert settings.provider_context_window_tokens == 1_000_000
+    assert settings.provider_max_output_tokens == 128_000
+    assert settings.context_soft_limit_ratio == 0.75
+    assert settings.context_safety_reserve_tokens == 20_000
+
+
+@pytest.mark.parametrize("value", ["0", "1.01"])
+def test_context_soft_limit_ratio_rejects_invalid_values(value: str) -> None:
+    with pytest.raises(ValidationError):
+        LLMSettings(OPENPILOT_CONTEXT_SOFT_LIMIT_RATIO=value)
 
 
 def test_rolling_summary_settings_parse_typed_environment_values(monkeypatch) -> None:

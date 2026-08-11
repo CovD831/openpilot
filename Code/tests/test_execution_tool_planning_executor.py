@@ -378,6 +378,27 @@ class TimeoutUntilLocalFallbackExecutor(FakeToolExecutor):
         return super().execute_single(selection, context)
 
 
+class TerminalLengthExecutor(FakeToolExecutor):
+    def execute_single(self, selection, context=None):
+        if selection.tool_name == "code_generator":
+            self.selections.append(selection)
+            return SimpleNamespace(
+                success=False,
+                output_metadata=None,
+                error=SimpleNamespace(
+                    error_type="InvalidLLMResponseError",
+                    error_message=(
+                        "Code generation reached its completion limit after one bounded recovery; "
+                        "decomposition is required."
+                    ),
+                    recoverable=False,
+                    retry_recommended=False,
+                ),
+                execution_time_ms=1,
+            )
+        return super().execute_single(selection, context)
+
+
 class FakeRuntime:
     def __init__(self, tmp_path, payload) -> None:
         self.session_id = "session"
@@ -755,6 +776,12 @@ def test_code_file_create_synthesizes_writer_from_typed_write_scope(tmp_path) ->
         "code_generator",
         "file_writer",
     ]
+    generator_input = runtime.tool_executor.selections[0].input_metadata.to_params()
+    assert generator_input["file_path"] == str(target)
+    assert generator_input["written_files"] == [str(target)]
+    assert generator_input["prompt_context"]["operation_kind"] == "create_file"
+    assert generator_input["prompt_context"]["project_context"]["target_file"] == str(target)
+    assert generator_input["prompt_context"]["project_context"]["written_files"] == [str(target)]
     writer_input = runtime.tool_executor.selections[1].input_metadata.to_params()
     assert writer_input["file_path"] == str(target)
     assert writer_input["content"] == "print('ok')"
@@ -823,6 +850,38 @@ def test_code_file_create_does_not_guess_between_multiple_write_targets(tmp_path
     assert result.status == TaskStatus.FAILED
     assert [selection.tool_name for selection in runtime.tool_executor.selections] == ["code_generator"]
     assert "no observed file mutation" in (result.error or "").lower()
+
+
+def test_terminal_code_generation_length_never_reaches_synthesized_writer(tmp_path) -> None:
+    target = tmp_path / "snake_game.py"
+    task = Task(
+        id="implement",
+        description="Implement a Snake game in snake_game.py",
+        kind="implement",
+        write_files=[str(target)],
+    )
+    runtime = FakeRuntime(
+        tmp_path,
+        {
+            "decision_needs": [
+                {
+                    "need_type": "code_file_create",
+                    "question": "Generate the Snake game",
+                    "operation_kind": "create_file",
+                }
+            ]
+        },
+    )
+    runtime.tool_executor = TerminalLengthExecutor()
+
+    result = ToolPlanningTaskExecutor(runtime).execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.FAILED
+    assert [selection.tool_name for selection in runtime.tool_executor.selections] == [
+        "code_generator"
+    ]
+    assert result.attributes.get("observed_modified_files", []) == []
+    assert not target.exists()
 
 
 def test_code_symbol_modify_does_not_duplicate_explicit_patch_writer(tmp_path) -> None:

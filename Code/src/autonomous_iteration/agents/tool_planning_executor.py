@@ -2304,6 +2304,7 @@ Important:
                         details,
                     )
             for selection in selections:
+                selection = self._bind_code_generation_task_scope(selection, need)
                 tool_requests.append(
                     {
                         "tool_name": selection.tool_name,
@@ -2446,6 +2447,56 @@ Important:
                         }
                     )
         return tool_requests
+
+    def _bind_code_generation_task_scope(
+        self,
+        selection: ToolSelection,
+        need: DecisionNeedMetadata,
+    ) -> ToolSelection:
+        if selection.tool_name != "code_generator":
+            return selection
+        task = getattr(self, "_active_task", None)
+        planned_writes = [
+            str(path).strip()
+            for path in getattr(task, "write_files", []) or []
+            if str(path).strip()
+        ]
+        target = str(need.target_path or need.attributes.get("file_path") or "").strip()
+        if not target and len(planned_writes) == 1:
+            target = planned_writes[0]
+        if not target:
+            return selection
+        input_metadata = selection.input_metadata
+        prompt_context = dict(input_metadata.prompt_context or {})
+        project_context = (
+            dict(prompt_context.get("project_context") or {})
+            if isinstance(prompt_context.get("project_context"), dict)
+            else {}
+        )
+        project_context.update(
+            {
+                "project_path": str(input_metadata.project_path or self._context_project_path() or ""),
+                "target_file": target,
+                "written_files": planned_writes or [target],
+            }
+        )
+        prompt_context.update(
+            {
+                "operation_kind": need.operation_kind or input_metadata.operation_kind or "create_file",
+                "project_context": project_context,
+            }
+        )
+        return selection.model_copy(
+            update={
+                "input_metadata": input_metadata.model_copy(
+                    update={
+                        "file_path": target,
+                        "written_files": planned_writes or [target],
+                        "prompt_context": prompt_context,
+                    }
+                )
+            }
+        )
 
     def _generated_file_writer_target(
         self,

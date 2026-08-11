@@ -22,12 +22,14 @@ from metadata import (
     EnhancementCompletionRequest,
     EnhancementCompletionRequirement,
     RuntimeBudgetMetadata,
-    ReasoningDecisionComplexity,
+    ReasoningMode,
+    ReasoningPolicy,
+    UnsupportedReasoningBehavior,
 )
 
 from core.exceptions import ContextAssemblyBudgetError, InvalidLLMResponseError, OpenPilotError
 from core.llm import LLMMessage, render_llm_message
-from core.reasoning import reasoning_policy_for_decision
+from core.reasoning import code_emission_reasoning_policy
 from autonomous_iteration.enhancement_completion_budget import EnhancementCompletionBudgetCoordinator
 from memory.context_assembly import (
     build_context_candidate_request,
@@ -467,7 +469,7 @@ TOOL OUTPUT REQUIREMENTS:
                 candidates=build_code_generation_candidates(generation_request),
                 purpose=ContextRequestPurpose.CODE_GENERATION,
                 response_format="text",
-                temperature=0.7,
+                temperature=0.2,
                 timeout_seconds=CODE_GENERATION_LLM_TIMEOUT_SECONDS,
                 transport_retries=0,
             )
@@ -477,7 +479,7 @@ TOOL OUTPUT REQUIREMENTS:
                 messages=[LLMMessage(role="user", content=prompt)],
                 purpose=ContextRequestPurpose.CODE_GENERATION,
                 response_format="text",
-                temperature=0.7,
+                temperature=0.2,
                 timeout_seconds=CODE_GENERATION_LLM_TIMEOUT_SECONDS,
                 transport_retries=0,
                 user_truncation=ContextCandidateTruncation.FORBIDDEN,
@@ -489,13 +491,22 @@ TOOL OUTPUT REQUIREMENTS:
             else {}
         )
         written_files = project_context.get("written_files") if isinstance(project_context, dict) else []
-        routine = bool(
+        operation_kind = str(
+            generation_request.prompt_context.get("operation_kind")
+            if generation_request is not None and generation_request.prompt_context
+            else "file_create"
+        )
+        post_plan_emission = bool(
             generation_request is not None
             and generation_request.prompt_context
-            and str(generation_request.prompt_context.get("operation_kind") or "file_create")
-            == "file_create"
+            and operation_kind
+            in {"create_file", "file_create", "file_replace", "full_file_replace"}
             and str(project_context.get("target_file") or "").strip()
             and len(written_files or []) <= 1
+        )
+        routine = bool(
+            post_plan_emission
+            and operation_kind in {"create_file", "file_create"}
         )
         generation_identity = json.dumps(
             (
@@ -509,12 +520,21 @@ TOOL OUTPUT REQUIREMENTS:
             sort_keys=True,
             default=str,
         )
+        logical_key = (
+            "code_generation:"
+            + hashlib.sha256(generation_identity.encode("utf-8")).hexdigest()
+        )
+        provider_output_cap = int(
+            getattr(
+                getattr(self.llm_client, "settings", None),
+                "provider_max_output_tokens",
+                0,
+            )
+            or 0
+        )
         reservation = self.enhancement_budget.reserve(
             EnhancementCompletionRequest(
-                logical_key=(
-                    "code_generation:"
-                    + hashlib.sha256(generation_identity.encode("utf-8")).hexdigest()
-                ),
+                logical_key=logical_key,
                 purpose=ContextRequestPurpose.CODE_GENERATION,
                 complexity=(
                     EnhancementCompletionComplexity.ROUTINE
@@ -528,6 +548,7 @@ TOOL OUTPUT REQUIREMENTS:
                     self.enhancement_requirement
                     or EnhancementCompletionRequirement.REQUIRED
                 ),
+                max_tokens_cap=(provider_output_cap or None),
             )
         )
         if reservation is None:
@@ -544,42 +565,92 @@ TOOL OUTPUT REQUIREMENTS:
                         "remaining_tokens": self.runtime_budget.enhancement_completion_tokens_remaining,
                     },
                 },
-                "reasoning_policy": reasoning_policy_for_decision(
-                    getattr(self.llm_client, "settings", None),
-                    (
-                        ReasoningDecisionComplexity.ROUTINE
-                        if routine
-                        else ReasoningDecisionComplexity.COMPLEX
-                    ),
+                "reasoning_policy": (
+                    code_emission_reasoning_policy(
+                        getattr(self.llm_client, "settings", None)
+                    )
+                    if post_plan_emission
+                    else ReasoningPolicy(
+                        mode=ReasoningMode.PROVIDER_DEFAULT,
+                        unsupported_behavior=UnsupportedReasoningBehavior.PROVIDER_DEFAULT,
+                    )
                 ),
             }
         )
         if hasattr(self.llm_client, 'complete'):
-            try:
-                response = self.llm_client.complete(request)
-            except Exception as exc:
-                self.enhancement_budget.reconcile_failure(reservation, exc)
-                raise
-            usage = getattr(response, "usage", None)
-            actual_tokens = None
-            if isinstance(usage, dict):
-                actual_tokens = usage.get("completion_tokens", usage.get("output_tokens"))
-            self.enhancement_budget.reconcile(
+            response, actual_tokens, initial_reconciliation = self._complete_generation_attempt(
+                request,
                 reservation,
-                actual_tokens=int(actual_tokens) if actual_tokens is not None else None,
-                finish_reason=getattr(response, "finish_reason", None),
-                response_empty=not bool(str(getattr(response, "content", "") or "")),
             )
-            if str(getattr(response, "finish_reason", "") or "").lower() in {
-                "length",
-                "max_tokens",
-            }:
-                raise InvalidLLMResponseError(
-                    "Code generation reached its completion limit; truncated source is not safe to apply.",
-                    response_text=str(getattr(response, "content", "") or ""),
-                    usage=usage if isinstance(usage, dict) else None,
-                    finish_reason=getattr(response, "finish_reason", None),
+            if self._is_length_response(response):
+                if actual_tokens is None:
+                    raise self._length_error(
+                        response,
+                        recovery_disposition=(
+                            initial_reconciliation.recovery_disposition.value
+                        ),
+                    )
+                recovery = self.enhancement_budget.reserve(
+                    EnhancementCompletionRequest(
+                        logical_key=f"{logical_key}:length_recovery",
+                        purpose=ContextRequestPurpose.CODE_GENERATION,
+                        complexity=EnhancementCompletionComplexity.COMPLEX,
+                        prompt_tokens=int(
+                            getattr(request.context_selection, "final_prompt_tokens", 0) or 0
+                        ),
+                        remaining_calls=1,
+                        remaining_value=EnhancementCompletionDecisionValue.HIGH,
+                        requirement=(
+                            self.enhancement_requirement
+                            or EnhancementCompletionRequirement.REQUIRED
+                        ),
+                        recovery_of=reservation.reservation_id,
+                        max_tokens_cap=(provider_output_cap or None),
+                    )
                 )
+                if recovery is None or recovery.max_tokens <= reservation.max_tokens:
+                    raise self._length_error(
+                        response,
+                        recovery_disposition="decompose_required",
+                    )
+                recovery_request = request.model_copy(
+                    update={
+                        "max_tokens": recovery.max_tokens,
+                        "trace_info": {
+                            **request.trace_info,
+                            "completion_budget": {
+                                "purpose": ContextRequestPurpose.CODE_GENERATION.value,
+                                "reservation_id": recovery.reservation_id,
+                                "reserved_tokens": recovery.max_tokens,
+                                "remaining_tokens": (
+                                    self.runtime_budget.enhancement_completion_tokens_remaining
+                                ),
+                                "recovery_of": reservation.reservation_id,
+                            },
+                        },
+                        "reasoning_policy": (
+                            code_emission_reasoning_policy(
+                                getattr(self.llm_client, "settings", None)
+                            )
+                            if post_plan_emission
+                            else ReasoningPolicy(
+                                mode=ReasoningMode.PROVIDER_DEFAULT,
+                                unsupported_behavior=(
+                                    UnsupportedReasoningBehavior.PROVIDER_DEFAULT
+                                ),
+                            )
+                        ),
+                    }
+                )
+                response, _actual_tokens, recovery_reconciliation = self._complete_generation_attempt(
+                    recovery_request,
+                    recovery,
+                )
+                if self._is_length_response(response):
+                    raise self._length_error(
+                        response,
+                        recovery_disposition=recovery_reconciliation.recovery_disposition.value,
+                    )
             return response.content
         elif hasattr(self.llm_client, 'generate'):
             response = self.llm_client.generate("\n\n".join(message.content for message in request.messages))
@@ -596,6 +667,56 @@ TOOL OUTPUT REQUIREMENTS:
             response = str(response)
 
         return response
+
+    def _complete_generation_attempt(
+        self,
+        request: Any,
+        reservation: Any,
+    ) -> tuple[Any, int | None, Any]:
+        try:
+            response = self.llm_client.complete(request)
+        except Exception as exc:
+            self.enhancement_budget.reconcile_failure(reservation, exc)
+            raise
+        usage = getattr(response, "usage", None)
+        actual_tokens = None
+        if isinstance(usage, dict):
+            actual_tokens = usage.get("completion_tokens", usage.get("output_tokens"))
+        reconciliation = self.enhancement_budget.reconcile(
+            reservation,
+            actual_tokens=int(actual_tokens) if actual_tokens is not None else None,
+            finish_reason=getattr(response, "finish_reason", None),
+            response_empty=not bool(str(getattr(response, "content", "") or "")),
+        )
+        return (
+            response,
+            int(actual_tokens) if actual_tokens is not None else None,
+            reconciliation,
+        )
+
+    @staticmethod
+    def _is_length_response(response: Any) -> bool:
+        return str(getattr(response, "finish_reason", "") or "").lower() in {
+            "length",
+            "max_tokens",
+        }
+
+    @staticmethod
+    def _length_error(
+        response: Any,
+        *,
+        recovery_disposition: str | None = None,
+    ) -> InvalidLLMResponseError:
+        usage = getattr(response, "usage", None)
+        error = InvalidLLMResponseError(
+            "Code generation reached its completion limit; truncated source is not safe to apply.",
+            response_text=str(getattr(response, "content", "") or ""),
+            usage=usage if isinstance(usage, dict) else None,
+            finish_reason=getattr(response, "finish_reason", None),
+        )
+        if recovery_disposition:
+            error.context["recovery_disposition"] = recovery_disposition
+        return error
 
     def _simulate_llm_response(self, prompt: str) -> str:
         """模拟 LLM 响应（用于测试）"""

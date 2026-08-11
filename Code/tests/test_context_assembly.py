@@ -147,6 +147,45 @@ def test_candidate_request_keeps_required_projection_and_accounts_for_tool_schem
     assert request.trace_info["provider_tool_schema_tokens"] > 0
 
 
+def test_candidate_request_uses_provider_window_soft_limit_and_output_reserve(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: ExactCounter(),
+    )
+
+    class Settings:
+        context_max_prompt_tokens = 900_000
+        context_reserved_prompt_tokens = 128
+        provider_context_window_tokens = 1_000_000
+        provider_max_output_tokens = 128_000
+        context_soft_limit_ratio = 0.7
+        context_safety_reserve_tokens = 20_000
+
+    class Client:
+        settings = Settings()
+
+    request = build_context_candidate_request(
+        Client(),
+        candidates=[
+            ContextCandidate(
+                candidate_id="task:required",
+                kind=ContextCandidateKind.TASK,
+                content="Implement the already planned code change.",
+                retention=ContextCandidateRetention.REQUIRED,
+                truncation=ContextCandidateTruncation.FORBIDDEN,
+                trust=ContextCandidateTrust.AUTHORITATIVE,
+            )
+        ],
+        purpose=ContextRequestPurpose.CODE_GENERATION,
+        max_tokens=128_000,
+    )
+
+    assert request.context_selection.requested_prompt_tokens == 700_000
+    assert request.trace_info["provider_budget"]["context_window_tokens"] == 1_000_000
+    assert request.trace_info["provider_budget"]["planned_output_tokens"] == 128_000
+    assert request.trace_info["provider_budget"]["effective_prompt_tokens"] == 700_000
+
+
 def test_context_assembler_is_deterministic_and_does_not_mutate_sources() -> None:
     source = payload()
     original = payload()

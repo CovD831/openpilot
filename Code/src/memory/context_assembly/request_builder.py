@@ -310,14 +310,19 @@ def build_context_llm_request(
     """Bind one existing message call to its provider-aware assembly policy."""
     settings = getattr(llm_client, "settings", None)
     counter = ProviderTokenCounter.from_settings(settings)
-    requested_tokens = int(
+    configured_tokens = int(
         context_max_prompt_tokens
         if context_max_prompt_tokens is not None
         else getattr(settings, "context_max_prompt_tokens", DEFAULT_MAX_PROMPT_TOKENS)
         or DEFAULT_MAX_PROMPT_TOKENS
     )
-    if requested_tokens < 1:
+    if configured_tokens < 1:
         raise ValueError("context_max_prompt_tokens must be positive")
+    requested_tokens, provider_budget = _provider_aware_prompt_budget(
+        settings,
+        configured_tokens=configured_tokens,
+        planned_output_tokens=max_tokens,
+    )
     reserved_tokens = int(
         getattr(settings, "context_reserved_prompt_tokens", DEFAULT_RESERVED_PROMPT_TOKENS)
         or 0
@@ -354,6 +359,7 @@ def build_context_llm_request(
         trace_info={
             **dict(trace_info or {}),
             "context_purpose": purpose.value,
+            **({"provider_budget": provider_budget} if provider_budget else {}),
             **({"provider_tool_schema_tokens": tool_schema_tokens} if provider_tools else {}),
         },
         reasoning_policy=reasoning_policy,
@@ -381,9 +387,14 @@ def build_context_candidate_request(
     """Build one provider-aware request from owner-projected typed candidates."""
     settings = getattr(llm_client, "settings", None)
     counter = ProviderTokenCounter.from_settings(settings)
-    requested_tokens = int(
+    configured_tokens = int(
         getattr(settings, "context_max_prompt_tokens", DEFAULT_MAX_PROMPT_TOKENS)
         or DEFAULT_MAX_PROMPT_TOKENS
+    )
+    requested_tokens, provider_budget = _provider_aware_prompt_budget(
+        settings,
+        configured_tokens=configured_tokens,
+        planned_output_tokens=max_tokens,
     )
     reserved_tokens = int(
         getattr(settings, "context_reserved_prompt_tokens", DEFAULT_RESERVED_PROMPT_TOKENS)
@@ -419,6 +430,7 @@ def build_context_candidate_request(
         trace_info={
             **dict(trace_info or {}),
             "context_purpose": purpose.value,
+            **({"provider_budget": provider_budget} if provider_budget else {}),
             **({"provider_tool_schema_tokens": tool_schema_tokens} if provider_tools else {}),
         },
         reasoning_policy=reasoning_policy,
@@ -427,3 +439,34 @@ def build_context_candidate_request(
     return prepared.require_request().model_copy(
         update={"tools": provider_tools, "tool_choice": tool_choice}
     )
+
+
+def _provider_aware_prompt_budget(
+    settings: Any,
+    *,
+    configured_tokens: int,
+    planned_output_tokens: int | None,
+) -> tuple[int, dict[str, int | float]]:
+    context_window = int(getattr(settings, "provider_context_window_tokens", 0) or 0)
+    if context_window <= 0:
+        return configured_tokens, {}
+    provider_output = int(getattr(settings, "provider_max_output_tokens", 0) or 0)
+    requested_output = int(planned_output_tokens or provider_output or 0)
+    if provider_output > 0 and requested_output > provider_output:
+        raise ValueError("planned output tokens exceed the configured provider maximum")
+    ratio = float(getattr(settings, "context_soft_limit_ratio", 0.7) or 0.7)
+    safety_reserve = int(getattr(settings, "context_safety_reserve_tokens", 1_024) or 0)
+    soft_limit = int(context_window * ratio)
+    transport_limit = context_window - requested_output - safety_reserve
+    effective = min(configured_tokens, soft_limit, transport_limit)
+    if effective < 1:
+        raise ContextAssemblyBudgetError(["provider_context_window"])
+    return effective, {
+        "context_window_tokens": context_window,
+        "provider_max_output_tokens": provider_output,
+        "planned_output_tokens": requested_output,
+        "configured_prompt_tokens": configured_tokens,
+        "soft_limit_ratio": ratio,
+        "safety_reserve_tokens": safety_reserve,
+        "effective_prompt_tokens": effective,
+    }

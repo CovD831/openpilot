@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from core.config import LLMSettings
 from core.reasoning_adapters import (
     get_reasoning_transport_adapter,
-    observe_reasoning_response,
+    observe_reasoning_response as observe_reasoning_response,
 )
 from metadata import (
     ReasoningCapabilityProfileId,
@@ -149,6 +149,21 @@ def reasoning_policy_for_decision(
         return routine_tool_reasoning_policy(settings, routine=True)
     return ReasoningPolicy(
         mode=ReasoningMode.PROVIDER_DEFAULT,
+        unsupported_behavior=UnsupportedReasoningBehavior.PROVIDER_DEFAULT,
+    )
+
+
+def code_emission_reasoning_policy(settings: object | None) -> ReasoningPolicy:
+    """Request deterministic post-plan code emission without hidden deliberation.
+
+    Capability resolution remains authoritative. Known providers that support
+    disabled reasoning render an explicit transport control; unknown providers
+    omit the unsupported control instead of guessing from model or endpoint text.
+    """
+
+    del settings
+    return ReasoningPolicy(
+        mode=ReasoningMode.DISABLED,
         unsupported_behavior=UnsupportedReasoningBehavior.PROVIDER_DEFAULT,
     )
 

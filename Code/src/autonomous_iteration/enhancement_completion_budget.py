@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 
 from metadata import (
+    CompletionRecoveryDisposition,
     EnhancementCompletionComplexity,
     EnhancementCompletionDecisionValue,
     EnhancementCompletionReconciliation,
@@ -85,7 +86,13 @@ class EnhancementCompletionBudgetCoordinator:
 
         if recovery_limit is not None:
             desired = max(desired, recovery_limit + policy.recovery_step)
-            desired = min(desired, purpose_limit.ceiling, remaining)
+            desired = min(
+                desired,
+                int(purpose_limit.recovery_ceiling or purpose_limit.ceiling),
+                remaining,
+            )
+            if request.max_tokens_cap is not None:
+                desired = min(desired, request.max_tokens_cap)
             if desired <= recovery_limit:
                 return None
             recovery_used = [
@@ -96,6 +103,9 @@ class EnhancementCompletionBudgetCoordinator:
             recovery_used = list(
                 self.budget.enhancement_completion_length_recovery_used
             )
+
+        if recovery_limit is None and request.max_tokens_cap is not None:
+            desired = min(desired, request.max_tokens_cap)
 
         if desired < purpose_limit.floor:
             return None
@@ -152,14 +162,21 @@ class EnhancementCompletionBudgetCoordinator:
             actual = None
 
         normalized_finish = str(finish_reason or "").lower()
+        recovery_disposition = CompletionRecoveryDisposition.NOT_REQUIRED
         recovery_limits = dict(
             self.budget.enhancement_completion_length_recovery_limits
         )
         if normalized_finish in {"length", "max_tokens"}:
-            recovery_limits.setdefault(
-                reservation.reservation_id,
-                reservation.max_tokens,
+            recovery_disposition = (
+                CompletionRecoveryDisposition.DECOMPOSE_REQUIRED
+                if reservation.recovery_of or not usage_known
+                else CompletionRecoveryDisposition.RETRY_WITH_LARGER_BUDGET
             )
+            if usage_known and not reservation.recovery_of:
+                recovery_limits.setdefault(
+                    reservation.reservation_id,
+                    reservation.max_tokens,
+                )
 
         reconciliation = EnhancementCompletionReconciliation(
             reservation_id=reservation.reservation_id,
@@ -168,6 +185,7 @@ class EnhancementCompletionBudgetCoordinator:
             refunded_tokens=refunded,
             usage_known=usage_known,
             finish_reason=finish_reason,
+            recovery_disposition=recovery_disposition,
         )
         reconciliations = {
             **self.budget.enhancement_completion_reconciliations,

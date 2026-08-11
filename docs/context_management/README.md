@@ -61,6 +61,14 @@ feature-flagged and default-off; session constraints remain explicit-confirmatio
 and session-scoped; reasoning profiles require explicit typed configuration.
 No real-provider canary or global default switch is implied.
 
+CRU-8 extends this boundary without replacing its compaction contracts. Explicit
+provider context/output capabilities now bound the effective prompt budget, while
+post-plan code emission uses a separate typed completion reservation and one
+source-linked length recovery. Input budget pressure still compacts governed old
+observations; output `length` discards the truncated response and regenerates the
+full source once. These are separate state transitions and neither permits
+required-context omission or truncated writer handoff.
+
 ## Non-goals
 
 - A universal business Prompt template.

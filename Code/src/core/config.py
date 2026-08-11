@@ -172,6 +172,27 @@ class LLMSettings(BaseSettings):
         ge=0,
         alias="OPENPILOT_CONTEXT_RESERVED_PROMPT_TOKENS",
     )
+    provider_context_window_tokens: int | None = Field(
+        default=None,
+        gt=0,
+        alias="OPENPILOT_LLM_CONTEXT_WINDOW_TOKENS",
+    )
+    provider_max_output_tokens: int | None = Field(
+        default=None,
+        gt=0,
+        alias="OPENPILOT_LLM_MAX_OUTPUT_TOKENS",
+    )
+    context_soft_limit_ratio: float = Field(
+        default=0.7,
+        gt=0.0,
+        le=0.9,
+        alias="OPENPILOT_CONTEXT_SOFT_LIMIT_RATIO",
+    )
+    context_safety_reserve_tokens: int = Field(
+        default=1_024,
+        ge=0,
+        alias="OPENPILOT_CONTEXT_SAFETY_RESERVE_TOKENS",
+    )
     rolling_summary_enabled: bool = Field(
         default=False,
         alias="OPENPILOT_ROLLING_SUMMARY_ENABLED",

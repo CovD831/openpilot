@@ -91,6 +91,10 @@ OpenAI-compatible providers are configured with environment variables:
 | `OPENPILOT_LLM_TOKENIZER_PATH` | No | Local DeepSeek cache | Optional explicit provider tokenizer JSON path; known OpenAI profiles use local `tiktoken` model encodings when available. |
 | `OPENPILOT_CONTEXT_MAX_PROMPT_TOKENS` | No | `4096` | Exact token budget for the memory-context slice when a provider tokenizer is available. |
 | `OPENPILOT_CONTEXT_RESERVED_PROMPT_TOKENS` | No | `128` | Explicit framing/safety reserve deducted from assembled request content budget. |
+| `OPENPILOT_LLM_CONTEXT_WINDOW_TOKENS` | No | unset | Explicit verified provider context-window capability. No endpoint/model-name inference is allowed. |
+| `OPENPILOT_LLM_MAX_OUTPUT_TOKENS` | No | unset | Explicit verified provider output ceiling shared by completion budgeting and context headroom. |
+| `OPENPILOT_CONTEXT_SOFT_LIMIT_RATIO` | No | `0.7` | Provider-window fraction used as the soft prompt ceiling; must be greater than `0` and at most `0.9`. |
+| `OPENPILOT_CONTEXT_SAFETY_RESERVE_TOKENS` | No | `1024` | Additional provider-window headroom retained after planned output. |
 | `OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` | No | `true` | Default autonomous pre-task entry for deterministic runtime facts and bounded zero-tool responses. Set `false` with governed decomposition disabled for the legacy rollback lane; Agent Generator is unaffected. |
 | `OPENPILOT_GOVERNED_DECOMPOSITION` | No | `true` | Default Runtime-owned single-task/decomposition admission. Set `false` with unified entry disabled for the legacy rollback lane; it never broadens task authority. |
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_ENABLED` | No | `false` | Explicit opt-in for the provider-native real-task entry point; default JSON planning is unchanged. |
@@ -527,7 +531,11 @@ record, and durable replay returns the observed response without another
 provider call.
 With a locally available provider tokenizer, the production memory context builder applies
 `OPENPILOT_CONTEXT_MAX_PROMPT_TOKENS` (4,096 by default; tool callers reuse
-`max_tokens`) together with the 16,000-character safety ceiling. Without a
+`max_tokens`) together with the 16,000-character safety ceiling. When explicit
+provider context/output capabilities are configured, the effective prompt budget
+is also bounded by the configured soft window fraction and by context-window minus
+planned output and safety reserve; the effective values are attached to request
+trace evidence. Without a
 tokenizer it explicitly falls back to the existing character boundary; it never
 labels `chars/4` as an exact token count. The OpenAI tokenizer path is enabled
 only for the explicit `openai-chat-known` profile and a model recognized by
@@ -675,6 +683,15 @@ Recovery uses an explicit safe projection: environment secrets, runtime handles,
 arbitrary attributes, unknown fields, and duplicate free-form task/context values
 are omitted rather than hashed. A resumed prompt snapshot with a different adapter
 request hash fails closed; successful exact replay is consumed once.
+
+Post-plan full-file code generation uses typed disabled reasoning when the exact
+provider capability supports it; unsupported/unknown profiles omit the control
+rather than guessing. The default enhancement budget now provides a 64,000-token
+shared pool, a code-generation initial range of 8,000–16,000, and one source-linked
+recovery up to 32,000. An observed `length` response is reconciled and discarded,
+then regenerated once from the same authoritative task context with a larger
+reservation. Unknown usage, no larger reservation, or a second `length` outcome
+fails closed with no CodeArtifact and therefore no writer admission.
 
 Offline context quality uses `ContextQualityExpectation` and
 `ContextQualityEvaluation`. The evaluator checks explicit expected-present and

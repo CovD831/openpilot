@@ -8529,3 +8529,32 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：两次真实贪吃蛇 smoke 均在 `code_generator` completion limit 提前 fail closed，未把截断代码交给
   writer；另一次 hello smoke 在写入成功后，其独立 validation subtask 因模型命令与 typed validation contract
   不匹配而使 overall task 失败。这两项是 writer 衔接之外的后续能力边界，不应被误记为本次 mutation failure。
+
+## [已完成] CRU-8 / dev7：Provider-aware budget 与代码生成恢复
+
+- 观察到的失败：真实贪吃蛇轨迹 `a1ebfff815764d2caf003f8c23f70c6d` 与
+  `eaaaa48ca2734e34a3412429c3fc2992` 的 prompt 约 530 tokens，但旧 code-generation ceiling 固定为
+  3,500；Provider 将额度耗尽于 reasoning 后返回 `finish_reason=length`。系统正确拒绝截断代码，但没有更大
+  output reservation、一次完整重生或 post-plan reasoning 控制，因此任务无法进入 dev6 writer 链。
+- Metadata/架构影响：复核 contract catalog、`RuntimeBudgetMetadata`、completion policy/request/reservation/
+  reconciliation、reasoning policy/profile、Task write scope 与 CodeArtifact/writer consumer。不新增
+  `MetadataKind`；扩展既有 owned values，加入 initial/recovery ceiling、provider cap 和 typed recovery
+  disposition。历史 purpose limit 缺少 recovery ceiling 时迁移为原 ceiling；runtime budget ledger 仍是唯一
+  reservation/reconciliation authority，Provider capability 只由显式配置拥有。
+- 实现修复：共享 enhancement pool 调整为 64,000；code generation 为 8,000–16,000，已知 usage 的首次
+  length 可关联原 reservation 完整重生一次至 32,000，并受 provider output cap 限制。未知 usage、无法取得
+  更大 reservation 或第二次 length 均标记 `decompose_required`。所有 length 内容被丢弃，不产生
+  CodeArtifact。单一 typed 文件目标在 planning 后请求 disabled reasoning；模糊/多目标保持 provider default。
+  context builder 同时受配置 prompt ceiling、soft window ratio、window-output-reserve 约束。Tool planning 将唯一
+  `Task.write_files` 目标投影到 generator 与 prompt context，但不扩大写权限。
+- 验证证据：早期 focused 76/220/309 项及完整 1593/1594 项均通过；语义收紧后 focused budget/codegen/
+  tool-planning **147 passed**，最终完整 `Code/tests` **1597 passed**；touched Ruff、compileall 与
+  `git diff --check` 通过。isolated dev7 wheel SHA-256 为
+  `2221d2387f8204c493675f9cf89c9364d747f7298b15191cfb7566932a074079`，editable install 的 package/source
+  均报告 `0.1.0.dev7`。真实贪吃蛇 canary 在临时项目生成并持久化 163 行
+  `snake_game.py`，通过 mutation verification、exact validation 与独立 `py_compile`；后续单文件 canary 的
+  request evidence 显示 requested/resolved reasoning 均为 disabled、profile 为 `deepseek-chat-known`、resolution
+  为 exact。
+- 剩余限制：另一次贪吃蛇计划包含未授权 `README.md`，被 write-scope gate 正确阻断；hello canary 写入后由
+  独立 validation-command contract mismatch 导致 overall failed。这两项分别属于 planner quality 与 validation
+  contract，不放宽本次预算、permission、writer 或 completion gate。

@@ -8,6 +8,7 @@ from autonomous_iteration.enhancement_completion_budget import (
     EnhancementCompletionBudgetCoordinator,
 )
 from metadata import (
+    CompletionRecoveryDisposition,
     ContextRequestPurpose,
     EnhancementCompletionBudgetPolicy,
     EnhancementCompletionComplexity,
@@ -99,6 +100,9 @@ def test_enhancement_completion_contract_is_strict_typed_and_round_trips() -> No
     assert set(policy.purpose_limits) == ENHANCEMENT_PURPOSES
     assert EnhancementCompletionBudgetPolicy.model_validate_json(policy.model_dump_json()) == policy
     assert EnhancementCompletionRequest.model_validate_json(request.model_dump_json()) == request
+    code_limit = policy.purpose_limits[ContextRequestPurpose.CODE_GENERATION]
+    assert code_limit.recovery_ceiling is not None
+    assert code_limit.recovery_ceiling >= code_limit.ceiling
 
     with pytest.raises(ValueError):
         EnhancementCompletionRequest(
@@ -145,6 +149,24 @@ def test_historical_four_purpose_policy_migrates_code_edit_limit() -> None:
     )
 
 
+def test_historical_purpose_limit_defaults_recovery_ceiling_to_initial_ceiling() -> None:
+    restored = EnhancementCompletionPurposeLimit.model_validate(
+        {"floor": 1_000, "ceiling": 3_500}
+    )
+
+    assert restored.recovery_ceiling == 3_500
+
+
+def test_default_code_generation_budget_supports_one_materially_larger_recovery() -> None:
+    policy = EnhancementCompletionBudgetPolicy()
+    code_limit = policy.purpose_limits[ContextRequestPurpose.CODE_GENERATION]
+
+    assert policy.total_tokens == 64_000
+    assert code_limit.floor == 8_000
+    assert code_limit.ceiling == 16_000
+    assert code_limit.recovery_ceiling == 32_000
+
+
 def test_runtime_budget_rejects_corrupt_enhancement_ledger_and_aggregates() -> None:
     budget = _budget()
     coordinator = EnhancementCompletionBudgetCoordinator(budget)
@@ -176,6 +198,12 @@ def test_policy_requires_exact_enhancement_purposes_and_valid_floor_ceiling() ->
         limits[ContextRequestPurpose.PROJECT_IMPROVEMENT] = EnhancementCompletionPurposeLimit(
             floor=1_501,
             ceiling=1_500,
+        )
+    with pytest.raises(ValueError, match="recovery"):
+        EnhancementCompletionPurposeLimit(
+            floor=8_000,
+            ceiling=16_000,
+            recovery_ceiling=12_000,
         )
 
 
@@ -257,6 +285,36 @@ def test_optional_request_is_denied_when_shared_remaining_cannot_meet_its_floor(
     ) is None
 
 
+def test_provider_output_cap_bounds_initial_reservation() -> None:
+    budget = RuntimeBudgetMetadata()
+    coordinator = EnhancementCompletionBudgetCoordinator(budget)
+    request = _request(
+        ContextRequestPurpose.CODE_GENERATION,
+        complexity=EnhancementCompletionComplexity.COMPLEX,
+        remaining_calls=1,
+        remaining_value=EnhancementCompletionDecisionValue.HIGH,
+    ).model_copy(update={"max_tokens_cap": 12_000})
+
+    reservation = coordinator.reserve(request)
+
+    assert reservation is not None
+    assert reservation.max_tokens == 12_000
+
+
+def test_provider_output_cap_below_purpose_floor_denies_reservation() -> None:
+    budget = RuntimeBudgetMetadata()
+    coordinator = EnhancementCompletionBudgetCoordinator(budget)
+    request = _request(
+        ContextRequestPurpose.CODE_GENERATION,
+        complexity=EnhancementCompletionComplexity.COMPLEX,
+        remaining_calls=1,
+        remaining_value=EnhancementCompletionDecisionValue.HIGH,
+    ).model_copy(update={"max_tokens_cap": 7_999})
+
+    assert coordinator.reserve(request) is None
+    assert budget.enhancement_completion_reservations == {}
+
+
 def test_reconcile_replaces_reservation_with_actual_usage_and_refunds_unused_tokens() -> None:
     budget = _budget()
     coordinator = EnhancementCompletionBudgetCoordinator(budget)
@@ -300,6 +358,28 @@ def test_unknown_usage_preserves_reservation_even_when_response_is_empty() -> No
     assert budget.enhancement_completion_tokens_reserved == reservation.max_tokens
     assert budget.enhancement_completion_tokens_used == 0
     assert budget.enhancement_completion_tokens_remaining == 10_000 - reservation.max_tokens
+
+
+def test_length_with_unknown_usage_requires_decomposition_without_recovery_authority() -> None:
+    budget = _budget()
+    coordinator = EnhancementCompletionBudgetCoordinator(budget)
+    reservation = coordinator.reserve(
+        _request(ContextRequestPurpose.ITERATION_TASK_DESIGN)
+    )
+    assert reservation is not None
+
+    reconciliation = coordinator.reconcile(
+        reservation,
+        actual_tokens=None,
+        finish_reason="length",
+    )
+
+    assert reconciliation.recovery_disposition == (
+        CompletionRecoveryDisposition.DECOMPOSE_REQUIRED
+    )
+    assert reservation.reservation_id not in (
+        budget.enhancement_completion_length_recovery_limits
+    )
 
 
 def test_explicit_zero_usage_refunds_an_empty_response_reservation() -> None:
@@ -369,6 +449,52 @@ def test_length_finish_allows_exactly_one_bounded_recovery_for_that_reservation(
             recovery_of=initial.reservation_id,
         )
     ) is None
+
+
+def test_code_generation_length_recovery_can_exceed_initial_ceiling() -> None:
+    budget = RuntimeBudgetMetadata()
+    coordinator = EnhancementCompletionBudgetCoordinator(budget)
+    initial = coordinator.reserve(
+        _request(
+            ContextRequestPurpose.CODE_GENERATION,
+            complexity=EnhancementCompletionComplexity.COMPLEX,
+            remaining_calls=1,
+            remaining_value=EnhancementCompletionDecisionValue.HIGH,
+            requirement=EnhancementCompletionRequirement.REQUIRED,
+            logical_key="code-generation-initial",
+        )
+    )
+    assert initial is not None
+    assert initial.max_tokens == 16_000
+    first_reconciliation = coordinator.reconcile(
+        initial,
+        actual_tokens=initial.max_tokens,
+        finish_reason="length",
+    )
+    assert first_reconciliation.recovery_disposition == (
+        CompletionRecoveryDisposition.RETRY_WITH_LARGER_BUDGET
+    )
+
+    recovery = coordinator.reserve(
+        _request(
+            ContextRequestPurpose.CODE_GENERATION,
+            complexity=EnhancementCompletionComplexity.COMPLEX,
+            remaining_calls=1,
+            remaining_value=EnhancementCompletionDecisionValue.HIGH,
+            requirement=EnhancementCompletionRequirement.REQUIRED,
+            recovery_of=initial.reservation_id,
+            logical_key="code-generation-recovery",
+        )
+    )
+
+    assert recovery is not None
+    assert recovery.max_tokens == 32_000
+    terminal = coordinator.reconcile(
+        recovery,
+        actual_tokens=recovery.max_tokens,
+        finish_reason="length",
+    )
+    assert terminal.recovery_disposition == CompletionRecoveryDisposition.DECOMPOSE_REQUIRED
 
 
 def test_non_length_failure_does_not_authorize_recovery_expansion() -> None:
