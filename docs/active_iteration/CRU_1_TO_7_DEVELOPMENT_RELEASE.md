@@ -2,15 +2,16 @@
 
 ## Release identity
 
-- Package version: `0.1.0.dev5`
+- Package version: `0.1.0.dev6`
 - Git branch: `codex/cru-1-to-4b-dev`
-- Git tag: `v0.1.0-dev.5`
+- Git tag: `v0.1.0-dev.6`
 - Remote baseline: `origin/main` at `21c8e66`
 - CRU-4B functional freeze: `39b1fab`
 - CRU-7 accepted source: `c6b33db`
 - Prior development hardening: `a06853f` / `v0.1.0-dev.2`
 - Prior cumulative release: `fd49b09` / `v0.1.0-dev.3`
 - Prior admission release: `e90169a` / `v0.1.0-dev.4`
+- Prior project-scope release: `4c39f2b` / `v0.1.0-dev.5`
 - Release date: 2026-08-11
 
 This cumulative development release merges the complete CRU-1 through CRU-7
@@ -48,6 +49,11 @@ CRU-6 verified core/post-core handoff, and CRU-7 canary/default decisions.
   child for artifact creation, while ambiguous existing-project work stops
   recoverably. Project file discovery is breadth-first with hard file,
   directory, entry, and depth ceilings instead of eager recursive sorting.
+- dev6 generated-code persistence hardening: when a code-generation need omits
+  its writer but the typed task contract authorizes exactly one `write_files`
+  target, tool planning deterministically appends `file_writer`. The existing
+  artifact handoff supplies the generated content, while Guard, write scope,
+  mutation receipt, verification, and completion evidence remain mandatory.
 
 ## Runtime defaults and rollback
 
@@ -88,16 +94,15 @@ Source CRU-7 evidence recorded:
 - source branch complete `Code/tests`: **1531 passed**;
 - all pre-registered safety counters remained zero.
 
-Merged dev5 evidence recorded before release:
+Merged dev6 evidence recorded before release:
 
-- project-scope, bounded-inventory, session-ingress, environment, CLI recovery,
-  metadata, release-version, and tool-planning focused tests: **203 passed**;
-- merged complete `Code/tests`: **1579 passed**;
+- tool-planning, runtime-controller, and tool-I/O focused tests: **221 passed**;
+- merged complete `Code/tests`: **1582 passed**;
 - touched Ruff, `compileall`, and `git diff --check`: passed.
 
-- isolated wheel: `openpilot-0.1.0.dev5-py3-none-any.whl`, SHA-256
-  `f692f16364e661c47bd793a6331278656f47bb9636db43300de98cfbc321a0f2`;
-- editable install reports version `0.1.0.dev5` from this release worktree;
+- isolated wheel: `openpilot-0.1.0.dev6-py3-none-any.whl`, SHA-256
+  `1526f4881b44cd2abb98377051a6b1ea5ec0bd30be6ad650a157bd71eb0869a2`;
+- editable install reports version `0.1.0.dev6` from this release worktree;
 - real `openpilot-dev` once-mode smoke completed a greeting and fresh structured
   Changshu weather. An isolated Snake-game request entered project inspection,
   decomposition, environment setup, and `code_generator`; it did not call the
@@ -107,7 +112,12 @@ Merged dev5 evidence recorded before release:
   repositories, selected and initialized only its `snake-game` child, and bound
   runtime state, environment, path resolutions, checkpoints, and project
   fingerprint to that child. No parent-container recursive scan occurred;
-- the cumulative merge is sealed by tag `v0.1.0-dev.5`.
+- dev6 live writer smoke generated `hello.py`, synthesized `file_writer` from
+  the single typed write scope, wrote the generated artifact, and passed an
+  independent `py_compile`. The subsequent decomposed validation task exposed
+  a separate command-contract mismatch and is not counted as end-to-end task
+  success;
+- the cumulative merge is sealed by tag `v0.1.0-dev.6`.
 
 ## Known limitations
 
@@ -120,6 +130,9 @@ Merged dev5 evidence recorded before release:
 - Large single-call code generation may still reach the generator completion
   limit; that is reported as a project task/tool failure and is not retried as
   a lightweight response.
+- A separately decomposed validation task can still fail when its model-proposed
+  command does not exactly match its typed validation contract. This does not
+  undo an already observed writer receipt, but the overall task remains failed.
 - Post-core enhancement transaction execution remains outside this release
   until an authoritative consumer is accepted.
 - CRU-4B still forbids replay of an indeterminate Provider transport outcome.

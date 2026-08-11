@@ -8504,3 +8504,28 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   命名；用户明确要求既有项目操作但从 broad root 启动时必须切换目录后重试，不猜测多个 sibling 中哪一个
   是目标。Inventory 截断是安全边界，后续如需扩大范围应由 typed task evidence 指定具体路径，而不是提高
   全局递归上限。
+
+## [已完成] dev6：生成代码到持久写入的确定性衔接
+
+- 观察到的失败：真实任务 `9172b7d4-ab0f-4dd9-88eb-274275ebf152` 中
+  `multi_file_reader` 与 `code_generator` 均成功，生成器返回完整 72 行 Python `CodeArtifactMetadata`；但
+  model tool plan 只有 reader + generator，没有 `file_writer`。tool-event loop 在计划内调用全部成功后结束，
+  completion gate 随即发现 `Task.write_files=["snake_game.py"]` 且 observed mutation 为空，正确以
+  `Task planned file writes but has no observed file mutation evidence` fail closed。
+- Metadata/架构影响：不新增或修改 metadata schema。`Task.write_files` 继续只表达 typed 授权范围，
+  `CodeArtifactMetadata` 继续拥有生成内容，`FileArtifactMetadata`/writer execution receipt 继续作为实际 mutation
+  证据；没有把计划意图当成完成事实，也没有放宽 Guard、write admission、checkpoint、verification 或 completion
+  gate。确定性补链仅在实际路由为 `code_generator` 且目标由 need 明确给出，或 typed task 恰好只有一个
+  `write_files` 目标时成立；多目标仍不猜测并保持失败关闭。
+- 实现修复：`ToolPlanningTaskExecutor` 在同轮 decision needs 中检查显式 writer；缺失时为上述单一授权目标合成
+  `file_write` need，经正常 Router/Guard 生成 `file_writer`。既有 `ExecutionToolIO.resolve_chained_metadata`
+  将最近的 `CodeArtifactMetadata` 内容填入 writer input，因此生成、持久化、mutation receipt 与完成证据形成同一
+  typed 链路。显式 writer 不重复，非 executable 直写路由不受影响。
+- 验证证据：新增现场形状回归，先复现 generator-only failure，再验证 synthesized writer、artifact content handoff、
+  explicit writer 去重和多目标 fail-closed；tool-planning 全文件 **110 passed**，tool-planning/runtime-controller/
+  tool-I/O focused **221 passed**，完整 `Code/tests` **1582 passed**，touched Ruff 与 compileall 通过。真实
+  `openpilot-dev` 创建 `hello.py` 时依次观察到 `code_generator`、合成的 `file_writer` 和 writer verification，
+  文件内容为 `print('hello')` 且独立 `py_compile` 通过。
+- 剩余限制：两次真实贪吃蛇 smoke 均在 `code_generator` completion limit 提前 fail closed，未把截断代码交给
+  writer；另一次 hello smoke 在写入成功后，其独立 validation subtask 因模型命令与 typed validation contract
+  不匹配而使 overall task 失败。这两项是 writer 衔接之外的后续能力边界，不应被误记为本次 mutation failure。
