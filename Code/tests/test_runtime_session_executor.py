@@ -148,6 +148,7 @@ class FakeRuntime:
         self.task_decomposer = FakeTaskDecomposer()
         self.enhanced_ui = FakeEnhancedUI()
         self.tracker = FakeTracker()
+        self._owns_tracker = True
         self.fast_result = None
         self.improvement_result = None
         self.written_files = []
@@ -218,7 +219,8 @@ class FakeRuntime:
         return improvement_result.get("failure_reason") or "iteration failed"
 
     def _stop_tracking_if_owned(self):
-        self.tracker.stop_tracking()
+        if self._owns_tracker:
+            self.tracker.stop_tracking()
 
 
 class FailingToolLoopRuntime(FakeRuntime):
@@ -435,6 +437,20 @@ def test_runtime_session_contains_decomposition_contract_failure(tmp_path, monke
     if mode == "enhanced_ui":
         assert runtime.tracker.stopped is True
         assert runtime.enhanced_ui.current_updates[-1]["status"] == "failed"
+
+
+def test_runtime_session_preserves_shared_tracker_on_decomposition_failure(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("autonomous_iteration.runtime_controller.time.sleep", lambda seconds: None)
+    runtime = FakeRuntime(tmp_path)
+    runtime._owns_tracker = False
+    runtime.task_decomposer = FailingTaskDecomposer()
+    runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
+
+    result = _RuntimeSessionExecutor(runtime).run("Answer the user", {}, mode="enhanced_ui")
+
+    assert result["success"] is False
+    assert runtime.tracker.stopped is False
+    assert runtime.enhanced_ui.current_updates[-1]["status"] == "failed"
 
 
 def test_runtime_session_surfaces_autonomous_iteration_failure(tmp_path) -> None:

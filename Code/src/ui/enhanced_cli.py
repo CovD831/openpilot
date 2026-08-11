@@ -181,7 +181,8 @@ def _extract_failure_context(result) -> dict:
                 return nested_context
     direct_reason = result.get("failure_reason")
     if direct_reason and direct_reason != "Autopilot reported failure":
-        failure_payload = result.get("failure") if isinstance(result.get("failure"), dict) else {}
+        raw_failure_payload = result.get("failure")
+        direct_failure_payload: dict = raw_failure_payload if isinstance(raw_failure_payload, dict) else {}
         direct_context = {
             "failure_reason": direct_reason,
             "failure_stage": result.get("failure_stage"),
@@ -194,7 +195,7 @@ def _extract_failure_context(result) -> dict:
             "error_type": result.get("error_type"),
             "suggested_recovery": result.get("suggested_recovery"),
             "response_preview": result.get("response_preview") or result.get("response_text"),
-            "recoverable": result.get("recoverable", failure_payload.get("recoverable")),
+            "recoverable": result.get("recoverable", direct_failure_payload.get("recoverable")),
             "recoverability": result.get("recoverability"),
             "failure_id": result.get("failure_id"),
         }
@@ -205,14 +206,15 @@ def _extract_failure_context(result) -> dict:
         if context:
             return context
     if direct_reason:
-        failure_payload = result.get("failure") if isinstance(result.get("failure"), dict) else {}
+        raw_failure_payload = result.get("failure")
+        fallback_failure_payload: dict = raw_failure_payload if isinstance(raw_failure_payload, dict) else {}
         return {
             "failure_reason": direct_reason,
             "failure_stage": result.get("failure_stage"),
             "failed_tool": result.get("failed_tool"),
             "failed_call_id": result.get("failed_call_id"),
             "failed_step_id": result.get("failed_step_id"),
-            "recoverable": result.get("recoverable", failure_payload.get("recoverable")),
+            "recoverable": result.get("recoverable", fallback_failure_payload.get("recoverable")),
             "recoverability": result.get("recoverability"),
             "failure_id": result.get("failure_id"),
         }

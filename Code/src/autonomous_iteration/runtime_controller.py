@@ -1586,7 +1586,7 @@ class _RuntimeSessionExecutor:
                     details=decomposition_failure["failure_reason"],
                     status="failed",
                 )
-                runtime.tracker.stop_tracking()
+                runtime._stop_tracking_if_owned()
                 self._log(
                     "session_decomposition_failed",
                     output_summary={
