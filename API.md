@@ -703,6 +703,17 @@ to the project interpreter. Missing commands, model-proposed substitutes on
 non-deterministic paths, shell wrappers, and additional validation commands
 remain fail-closed.
 
+The decomposition boundary requires validation commands to terminate without
+user input. When the root/subtask contract explicitly describes a game, GUI,
+interactive program, server, or other long-running application, a direct Python
+script launch is not admitted as the authoritative validation operation. If the
+same `.py` target is grounded by the decomposition's `read_files` or
+`write_files`, the producer deterministically replaces the launch with the same
+interpreter's `-m py_compile` command before constructing `Task`; an ungrounded
+target fails closed. This producer-side normalization does not change later
+exact-command matching and does not reinterpret pytest, existing bounded checks,
+or ordinary terminating scripts.
+
 Tool-planning prompts project the current typed `Task.write_files` list as the
 authoritative write scope. README generation is optional
 post-processing: an unscoped README need is dropped with diagnostic evidence

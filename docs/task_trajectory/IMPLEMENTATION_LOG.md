@@ -8601,3 +8601,26 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   `bb095fbfb92fcf3542f32a4481ca8bdfa452a1b872e45e057af49653c43ec469`，editable package/source 均报告
   `0.1.0.dev9`；完整证据记录在 `DEV9_SCOPED_README_POST_PROCESSING_RELEASE.md`。
 - 剩余限制：本次不会自动扩展 write scope 或补写 README；文档必须由 decomposition 显式授权，或成为独立 typed task。
+
+## [已完成] dev10：交互式应用验证命令有界化
+
+- 观察到的失败：真实贪吃蛇验证任务 `597fa8c0-472b-4171-8c95-9917c54553cc` 把
+  `python snake_game.py` 声明为权威命令。pygame 主循环使首次执行和一次有界重试均在 30 秒超时；随后 recovery
+  模型提出的替代命令被 dev8 exact-command gate 正确拒绝。生成文件本身通过独立 `python3 -m py_compile`。
+- Metadata/架构影响：不修改 schema 或 `MetadataKind`。继续由 decomposition 生产唯一
+  `Task.validation_command`，后续 executor/Router/Guard/environment/receipt/completion 仍只接受该值。规范化发生在
+  `Task` 构造前，不新增恢复期替代命令 authority，也无迁移。
+- 实现修复：prompt 明确禁止以需要用户输入或不会自行终止的启动命令验证游戏、GUI、交互程序与服务器；确定性
+  producer policy 仅对已由 `read_files`/`write_files` grounding 的 Python 直接启动改写为同解释器
+  `-m py_compile`。目标未 grounding 时失败关闭；pytest、已有有界检查及普通终止脚本保持不变。
+- 验证与发布：TDD 回归先复现 direct-run 未改写与 ungrounded target 未拒绝两项失败；review 又用
+  `observer` 捕获并修复 ASCII substring 误判。最终 decomposer/relocation focused **32 passed**，完整
+  `Code/tests` **1610 passed**，touched Ruff、compileall 与 `git diff --check` 通过。安装 dev10 后两次从删除旧
+  `snake_game.py` 开始的原始中文真实任务均依次完成 code generation、file writer、mutation verification 和 exact
+  `python -m py_compile snake_game.py`，overall CLI `Success`，没有直接进入 pygame 主循环或发生 30 秒验证超时；
+  最终任务 ID 为 `27064bc1-b8d5-433c-b169-02e7008483d8` / `d9148521-46a5-45c7-ad93-22669b0ba485`，新文件 238 行并
+  通过独立 `python3 -m py_compile`。isolated wheel SHA-256 为
+  `ac8d0e4d08cf5030153847e1d8205f5c8a3e4c1d77838cb1bcc7726ba94ce9c2`，editable package/source 均为
+  `0.1.0.dev10`；完整证据记录在 `DEV10_BOUNDED_INTERACTIVE_VALIDATION_RELEASE.md`。
+- 剩余限制：`py_compile` 只证明 Python 编译语法，不宣称 UI 行为正确；更强的 headless smoke 必须由任务显式提供
+  可自行终止的测试入口，并继续作为唯一 typed validation command。

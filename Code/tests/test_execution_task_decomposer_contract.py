@@ -84,6 +84,82 @@ def test_decomposition_accepts_exact_seven_subtasks() -> None:
     assert len(result.subtasks) == 7
 
 
+def test_interactive_python_direct_run_is_normalized_to_bounded_compile() -> None:
+    result = _decomposer_for(
+        {
+            "subtasks": [
+                {
+                    "description": "实现贪吃蛇小游戏。",
+                    "kind": "implement",
+                    "write_files": ["snake_game.py"],
+                },
+                {
+                    "description": "运行游戏并确认能够启动。",
+                    "kind": "validate",
+                    "read_files": ["snake_game.py"],
+                    "validation_command": "python snake_game.py",
+                    "dependencies": [0],
+                },
+            ]
+        }
+    ).decompose("帮我做一个贪吃蛇小游戏")
+
+    assert result.subtasks[1].validation_command == "python -m py_compile snake_game.py"
+
+
+def test_interactive_python_direct_run_requires_a_grounded_target() -> None:
+    decomposer = _decomposer_for(
+        {
+            "subtasks": [
+                {
+                    "description": "运行游戏并确认能够启动。",
+                    "kind": "validate",
+                    "read_files": ["other.py"],
+                    "validation_command": "python snake_game.py",
+                }
+            ]
+        }
+    )
+
+    with pytest.raises(ValueError, match="grounded Python target"):
+        decomposer.decompose("帮我做一个贪吃蛇小游戏")
+
+
+@pytest.mark.parametrize(
+    ("task_description", "validation_command"),
+    [
+        ("Create a terminating report script", "python report.py"),
+        ("Create an observer report script", "python observer.py"),
+        ("Fix calculator.py", "python -m pytest -q"),
+        ("Build an interactive game", "python -m py_compile game.py"),
+    ],
+)
+def test_bounded_or_noninteractive_validation_commands_remain_unchanged(
+    task_description: str,
+    validation_command: str,
+) -> None:
+    if "game" in task_description:
+        target = "game.py"
+    elif "observer" in task_description:
+        target = "observer.py"
+    else:
+        target = "report.py"
+    result = _decomposer_for(
+        {
+            "subtasks": [
+                {
+                    "description": "Validate the implementation.",
+                    "kind": "validate",
+                    "read_files": [target],
+                    "validation_command": validation_command,
+                }
+            ]
+        }
+    ).decompose(task_description)
+
+    assert result.subtasks[0].validation_command == validation_command
+
+
 def test_invalid_decomposition_receives_one_bounded_repair() -> None:
     decomposer = TaskDecomposer(SimpleNamespace())
     payloads = iter(
