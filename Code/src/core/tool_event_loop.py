@@ -574,7 +574,13 @@ class ToolEventLoopRunner:
         if callable(hook):
             hook(task, tool_name, exec_result, log_output)
 
-    def run(self, task: Any, initial_prompt: str) -> ToolEventLoopRunResult:
+    def run(
+        self,
+        task: Any,
+        initial_prompt: str,
+        *,
+        initial_tool_requests: list[dict[str, Any]] | None = None,
+    ) -> ToolEventLoopRunResult:
         task_id = str(getattr(task, "id", "unknown"))
         session_id = self.owner._session_id()
         self._retry_count = 0
@@ -592,6 +598,8 @@ class ToolEventLoopRunner:
             if pending_retry_requests is not None:
                 tool_requests = pending_retry_requests
                 pending_retry_requests = None
+            elif round_index == 1 and initial_tool_requests is not None:
+                tool_requests = [dict(request) for request in initial_tool_requests]
             else:
                 try:
                     budget = self._completion_budget()
@@ -1388,7 +1396,6 @@ class ToolEventLoopRunner:
         if state is None or guard is None:
             return None
 
-        params = selection.input_metadata.to_params()
         target_files = self._edit_target_files(selection)
         if not target_files:
             return self._protocol_error(

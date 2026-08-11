@@ -47,6 +47,7 @@ from metadata import (
 from tools.code_reviewer import code_reviewer_executor as _code_reviewer_executor
 from tools.builtin_tools import register_builtin_tools
 from tools.file_reader import file_reader_executor
+from tools.multi_file_reader import multi_file_reader_executor
 from tools.llm_summarizer import llm_summarizer_executor as _llm_summarizer_executor
 from tools.web_searcher import _build_search_query_variants, _default_http_get, web_searcher_executor as _web_searcher_executor
 from tools.tool_executor import ToolExecutor
@@ -1641,6 +1642,32 @@ def test_multi_file_reader_creates_sketch_for_empty_directory(tmp_path) -> None:
     assert result.output_metadata.result["count"] == 0
     assert result.output_metadata.result["sketch_files"] == [str(sketch_path)]
     assert result.output_metadata.result["sketch_refreshed"] is True
+
+
+def test_multi_file_reader_read_only_listing_does_not_create_project_artifacts(tmp_path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    (project / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
+
+    result = multi_file_reader_executor(
+        ToolInputMetadata.from_mapping(
+            "multi_file_reader",
+            {
+                "directory_path": str(project),
+                "project_path": str(project),
+                "read_only_listing": True,
+                "pattern": "*",
+            },
+        )
+    )
+
+    artifact = result.result
+    assert artifact.attributes["sketch_refreshed"] is False
+    assert artifact.content == ""
+    assert artifact.files == [str(project / "app.py")]
+    assert not (project / "sketch.json").exists()
+    assert not (project / ".openpilot").exists()
 
 
 def test_multi_file_reader_skips_binary_files_and_keeps_directory_sketch(tmp_path) -> None:

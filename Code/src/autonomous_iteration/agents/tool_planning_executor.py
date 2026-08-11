@@ -16,7 +16,7 @@ from pydantic import ValidationError
 from autonomous_iteration.runtime_controller import ToolRouter, apply_read_only_runtime_mode, is_read_only_analysis_goal
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.config import ProviderToolExecutionBudget, ProviderToolExecutionBudgetProfile
-from core.llm import LLMMessage, LLMRequest
+from core.llm import LLMMessage
 from core.provider_tool_roundtrip import ProviderToolRoundTripRunner, build_provider_tool_definitions
 from core.reasoning import reasoning_policy_for_decision
 from core.tool_event_loop import ToolEventLoopRunner
@@ -49,6 +49,7 @@ from metadata import (
 )
 from core.tool_contracts import ToolCapability
 from tools.mutation_descriptor import FILE_MUTATION_TOOLS
+from tools.tool_selection import ToolSelection
 
 
 NEED_ATTRIBUTE_FIELDS = {
@@ -430,7 +431,12 @@ class ToolPlanningTaskExecutor:
                 success=None,
             )
 
-            loop_result = ToolEventLoopRunner(self).run(task, prompt)
+            initial_tool_requests = self._preselected_tool_requests(task)
+            loop_result = ToolEventLoopRunner(self).run(
+                task,
+                prompt,
+                initial_tool_requests=initial_tool_requests,
+            )
             tool_results = loop_result.tool_results
             last_output = loop_result.last_output
             all_tools_succeeded = loop_result.success
@@ -579,6 +585,98 @@ class ToolPlanningTaskExecutor:
                 duration_ms=int(duration * 1000),
             )
             return result
+
+    def _preselected_tool_requests(self, task: Task) -> list[dict[str, Any]] | None:
+        raw_needs = task.attributes.get("preselected_decision_needs")
+        if raw_needs is None:
+            return None
+        if not isinstance(raw_needs, list) or not raw_needs:
+            raise DecisionNeedResolutionError(
+                "Preselected evidence task has no typed decision needs.",
+                {"task_id": task.id, "failure_stage": "Preselected Tool Routing"},
+            )
+        validated_needs: list[DecisionNeedMetadata] = []
+        for index, raw_need in enumerate(raw_needs):
+            try:
+                validated_needs.append(DecisionNeedMetadata.model_validate(raw_need))
+            except (TypeError, ValueError, ValidationError) as exc:
+                raise DecisionNeedResolutionError(
+                    "Preselected evidence need is invalid.",
+                    {
+                        "task_id": task.id,
+                        "failure_stage": "Preselected Tool Routing",
+                        "need_index": index,
+                    },
+                ) from exc
+        _controller, _router, planning_state = self._planning_runtime_state({})
+        remaining_tool_calls = planning_state.budget.tool_calls_remaining
+        remaining_file_reads = planning_state.budget.file_reads_remaining
+        project_read_count = sum(
+            1
+            for need in validated_needs
+            if need.attributes.get("source_class") == "project"
+        )
+        if (
+            len(validated_needs) > remaining_tool_calls
+            or project_read_count > remaining_file_reads
+        ):
+            raise DecisionNeedResolutionError(
+                "Preselected evidence needs exceed the remaining runtime budget.",
+                {
+                    "task_id": task.id,
+                    "failure_stage": "Preselected Tool Routing",
+                    "need_count": len(validated_needs),
+                    "project_read_count": project_read_count,
+                    "remaining_tool_calls": remaining_tool_calls,
+                    "remaining_file_reads": remaining_file_reads,
+                },
+            )
+        requests: list[dict[str, Any]] = []
+        obligation_ids: list[str] = []
+        for index, need in enumerate(validated_needs):
+            obligation_id = str(need.attributes.get("obligation_id") or "").strip()
+            source_class = str(need.attributes.get("source_class") or "").strip()
+            if (
+                need.attributes.get("read_only") is not True
+                or not obligation_id
+                or need.decision_to_unlock != obligation_id
+                or source_class not in {"project", "current_external"}
+            ):
+                raise DecisionNeedResolutionError(
+                    "Preselected evidence need lost its read-only obligation identity.",
+                    {
+                        "task_id": task.id,
+                        "failure_stage": "Preselected Tool Routing",
+                        "need_index": index,
+                    },
+                )
+            routed = self._route_decision_needs(
+                {"decision_needs": [need.model_dump(mode="json")]}
+            )
+            if len(routed) != 1:
+                raise DecisionNeedResolutionError(
+                    "Required preselected evidence need did not route one-to-one.",
+                    {
+                        "task_id": task.id,
+                        "failure_stage": "Preselected Tool Routing",
+                        "obligation_id": obligation_id,
+                        "selection_count": len(routed),
+                    },
+                )
+            requests.extend(routed)
+            obligation_ids.append(obligation_id)
+        if len(set(obligation_ids)) != len(obligation_ids):
+            raise DecisionNeedResolutionError(
+                "Preselected evidence needs contain duplicate obligations.",
+                {"task_id": task.id, "failure_stage": "Preselected Tool Routing"},
+            )
+        self._log(
+            "preselected_evidence_tools_routed",
+            input_summary={"task_id": task.id, "obligation_ids": obligation_ids},
+            output_summary={"tool_count": len(requests)},
+            success=True,
+        )
+        return requests
 
     def execute_provider_tool_task(
         self,

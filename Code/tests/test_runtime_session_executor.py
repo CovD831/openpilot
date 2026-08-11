@@ -37,6 +37,22 @@ class FakeSemantic:
         return {"task_type": "coding", "risk_level": "low"}
 
 
+class ResearchSemantic:
+    task_type = SimpleNamespace(value="research")
+    risk_level = SimpleNamespace(value="low")
+    required_resources = ["web_search", "llm"]
+    expected_deliverables = ["grounded summary"]
+    confidence = 0.9
+
+    def model_dump(self):
+        return {
+            "task_type": "research",
+            "risk_level": "low",
+            "required_resources": self.required_resources,
+            "expected_deliverables": self.expected_deliverables,
+        }
+
+
 class FakeMemoryResult:
     memories = []
 
@@ -82,6 +98,11 @@ class FakeMemoryStore:
 class FakeSemanticAnalyzer:
     def analyze_goal(self, goal):
         return FakeSemantic()
+
+
+class ResearchSemanticAnalyzer:
+    def analyze_goal(self, goal):
+        return ResearchSemantic()
 
 
 class FallbackSemanticAnalyzer:
@@ -282,6 +303,74 @@ def test_runtime_session_standard_returns_result(tmp_path) -> None:
     assert result["final_result"] == {"summary": "Build app", "tasks": 1}
     assert result["completed_improvements"] == 0
     assert runtime.task_decomposer.decompose_called is True
+
+
+def test_runtime_session_single_task_skips_provider_decomposition_and_persists_decision(
+    tmp_path,
+) -> None:
+    runtime = FakeRuntime(tmp_path)
+    runtime.semantic_analyzer = ResearchSemanticAnalyzer()
+    runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
+    cursors: list[SessionExecutionCursor] = []
+    executor = _RuntimeSessionExecutor(runtime, session_cursor_sink=cursors.append)
+
+    result = executor.run("Find the latest Python release notes", {}, mode="standard")
+
+    assert result["success"] is True
+    assert runtime.task_decomposer.decompose_called is False
+    assert cursors[0].stage == SessionStage.PLAN_RECORDED
+    assert cursors[0].decomposition_decision.kind == "single_task"
+    assert len(cursors[0].tasks) == 1
+    assert cursors[-1].plan_hash == cursors[0].plan_hash
+
+
+def test_enhanced_single_task_ui_does_not_announce_task_decomposition(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("autonomous_iteration.runtime_controller.time.sleep", lambda seconds: None)
+    runtime = FakeRuntime(tmp_path)
+    runtime.semantic_analyzer = ResearchSemanticAnalyzer()
+    runtime.stats["start_time"] = runtime.stats["end_time"] = __import__("datetime").datetime.now()
+    executor = _RuntimeSessionExecutor(runtime)
+
+    result = executor.run("Find the latest Python release notes", {}, mode="enhanced_ui")
+
+    assert result["success"] is True
+    initial_stages = next(update["stages"] for update in runtime.enhanced_ui.graph_updates if "stages" in update)
+    assert "Task Planning" in initial_stages
+    assert "Task Decomposition" not in initial_stages
+    assert runtime.task_decomposer.decompose_called is False
+
+
+def test_single_task_resume_reuses_exact_decision_and_plan_without_decomposition(
+    tmp_path,
+) -> None:
+    source_runtime = FakeRuntime(tmp_path / "source")
+    source_runtime.semantic_analyzer = ResearchSemanticAnalyzer()
+    source_runtime.stats["start_time"] = source_runtime.stats["end_time"] = __import__(
+        "datetime"
+    ).datetime.now()
+    cursors: list[SessionExecutionCursor] = []
+    source = _RuntimeSessionExecutor(source_runtime, session_cursor_sink=cursors.append)
+    source.run("Find the latest Python release notes", {}, mode="standard")
+
+    resumed_runtime = FakeRuntime(tmp_path / "resumed")
+    resumed_runtime.semantic_analyzer = ResearchSemanticAnalyzer()
+    resumed_runtime.stats["start_time"] = resumed_runtime.stats["end_time"] = __import__(
+        "datetime"
+    ).datetime.now()
+    resumed = _RuntimeSessionExecutor(resumed_runtime)
+    result = resumed.run(
+        "Find the latest Python release notes",
+        {},
+        mode="standard",
+        resume_cursor=cursors[0],
+    )
+
+    assert result["success"] is True
+    assert resumed_runtime.task_decomposer.decompose_called is False
+    assert cursors[0].decomposition_decision.kind == "single_task"
 
 
 def test_runtime_session_task_graph_preserves_support_context_files() -> None:
