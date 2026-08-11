@@ -1933,6 +1933,105 @@ def test_tool_event_loop_missing_required_field_is_recoverable(tmp_path) -> None
     assert loop["recoverable_errors"][0]["error_type"] == "MissingRequiredInput"
 
 
+def test_tool_event_loop_feature_flag_allows_only_one_protocol_repair(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "1")
+    task = Task(id="task", description="Generate code")
+    runtime = FakeRuntime(
+        tmp_path,
+        [
+            {
+                "decision_needs": [
+                    {
+                        "need_type": "file_write",
+                        "question": "write generated code",
+                        "target_path": "app.py",
+                    }
+                ]
+            },
+            {
+                "decision_needs": [
+                    {
+                        "need_type": "file_write",
+                        "question": "write generated code",
+                        "target_path": "app.py",
+                    }
+                ]
+            },
+            {
+                "decision_needs": [
+                    {
+                        "need_type": "file_write",
+                        "question": "write generated code",
+                        "target_path": "app.py",
+                        "attributes": {"content": "print('too late')"},
+                    }
+                ]
+            },
+        ],
+    )
+    executor = ToolPlanningTaskExecutor(runtime)
+
+    result = executor.execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.FAILED
+    assert result.result_metadata.failure.error_type == "MissingRequiredInput"
+    assert result.result_metadata.failure.recoverable is False
+    assert result.result_metadata.failure.details["protocol_repair_exhausted"] is True
+    assert len(runtime.llm_client.requests) == 2
+    loop = result.result_metadata.failure.details["tool_loop"]
+    assert loop["rounds_used"] == 2
+    assert loop["retry_count"] == 1
+    assert len(loop["recoverable_errors"]) == 1
+    assert any(
+        event["tool_error"]
+        and event["tool_error"]["failure"]["details"].get("protocol_repair_exhausted")
+        for event in loop["events"]
+    )
+
+
+def test_tool_event_loop_feature_flag_accepts_first_protocol_repair(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "1")
+    task = Task(id="task", description="Generate code")
+    runtime = FakeRuntime(
+        tmp_path,
+        [
+            {
+                "decision_needs": [
+                    {
+                        "need_type": "file_write",
+                        "question": "write generated code",
+                        "target_path": "app.py",
+                    }
+                ]
+            },
+            {
+                "decision_needs": [
+                    {
+                        "need_type": "file_write",
+                        "question": "write generated code",
+                        "target_path": "app.py",
+                        "attributes": {"content": "print('ok')"},
+                    }
+                ]
+            },
+        ],
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_task(task, _context(task))
+
+    assert result.status == TaskStatus.COMPLETED
+    assert len(runtime.llm_client.requests) == 2
+    loop = result.result_metadata.result.attributes["tool_loop"]
+    assert loop["rounds_used"] == 2
+    assert loop["retry_count"] == 1
+
+
 def test_tool_router_blocks_incomplete_directory_need_before_tool_call(tmp_path) -> None:
     task = Task(id="task", description="Validate files")
     state = RuntimeStateMetadata(goal="validate files")

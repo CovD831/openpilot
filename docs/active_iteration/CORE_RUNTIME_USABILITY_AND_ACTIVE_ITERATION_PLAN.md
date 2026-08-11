@@ -4,7 +4,8 @@
 > task-materialization/reducer writer-migration 与 CRU-2B deterministic first-turn
 > completion、CRU-2C bounded model-supported core、CRU-2D evidence escalation
 > core、CRU-3 governed decomposition 与安全的 feature-flagged single-task
-> evidence handoff 已完成，下一切片为 CRU-4 bounded step recovery。
+> evidence handoff 已完成；CRU-4A model-visible bounded tool protocol repair
+> 已完成，下一切片为 CRU-4B durable Provider-step recovery。
 >
 > 日期：2026-08-10
 >
@@ -1479,6 +1480,15 @@ fail closed，不回落 legacy pipeline。Agent Generator 保持不变。
 - tool-use/result pairing；
 - local/provider path alignment；
 - retry/no-progress budgets。
+
+实施状态：CRU-4A 已完成默认关闭的
+`OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR` canary。local/provider-native 复用
+同一 unknown-tool/invalid-input taxonomy，只允许一次模型修正；第二个协议失败或
+exact repeated invalid call 在返回匹配 tool result 后终止。permission、confirmation、
+scope、budget、checkpoint、indeterminate side effect、mutation verification 与 exact
+validation 不可进入模型修复；Provider batch 中止调用不记作已执行，可在唯一修复轮次
+重试。所有 assistant tool calls 保持原 provider call ID 的一对一 bounded result。
+CRU-4B 继续完成 durable Provider-step crash/recovery 边界后再关闭本阶段。
 
 ### CRU-5：Core Active Diagnostic Strengthening
 

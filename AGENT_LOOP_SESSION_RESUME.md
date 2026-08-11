@@ -67,6 +67,13 @@ assistant record. Recovery at any of those writes reuses the original response
 artifact and the already accepted evidence references; it does not rerun the
 Provider, append a duplicate turn, create project success, or admit post-core.
 
+Model-visible tool protocol repair is an in-session bounded transition, not a
+new replay authority. It reuses typed tool errors, call IDs, Provider call IDs,
+the attempt ledger, and the existing checkpoint lifecycle. A process restart may
+resume only from the durable tool/checkpoint boundary already recorded; the
+repair flag does not authorize replay of an unobserved side effect or a fresh
+permission/scope decision.
+
 ## Source of truth
 
 `RuntimeStateMetadata.recovery_status` is the current operational status;

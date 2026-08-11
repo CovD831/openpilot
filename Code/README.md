@@ -31,6 +31,14 @@ canary to execute those obligations through the existing read-only tool loop
 and durable checkpoints. Either evidence-path failure stops without legacy
 fallback. Agent Generator routing is unchanged.
 
+Set `OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR=true` only for the bounded recovery
+canary. Local and provider-native tool paths then expose one unknown-tool or
+invalid-input failure to the model and accept one corrected call. A second
+protocol failure or exact repeated invalid call stops; permission, scope,
+confirmation, checkpoint, and validation failures remain terminal. Provider
+tool-call/result IDs stay paired and the current phase's tool surface is not
+expanded.
+
 Project-scoped Python validation is gated by a read-only `.venv` preflight.
 Existing ready environments attach without install/network writes; setup or
 resync follows the root permission policy. Failure blocks validation instead of

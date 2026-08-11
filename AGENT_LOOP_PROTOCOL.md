@@ -39,6 +39,16 @@ Mutating tools follow the durable progression `prepared -> observed -> applied
 -> verified`. A process loss between `prepared` and `observed` produces an
 indeterminate action. It must be reconciled before any replay.
 
+## Tool protocol repair rule
+
+The default-off model-visible repair canary permits one correction only for the
+typed unknown-tool/invalid-input taxonomy. Local and provider-native routes use
+the same error kinds and retain every call/result correlation. The second
+protocol failure, including an exact repeated invalid call, is terminal.
+Permission, confirmation, scope, budget, checkpoint, indeterminate side effect,
+mutation verification, and exact-validation failures are not model-repairable.
+Repair never changes the phase-specific advertised tools or task authority.
+
 ## Project environment gate
 
 Before core execution reaches a project-scoped Python validation, the session

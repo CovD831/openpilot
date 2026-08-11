@@ -72,6 +72,7 @@ OpenAI-compatible providers are configured with environment variables:
 | `OPENPILOT_PROVIDER_TOOL_COMPLETION_OUTCOME_FEEDBACK_ENABLED` | No | `false` | Typed experiment flag that lets the provider tool runner use the prior completion outcome for bounded budget recovery; it is copied into `RuntimeBudgetMetadata` and never inferred from a model name. |
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_MAX_ROUNDS` | No | `3` | Upper bound for provider tool-call rounds when the opt-in entry point is used. |
 | `OPENPILOT_PROVIDER_TOOL_EXECUTION_BUDGET_PROFILE` | No | `canary` | Typed budget lane: `canary` keeps bounded smoke-test limits; `real_read_only` enables 12,288 prompt tokens, 4,096 per-call completion ceiling, 24,000 total completion tokens, 8 rounds, 40 calls, and 60 file reads with zero edits/creates for explicit non-mutating provider tasks; `real_mutation` has the same context ceilings but admits only one edit, zero creates, and one verification for explicitly confirmed provider-native mutation tasks. |
+| `OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR` | No | `false` | Canary gate for one model-visible unknown-tool/invalid-input correction across local and provider-native tool loops. It does not authorize permission, confirmation, scope, checkpoint, or validation repair. |
 | `OPENPILOT_EMBEDDING_PROVIDER` | No | `openai-compatible` | Embedding provider label. |
 | `OPENPILOT_EMBEDDING_BASE_URL` | No | Inherits `OPENPILOT_LLM_BASE_URL` | OpenAI-compatible embedding endpoint. |
 | `OPENPILOT_EMBEDDING_API_KEY` | No | Inherits `OPENPILOT_LLM_API_KEY` | Embedding API key. |
@@ -960,6 +961,20 @@ initial request and one JSON-repair request. This gives empty, truncated, or
 otherwise invalid JSON one bounded recovery opportunity; failure after the
 second attempt remains typed and preserves available response, usage, and
 finish-reason diagnostics.
+
+When `OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR=true`, executable tool-protocol
+failures use the existing `ToolErrorMetadata` / `FailureMetadata` taxonomy and
+receive at most one model correction. The repairable set is limited to unknown
+tools and malformed, missing, or locally invalid typed inputs. Local repair is
+counted in `ToolLoopMetadata.retry_count`; Provider-native attempts are counted
+from the typed attempt ledger. A second protocol failure or an exact repeated
+invalid call stops after emitting the matching tool result. Confirmation,
+permission, scope, budget, checkpoint, indeterminate-side-effect, mutation
+verification, and exact-validation failures never receive this model repair.
+Every Provider assistant tool call still has exactly one bounded `role=tool`
+result with the original `provider_call_id`; unexecuted calls in a stopped batch
+receive `ProviderToolBatchAborted`. The flag changes only repair selection and
+never expands the tools advertised for the current phase or any task authority.
 
 At startup, configuration searches the main Git checkout `.env`, the active
 linked-worktree `.env`, `Code/.env`, and the process working-directory `.env`

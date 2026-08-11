@@ -544,7 +544,10 @@ trajectory layer should preserve that typed fact directly.
 
 ### Future direction
 
-Keep as-is.
+Keep as-is. Model-visible protocol correction reuses the same
+`ToolErrorMetadata` taxonomy and call correlation. A local correction increments
+the existing `ToolLoopMetadata.retry_count`; a terminal second failure remains
+in the event stream rather than creating a parallel repair event contract.
 
 ---
 

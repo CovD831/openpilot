@@ -501,6 +501,344 @@ def test_roundtrip_runner_returns_recoverable_admission_error_to_provider(monkey
     assert "UnknownTool" in tool_message.content
 
 
+def test_roundtrip_feature_flag_allows_only_one_protocol_repair(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    monkeypatch.setenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "1")
+    llm = _LLM(
+        [
+            LLMResponse(
+                content="",
+                reasoning_content="I will try an unavailable tool.",
+                tool_calls=[
+                    LLMToolCall(
+                        id="ds-bad-first",
+                        function=LLMToolFunctionCall(name="not_registered", arguments="{}"),
+                    )
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="",
+                reasoning_content="I will try a different unavailable tool.",
+                tool_calls=[
+                    LLMToolCall(
+                        id="ds-bad-repair",
+                        function=LLMToolFunctionCall(name="still_not_registered", arguments="{}"),
+                    )
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="This response must not be requested.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    runtime = _runtime(llm, _registry(), _Executor())
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-bounded-repair", description="Inspect README"),
+        tools=[],
+        max_rounds=3,
+    ).run([LLMMessage(role="user", content="Inspect README")])
+
+    assert result.success is False
+    assert result.error_message == "ProviderToolProtocolRepairExhausted"
+    assert len(llm.requests) == 2
+    assert result.messages[-1].role == "tool"
+    assert result.messages[-1].tool_call_id == "ds-bad-repair"
+    assert "UnknownTool" in result.messages[-1].content
+
+
+def test_roundtrip_feature_flag_accepts_first_protocol_repair(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    monkeypatch.setenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "1")
+    llm = _LLM(
+        [
+            LLMResponse(
+                content="",
+                reasoning_content="I will inspect the file.",
+                tool_calls=[
+                    LLMToolCall(
+                        id="ds-repair-once",
+                        function=LLMToolFunctionCall(
+                            name="file_reader",
+                            arguments='{"file_path":',
+                        ),
+                    )
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="I can answer without that tool.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    runtime = _runtime(llm, _registry(), _Executor())
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-repair-once", description="Inspect README"),
+        tools=build_provider_tool_definitions(runtime.tool_registry, ["file_reader"]),
+        max_rounds=2,
+    ).run([LLMMessage(role="user", content="Inspect README")])
+
+    assert result.success is True
+    assert len(llm.requests) == 2
+    assert result.messages[-1].role == "tool"
+    assert result.messages[-1].tool_call_id == "ds-repair-once"
+    assert "InvalidToolArguments" in result.messages[-1].content
+
+
+def test_roundtrip_protocol_repair_may_retry_a_batch_aborted_call(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    monkeypatch.setenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "1")
+    first_response = LLMResponse(
+        content="",
+        reasoning_content="I will inspect with two calls.",
+        tool_calls=[
+            LLMToolCall(
+                id="ds-batch-invalid",
+                function=LLMToolFunctionCall(name="not_registered", arguments="{}"),
+            ),
+            LLMToolCall(
+                id="ds-batch-aborted",
+                function=LLMToolFunctionCall(
+                    name="file_reader",
+                    arguments='{"file_path":"README.md"}',
+                ),
+            ),
+        ],
+        model="deepseek-v4-flash",
+        provider="deepseek",
+        finish_reason="tool_calls",
+    )
+    repaired_response = LLMResponse(
+        content="",
+        reasoning_content="I will retry the call that the project did not execute.",
+        tool_calls=[
+            LLMToolCall(
+                id="ds-batch-retried",
+                function=LLMToolFunctionCall(
+                    name="file_reader",
+                    arguments='{"file_path":"README.md"}',
+                ),
+            )
+        ],
+        model="deepseek-v4-flash",
+        provider="deepseek",
+        finish_reason="tool_calls",
+    )
+    llm = _LLM(
+        [
+            first_response,
+            repaired_response,
+            LLMResponse(
+                content="The README was inspected.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    executor = _Executor()
+    runtime = _runtime(llm, _registry(), executor)
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-batch-repair", description="Inspect README"),
+        tools=build_provider_tool_definitions(runtime.tool_registry, ["file_reader"]),
+        max_rounds=3,
+    ).run([LLMMessage(role="user", content="Inspect README")])
+
+    assert result.success is True
+    assert len(executor.calls) == 1
+    first_tool_messages = llm.requests[1].messages[-2:]
+    assert [message.tool_call_id for message in first_tool_messages] == [
+        "ds-batch-invalid",
+        "ds-batch-aborted",
+    ]
+    assert "ProviderToolBatchAborted" in first_tool_messages[1].content
+    assert llm.requests[2].messages[-1].tool_call_id == "ds-batch-retried"
+    assert '"success":true' in llm.requests[2].messages[-1].content
+
+
+def test_roundtrip_feature_flag_stops_repeated_protocol_call_after_repair(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    monkeypatch.setenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "1")
+    responses = []
+    for call_id in ("ds-repeat-invalid-1", "ds-repeat-invalid-2"):
+        responses.append(
+            LLMResponse(
+                content="",
+                reasoning_content="I will try the same unavailable tool.",
+                tool_calls=[
+                    LLMToolCall(
+                        id=call_id,
+                        function=LLMToolFunctionCall(name="not_registered", arguments="{}"),
+                    )
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            )
+        )
+    responses.append(
+        LLMResponse(
+            content="This response must not be requested.",
+            model="deepseek-v4-flash",
+            provider="deepseek",
+            finish_reason="stop",
+        )
+    )
+    llm = _LLM(responses)
+    runtime = _runtime(llm, _registry(), _Executor())
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-repeat-invalid", description="Inspect README"),
+        tools=[],
+        max_rounds=3,
+    ).run([LLMMessage(role="user", content="Inspect README")])
+
+    assert result.success is False
+    assert result.error_message == "ProviderToolProtocolRepairExhausted"
+    assert len(llm.requests) == 2
+    assert result.messages[-1].tool_call_id == "ds-repeat-invalid-2"
+    assert "ProviderToolDuplicateAttempt" in result.messages[-1].content
+
+
+def test_roundtrip_feature_flag_does_not_offer_model_repair_for_confirmation(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    monkeypatch.setenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "1")
+    llm = _LLM(
+        [
+            LLMResponse(
+                content="",
+                reasoning_content="I will request a command.",
+                tool_calls=[
+                    LLMToolCall(
+                        id="ds-confirmation",
+                        function=LLMToolFunctionCall(
+                            name="command_executor",
+                            arguments='{"command":"python -m pytest","mode":"dry_run"}',
+                        ),
+                    )
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="This response must not be requested.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    runtime = _runtime(llm, _registry(), _Executor())
+    runtime.tool_registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-confirmation", description="Run tests"),
+        tools=build_provider_tool_definitions(runtime.tool_registry, ["command_executor"]),
+        max_rounds=2,
+    ).run([LLMMessage(role="user", content="Run tests")])
+
+    assert result.success is False
+    assert result.error_message == "Tool command_executor requires explicit confirmation before execution."
+    assert len(llm.requests) == 1
+    assert result.messages[-1].role == "tool"
+    assert result.messages[-1].tool_call_id == "ds-confirmation"
+    assert "UserConfirmationRequired" in result.messages[-1].content
+
+
+def test_roundtrip_feature_flag_does_not_offer_model_repair_for_scope(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    monkeypatch.setenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "1")
+    llm = _LLM(
+        [
+            LLMResponse(
+                content="",
+                reasoning_content="I will inspect a path outside the declared scope.",
+                tool_calls=[
+                    LLMToolCall(
+                        id="ds-scope",
+                        function=LLMToolFunctionCall(
+                            name="file_reader",
+                            arguments='{"file_path":"outside.py"}',
+                        ),
+                    )
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
+                content="This response must not be requested.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    runtime = _runtime(llm, _registry(), _Executor())
+    allowed = tmp_path / "README.md"
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-scope", description="Inspect README"),
+        tools=build_provider_tool_definitions(runtime.tool_registry, ["file_reader"]),
+        max_rounds=2,
+        project_path=str(tmp_path),
+        read_scope=[str(allowed)],
+    ).run([LLMMessage(role="user", content="Inspect README")])
+
+    assert result.success is False
+    assert len(llm.requests) == 1
+    assert result.messages[-1].tool_call_id == "ds-scope"
+    assert "ProviderToolScopeViolation" in result.messages[-1].content
+
+
 def test_roundtrip_runner_returns_recoverable_read_execution_error_to_provider(monkeypatch) -> None:
     monkeypatch.setattr(
         "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
@@ -3669,7 +4007,7 @@ def test_record_attempts_projects_bounded_runner_constructor_from_declared_windo
         loop_metadata=SimpleNamespace(recoverable_errors=[]),
     )
 
-    runner._record_attempts([call], [call], loop_result, round_index=1)
+    runner._record_attempts([call], loop_result, round_index=1)
 
     context, source_ids = runner._declared_generator_context()
     assert "MODULE_CALLABLE_CANDIDATE: ProviderToolRoundTripRunner(owner, task, *, tools, max_rounds=3)" in context
@@ -3735,7 +4073,7 @@ def test_record_attempts_renders_partial_window_callsite_hints(tmp_path) -> None
         loop_metadata=SimpleNamespace(recoverable_errors=[]),
     )
 
-    runner._record_attempts([call], [call], loop_result, round_index=1)
+    runner._record_attempts([call], loop_result, round_index=1)
 
     canonical = str(target.resolve())
     page = runner._completed_page_content[canonical][0]
@@ -3825,7 +4163,7 @@ def test_record_attempts_preserves_callsite_hints_across_multiwindow_clipping(tm
             ],
             loop_metadata=SimpleNamespace(recoverable_errors=[]),
         )
-        runner._record_attempts([call], [call], loop_result, round_index=index + 1)
+        runner._record_attempts([call], loop_result, round_index=index + 1)
 
     context, _source_ids = runner._declared_generator_context()
     assert "MODULE_CALLSITE_HINT: owner = _Owner(runtime)" in context

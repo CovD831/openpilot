@@ -8244,3 +8244,31 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   Provider request 与 tool protocol 的 model-visible repair/replay 由 CRU-4 负责。response-evidence resume
   当前只接受 materialized initial checkpoint 的首次 attach；中途恢复继续走现有 explicit resume contract，
   不从 CLI 自动推测 continuation。
+
+## [进行中] CRU-4：Bounded step recovery
+
+- 观察到的失败：local tool loop 会把每个 recoverable protocol failure 都交给最多五轮
+  `max_steps`，Provider-native 又把 admission、read execution 与 generic no-progress 混在一起；
+  scope/confirmation 可能被误当成模型可修复，exact invalid call 可重复，batch-aborted call 还会被
+  attempt ledger 错记为已执行并阻止合法重试。
+- Metadata impact：复用 `ToolErrorMetadata`、`FailureMetadata`、`ToolEventMetadata`、
+  `ToolLoopMetadata.retry_count`、Provider call ID 与现有 runtime-only attempt ledger。未新增
+  `MetadataKind` 或持久化权限/恢复 owner；local repair 次数从 typed recoverable errors 与 retry counter
+  推导，Provider repair/no-progress 从 typed attempt error kind 和 normalized call signature 推导。
+  `protocol_repair_exhausted` 只作为终止诊断写入 `FailureMetadata.details`，不控制后续路由。
+- CRU-4A 实现：新增默认关闭的 `OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR`。unknown tool、invalid JSON
+  arguments、missing required input、unsupported local input 和其他已注册 protocol kinds 只有一次模型
+  修正；第二个 protocol failure 或 exact repeat 在返回对应 tool result 后停止。permission、confirmation、
+  scope、budget、checkpoint、indeterminate side effect、mutation verification 与 exact validation 不进入
+  repair。Provider assistant calls 始终按原 provider call ID 一对一收到 bounded tool result；batch 后续
+  call 收到 `ProviderToolBatchAborted`，且只有存在真实 typed tool result 的 call 才进入 attempt ledger，
+  因而未执行 call 可在唯一 repair round 重试。phase-specific tool surface、Guard、预算、executor 和
+  checkpoint 均未改变；Agent Generator route/pipeline 未改。
+- CRU-4A 验证：新增 local first-repair success/second-failure stop，Provider unknown/invalid-arguments、
+  exact-repeat、confirmation、scope、mixed batch pairing 与 aborted-call retry 覆盖；受影响组合
+  **246 passed**，完整 `Code/tests` **1476 passed**（1 个既有 pytest deprecation warning），touched
+  Ruff（排除 3 个既有 F402/F841）、compileall 与 `git diff --check` 通过。五轴 review 发现并修复
+  scope-as-read-execution 和 batch-aborted-as-attempt 两个交叉错误。
+- 剩余限制：CRU-4 尚未关闭。下一切片需完成 pre-task/Provider-step durable request/response 的
+  crash/recovery 语义，证明已 durable 的 Provider observation 不会被重新请求、pending/indeterminate
+  transport 不会被猜测为可重放，再重新执行本阶段验收。

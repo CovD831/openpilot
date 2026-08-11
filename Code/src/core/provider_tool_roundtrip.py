@@ -15,7 +15,12 @@ from core.exceptions import ContextAssemblyBudgetError
 from core.llm import LLMMessage, LLMResponse, LLMToolDefinition, LLMToolFunction, LLMToolResult
 from core.provider_tool_admission import ProviderToolAdmission, admit_provider_tool_calls
 from core.tool_contracts import ToolCapability
-from core.tool_event_loop import ToolEventLoopRunResult, ToolEventLoopRunner
+from core.tool_event_loop import (
+    MODEL_REPAIRABLE_TOOL_PROTOCOL_ERRORS,
+    ToolEventLoopRunResult,
+    ToolEventLoopRunner,
+    model_visible_protocol_repair_enabled,
+)
 from core.validation_command import validation_commands_match
 from memory.context_assembly import build_context_candidate_request, build_context_llm_request
 from metadata import (
@@ -52,6 +57,23 @@ _MAX_STRUCTURED_CALLABLE_CHARS = 256
 _MAX_STRUCTURED_CALLSITE_CANDIDATES = 32
 _MAX_STRUCTURED_CALLSITE_CHARS = 256
 _MAX_STRUCTURED_CALLSITE_DEPTH = 3
+_PROVIDER_ADMISSION_FAILURE_ERRORS = frozenset(
+    {
+        "InvalidToolArguments",
+        "MissingRequiredInput",
+        "MissingRequiredInputGroup",
+        "PermissionDenied",
+        "ProviderToolBlocked",
+        "ProviderToolScopeViolation",
+        "ProviderToolValidationDuplicate",
+        "ProviderToolValidationViolation",
+        "ProviderToolWriteScopeViolation",
+        "ToolBudgetExhausted",
+        "ToolConfirmationRequired",
+        "UnknownTool",
+        "UserConfirmationRequired",
+    }
+)
 
 
 def _contains_projection_marker(source: str) -> bool:
@@ -1028,6 +1050,7 @@ class ProviderToolRoundTripRunner:
             )
         for round_index in range(1, self.max_rounds + 1):
             budget: RuntimeBudgetMetadata | None = None
+            repeated_protocol_attempt = False
             request_max_tokens: int | None = None
             budget_consumed = False
             budget_tokens_used_before: int | None = None
@@ -1268,6 +1291,9 @@ class ProviderToolRoundTripRunner:
 
             try:
                 max_calls = self._max_calls_for_round(request)
+                repeated_protocol_attempt = self._has_repeated_protocol_attempt(
+                    response.tool_calls
+                )
                 new_tool_calls, preblocked_results = self._partition_duplicate_calls(
                     response.tool_calls,
                     round_index=round_index,
@@ -1322,7 +1348,6 @@ class ProviderToolRoundTripRunner:
             loop_results.append(loop_result)
             self._record_attempts(
                 response.tool_calls,
-                admitted_tool_calls,
                 loop_result,
                 round_index=round_index,
             )
@@ -1422,6 +1447,33 @@ class ProviderToolRoundTripRunner:
                     attempts=list(self._attempt_ledger),
                     evidence_coverage=self._evidence_coverage(),
                 )
+            if model_visible_protocol_repair_enabled() and (
+                repeated_protocol_attempt
+                or self._is_model_repairable_protocol_failure(loop_result)
+            ):
+                if repeated_protocol_attempt or self._protocol_failure_count() > 1:
+                    return self._result(
+                        success=False,
+                        final_response=response,
+                        messages=current_messages,
+                        tool_loop_results=loop_results,
+                        rounds_used=round_index,
+                        error_message="ProviderToolProtocolRepairExhausted",
+                        attempts=list(self._attempt_ledger),
+                        evidence_coverage=self._evidence_coverage(),
+                    )
+                if round_index >= self.max_rounds:
+                    return self._result(
+                        success=False,
+                        final_response=response,
+                        messages=current_messages,
+                        tool_loop_results=loop_results,
+                        rounds_used=round_index,
+                        error_message="ProviderToolProtocolRepairBudgetUnavailable",
+                        attempts=list(self._attempt_ledger),
+                        evidence_coverage=self._evidence_coverage(),
+                    )
+                continue
             if (
                 self._page_cap_ready()
                 and self._finalization_requests == 0
@@ -2677,12 +2729,10 @@ class ProviderToolRoundTripRunner:
     def _record_attempts(
         self,
         response_calls: Sequence[Any],
-        executed_calls: Sequence[Any],
         loop_result: ToolEventLoopRunResult,
         *,
         round_index: int,
     ) -> None:
-        executed_ids = {call.id for call in executed_calls}
         result_by_id = {
             str(item.get("provider_call_id")): item
             for item in loop_result.tool_results
@@ -2695,7 +2745,7 @@ class ProviderToolRoundTripRunner:
         }
         self._last_round_progress = False
         for call in response_calls:
-            if call.id not in executed_ids:
+            if call.id not in result_by_id:
                 continue
             signature = self._call_signature(call)
             item = result_by_id.get(call.id, {})
@@ -3051,6 +3101,22 @@ class ProviderToolRoundTripRunner:
         payload = {"tool": str(call.function.name), "arguments": canonical}
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _has_repeated_protocol_attempt(self, calls: Sequence[Any]) -> bool:
+        for call in calls:
+            previous = self._attempts_by_signature.get(self._call_signature(call))
+            if (
+                previous is not None
+                and previous.error_type in MODEL_REPAIRABLE_TOOL_PROTOCOL_ERRORS
+            ):
+                return True
+        return False
+
+    def _protocol_failure_count(self) -> int:
+        return sum(
+            attempt.error_type in MODEL_REPAIRABLE_TOOL_PROTOCOL_ERRORS
+            for attempt in self._attempt_ledger
+        )
 
     def _read_path_for_call(self, call: Any) -> str | None:
         raw_arguments = str(call.function.arguments or "").strip()
@@ -3666,11 +3732,12 @@ class ProviderToolRoundTripRunner:
             return {"success": False, "truncated": True, "content": str(content)[:480]}
         return value if isinstance(value, dict) else {"value": str(value)}
 
-    @staticmethod
-    def _is_recoverable_admission_failure(loop_result: ToolEventLoopRunResult) -> bool:
+    def _is_recoverable_admission_failure(self, loop_result: ToolEventLoopRunResult) -> bool:
         failure = loop_result.loop_metadata.final_error
         if failure is None:
             return False
+        if model_visible_protocol_repair_enabled():
+            return self._is_model_repairable_protocol_failure(loop_result)
         return failure.error_type in {
             "InvalidToolArguments",
             "MissingRequiredInput",
@@ -3680,6 +3747,17 @@ class ProviderToolRoundTripRunner:
             "UserConfirmationRequired",
             "ProviderToolScopeViolation",
         } and bool(failure.recoverable)
+
+    @staticmethod
+    def _is_model_repairable_protocol_failure(
+        loop_result: ToolEventLoopRunResult,
+    ) -> bool:
+        failure = loop_result.loop_metadata.final_error
+        return bool(
+            failure is not None
+            and failure.recoverable
+            and failure.error_type in MODEL_REPAIRABLE_TOOL_PROTOCOL_ERRORS
+        )
 
     def _is_recoverable_execution_failure(self, loop_result: ToolEventLoopRunResult) -> bool:
         """Allow only safe read-only execution failures to reach the provider.
@@ -3693,6 +3771,8 @@ class ProviderToolRoundTripRunner:
         """
         failure = loop_result.loop_metadata.final_error
         if failure is None or not bool(failure.recoverable):
+            return False
+        if failure.error_type in _PROVIDER_ADMISSION_FAILURE_ERRORS:
             return False
         if failure.error_type in {
             "CheckpointPrepareFailed",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,6 +41,26 @@ from metadata import (
 )
 from tools.tool_selection import ToolSelection
 from tools.mutation_descriptor import FILE_MUTATION_TOOLS, file_mutation_targets
+
+
+MODEL_REPAIRABLE_TOOL_PROTOCOL_ERRORS = frozenset(
+    {
+        "FileReaderDirectoryPath",
+        "GeneratedPlaceholderContent",
+        "InvalidToolArguments",
+        "InventedIntermediateFile",
+        "MissingRequiredInput",
+        "MissingRequiredInputGroup",
+        "UnknownTool",
+        "UnsupportedCommandMode",
+        "UnsupportedLanguage",
+    }
+)
+
+
+def model_visible_protocol_repair_enabled() -> bool:
+    value = str(os.getenv("OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR", "0")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def _phase_value(phase: AgentPhase | str) -> str:
@@ -735,6 +756,24 @@ class ToolEventLoopRunner:
 
                 protocol_error = self._validate_and_normalize_call(tool_call_metadata)
                 if protocol_error:
+                    if model_visible_protocol_repair_enabled():
+                        protocol_repairs_used = sum(
+                            error.error_type in MODEL_REPAIRABLE_TOOL_PROTOCOL_ERRORS
+                            for error in self.recoverable_errors
+                        )
+                        if protocol_repairs_used >= 1:
+                            final_error = self._protocol_repair_exhausted_failure(
+                                protocol_error,
+                                repairs_used=protocol_repairs_used,
+                            )
+                            protocol_error = protocol_error.model_copy(
+                                update={
+                                    "recoverable": False,
+                                    "failure": final_error,
+                                }
+                            )
+                        else:
+                            self._retry_count += 1
                     self._record_tool_error(task_id, tool_call_metadata, protocol_error, round_index)
                     self._append_tool_result(tool_call_metadata, input_metadata, False, protocol_error.error_message)
                     final_error = protocol_error.failure
@@ -1036,6 +1075,28 @@ class ToolEventLoopRunner:
             details=self._last_recoverable_error_details(),
         )
         return self._finish(task_id, session_id, False, rounds_used, last_output, final_error, final_error.error_message)
+
+    @staticmethod
+    def _protocol_repair_exhausted_failure(
+        tool_error: ToolErrorMetadata,
+        *,
+        repairs_used: int,
+    ) -> FailureMetadata:
+        failure = tool_error.failure or FailureMetadata(
+            error_type=tool_error.error_type,
+            error_message=tool_error.error_message,
+        )
+        return failure.model_copy(
+            update={
+                "recoverable": False,
+                "retry_recommended": False,
+                "details": {
+                    **(failure.details or {}),
+                    "protocol_repair_exhausted": True,
+                    "protocol_repairs_used": repairs_used,
+                },
+            }
+        )
 
     def _completion_budget(self) -> RuntimeBudgetMetadata:
         controller = getattr(self.runtime, "runtime_controller", None)
