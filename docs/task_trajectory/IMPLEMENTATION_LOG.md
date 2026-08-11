@@ -8558,3 +8558,26 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：另一次贪吃蛇计划包含未授权 `README.md`，被 write-scope gate 正确阻断；hello canary 写入后由
   独立 validation-command contract mismatch 导致 overall failed。这两项分别属于 planner quality 与 validation
   contract，不放宽本次预算、permission、writer 或 completion gate。
+
+## [已完成] dev8：Typed validation command 确定性衔接
+
+- 观察到的失败：真实任务 `637cec4f-b1da-4fe8-9769-82d94f260074` 的权威命令为
+  `python -m py_compile snake_game.py`，tool planner 因 prompt 未包含该字段而生成
+  `python -m compileall /Users/abab/Developer/openpilot-experiment/snake_game.py`。严格 exact-command gate 正确拒绝
+  substitute，导致已经生成、写入并通过 mutation verification 的 186 行贪吃蛇文件被 overall task 标为失败；
+  独立 `python3 -m py_compile` 证明文件本身无语法错误。
+- Metadata/架构影响：不新增或修改 schema；复用 `Task.validation_command` 作为唯一 authority，确定性构造一个
+  `DecisionNeedMetadata` 投影并仍经过 Router、Guard、project environment binding、command receipt 与 completion
+  evidence。没有把描述文本或模型命令升级为权限，也没有放宽 exact argv、shell wrapper 或 validation-task
+  mutation gate。
+- 实现修复：首轮 dev8 canary 进一步发现 decomposer 会把 `test -f snake_game.py` 绑定到 inspect 子任务，因此
+  non-mutating inspect/inspection/validate/validation/verify/verification/test 且 typed command 非空时，在任何模型
+  调用前直接路由唯一 `command_check`；automatic mode、timeout 与 test-command evidence 均绑定原命令。原 fallback 复用同一 canonical
+  plan。非确定性路径中的 substitute/extra command 与 file mutation 继续拒绝；缺少 typed command 继续 fail-closed。
+- 验证与发布：tool-planning **114 passed**、完整 `Code/tests` **1600 passed**，touched Ruff、compileall 与
+  `git diff --check` 通过。最终安装后的真实 canary 顺序取得 `test -f snake_game.py` 与
+  `python -m py_compile snake_game.py` 两个 exact command receipts，overall Success。isolated dev8 wheel SHA-256
+  为 `80cef7696fab3cb86438abd3e41fc29e9e057214c2c51292b66502ec4603cabf`，editable package/source 均报告
+  `0.1.0.dev8`；完整发布证据记录在 `DEV8_TYPED_VALIDATION_HANDOFF_RELEASE.md`。
+- 剩余限制：该衔接只保证“执行 decomposition 已选定的精确命令”，不判断命令本身是否是最佳验证；错误的 typed
+  command 仍会在既有 command policy 下精确执行，命令选择质量属于独立 decomposition 改进。

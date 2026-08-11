@@ -693,6 +693,16 @@ then regenerated once from the same authoritative task context with a larger
 reservation. Unknown usage, no larger reservation, or a second `length` outcome
 fails closed with no CodeArtifact and therefore no writer admission.
 
+Non-mutating inspection or validation subtasks with a non-empty typed
+`Task.validation_command` do not ask the planning model to restate or reinterpret
+that command. The task executor deterministically routes exactly one
+`command_check` through the normal Router, Guard, project-environment binding,
+execution receipt, and completion-evidence checks. The original requested
+command remains the evidence identity even when the environment binds `python`
+to the project interpreter. Missing commands, model-proposed substitutes on
+non-deterministic paths, shell wrappers, and additional validation commands
+remain fail-closed.
+
 Offline context quality uses `ContextQualityExpectation` and
 `ContextQualityEvaluation`. The evaluator checks explicit expected-present and
 expected-absent candidate IDs plus structural invariants: ready status, character
