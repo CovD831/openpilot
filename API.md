@@ -899,6 +899,22 @@ through the same response reducer and assistant ledger as deterministic
 responses. The CRU-2C controller is selected only by the unified autonomous
 canary flag.
 
+CRU-4B makes each bounded Provider observation replay-free across process
+failure. `IterationControlCursor.pending_provider_request` and
+`observed_provider_response_ref` are mutually exclusive. The reducer derives a
+canonical progress signature from the complete pending request descriptor and
+the exact content-addressed `provider_response` reference; callers cannot
+self-attest that binding. Recovery validates the request artifact/hash,
+conversation/run identity, session authority revision/hash, runtime-fact hash,
+request ordinal/purpose, charged root budget, response artifact checksum/kind,
+and assistant ledger identity. A durable observed response is parsed and
+grounded without another Provider call; an invalid first observation may use
+only the already-budgeted second repair. A pending request or an unbound
+response artifact has an indeterminate transport outcome and becomes a durable
+controlled stop with zero automatic replay. Candidate, evidence-handoff, and
+pending/committed assistant boundaries reuse the same durable candidate and
+ledger rather than restarting the Provider step.
+
 `EvidenceEscalationController` implements the CRU-2D handoff core. It converts
 each open project/current-external obligation into a source-compatible,
 explicitly read-only `DecisionNeedMetadata`, then materializes one canonical

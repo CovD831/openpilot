@@ -31,6 +31,11 @@ canary to execute those obligations through the existing read-only tool loop
 and durable checkpoints. Either evidence-path failure stops without legacy
 fallback. Agent Generator routing is unchanged.
 
+Bounded Provider requests and observations are conversation-owned durable
+steps. A crash after an exact observed response resumes without a Provider
+replay; a pending or not-yet-bound transport outcome stops fail-closed. Recovery
+also reuses the same response candidate and idempotent assistant ledger entry.
+
 Set `OPENPILOT_MODEL_VISIBLE_PROTOCOL_REPAIR=true` only for the bounded recovery
 canary. Local and provider-native tool paths then expose one unknown-tool or
 invalid-input failure to the model and accept one corrected call. A second

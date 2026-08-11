@@ -796,6 +796,26 @@ candidate messages remain owned by their source stores and are not duplicated.
 
 ---
 
+## Pre-task bounded Provider recovery
+
+The conversation-owned `IterationTurnRecordMetadata` remains the authoritative
+trajectory source for bounded Provider request/observation recovery; no second
+log event owns this state. `decision_requested` records one exact pending
+request and charged root budget. `decision_recorded` replaces it with a
+content-addressed `provider_response` reference and a reducer-derived signature
+covering the complete request descriptor plus response reference. Candidate,
+evidence, and assistant-ledger generations retain that reference for audit.
+
+A pending request or response artifact not yet bound to the turn record is an
+indeterminate transport outcome and is never emitted as a successful observed
+step or replayed automatically. Recovery loads the referenced request and
+response artifacts directly; it does not scan artifacts or infer progress from
+free-form logs. Missing, corrupt, mismatched, or wrong-kind artifacts produce a
+controlled terminal record. Trajectory consumers may project these typed turn
+boundaries, but must not create a parallel request/response authority.
+
+---
+
 ## Events not yet promoted into the trajectory layer
 
 The codebase also contains many logger-oriented structured events such as:

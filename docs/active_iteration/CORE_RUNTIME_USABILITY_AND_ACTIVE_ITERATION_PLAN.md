@@ -4,8 +4,9 @@
 > task-materialization/reducer writer-migration 与 CRU-2B deterministic first-turn
 > completion、CRU-2C bounded model-supported core、CRU-2D evidence escalation
 > core、CRU-3 governed decomposition 与安全的 feature-flagged single-task
-> evidence handoff 已完成；CRU-4A model-visible bounded tool protocol repair
-> 已完成，下一切片为 CRU-4B durable Provider-step recovery。
+> evidence handoff 已完成；CRU-4A model-visible bounded tool protocol repair 与
+> CRU-4B durable Provider-step recovery 已完成，下一阶段为 CRU-5 core active
+> diagnostic strengthening。
 >
 > 日期：2026-08-10
 >
@@ -872,6 +873,7 @@ open_obligation_ids
 completion_candidate_hash
 outcome/completion_scope candidate
 pending_provider_request
+observed_provider_response_ref
 decision_progress_signature
 decision/no-progress budget
 ```
@@ -1488,7 +1490,12 @@ exact repeated invalid call 在返回匹配 tool result 后终止。permission�
 scope、budget、checkpoint、indeterminate side effect、mutation verification 与 exact
 validation 不可进入模型修复；Provider batch 中止调用不记作已执行，可在唯一修复轮次
 重试。所有 assistant tool calls 保持原 provider call ID 的一对一 bounded result。
-CRU-4B 继续完成 durable Provider-step crash/recovery 边界后再关闭本阶段。
+CRU-4B 已完成 conversation-owned durable Provider-step recovery。pending request
+或 response artifact 尚未绑定 turn record 时视为 indeterminate，零自动重发并受控停止；
+exact observed response 通过 reducer 派生 signature、request artifact/hash、budget、
+identity 与 response artifact 校验后恢复解析和 grounding。首次 invalid observation 只可
+使用剩余的一次 repair；candidate、evidence handoff 与 assistant pending/committed 边界
+复用同一 durable payload/ledger，不重新调用 Provider。CRU-4 阶段完成。
 
 ### CRU-5：Core Active Diagnostic Strengthening
 

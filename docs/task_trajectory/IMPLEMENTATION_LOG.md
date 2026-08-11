@@ -8245,7 +8245,7 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   当前只接受 materialized initial checkpoint 的首次 attach；中途恢复继续走现有 explicit resume contract，
   不从 CLI 自动推测 continuation。
 
-## [进行中] CRU-4：Bounded step recovery
+## [已完成] CRU-4：Bounded step recovery
 
 - 观察到的失败：local tool loop 会把每个 recoverable protocol failure 都交给最多五轮
   `max_steps`，Provider-native 又把 admission、read execution 与 generic no-progress 混在一起；
@@ -8269,6 +8269,23 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   **246 passed**，完整 `Code/tests` **1476 passed**（1 个既有 pytest deprecation warning），touched
   Ruff（排除 3 个既有 F402/F841）、compileall 与 `git diff --check` 通过。五轴 review 发现并修复
   scope-as-read-execution 和 batch-aborted-as-attempt 两个交叉错误。
-- 剩余限制：CRU-4 尚未关闭。下一切片需完成 pre-task/Provider-step durable request/response 的
-  crash/recovery 语义，证明已 durable 的 Provider observation 不会被重新请求、pending/indeterminate
-  transport 不会被猜测为可重放，再重新执行本阶段验收。
+- CRU-4B observed failure：bounded response 在 request durable 后崩溃时无法区分 pending/indeterminate
+  transport 与已完整观察的 Provider response；旧 cursor 只有 progress signature，不能定位和校验 exact
+  response artifact。即使 response candidate 或 assistant pending/committed 已 durable，统一入口重试也会
+  拒绝恢复，割裂既有 assistant-ledger 幂等边界。
+- CRU-4B metadata/实现：`IterationControlCursor` 新增默认 `None` 的
+  `observed_provider_response_ref`，与 pending request 互斥且只能引用 `provider_response`。Reducer 从完整
+  pending descriptor + exact response ref 派生 canonical signature；controller 保存并校验 request
+  ID/ordinal/hash/ref/purpose、完整 normalized response、model/provider/finish reason/usage/tool count，恢复时
+  重载 request artifact 并核对 canonical hash。pending request 或未绑定 artifact 均零 Provider replay 并
+  durable controlled stop；exact observation 恢复解析/grounding，invalid first observation 只消耗剩余 repair。
+  candidate/evidence handoff/assistant pending/committed 复用同一 payload、message ID、turn index 和 ledger；
+  terminal ledger recovery 额外核对实际 assistant turn。单次 Provider response durable body 上限为
+  256,000 字符，最多仍为 initial + one repair，无 artifact 扫描。Agent Generator route/pipeline 未改。
+- CRU-4B validation evidence：metadata/reducer/bounded-response/assistant-commit/store/evidence-escalation/
+  unified-entry/CLI 组合等价范围 **88 passed**；focused recovery/ledger 组合 **51 passed**；完整
+  `Code/tests` **1491 passed**（1 个既有 pytest deprecation warning）。touched Ruff（排除 3 个既有
+  F402/F841）、compileall 与 `git diff --check` 通过。
+- 剩余限制：三个 canary flag 仍默认关闭，真实用户 canary/default switch 由 CRU-7 负责。CRU-5 继续强化
+  active diagnostic facts/decision hierarchy 与 trajectory/experiment gates；CRU-4 不引入未观察 transport
+  的 replay authority。

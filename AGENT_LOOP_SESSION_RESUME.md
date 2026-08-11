@@ -44,14 +44,23 @@ the governed task cursor can execute an evidence-required handoff without
 falling through to legacy decomposition.
 
 A bounded model response persists its zero-tool provider request before
-transport and clears that pending request only with a bounded provider-response
-artifact/progress signature. At most one repair request is legal. A project or
+transport and clears that pending request only by atomically binding an exact
+content-addressed `provider_response` reference and reducer-derived progress
+signature. The signature covers the complete pending request descriptor and
+response reference. Recovery also reloads the exact `provider_request`
+artifact and verifies its canonical hash. A valid observed response resumes
+parsing, grounding, candidate handoff, and assistant commit without another
+Provider call; an invalid first observation may consume only the remaining
+single repair. A pending request, or a response artifact saved before its turn
+record binding, has an indeterminate transport outcome and fails closed with
+zero automatic replay. At most one repair request is legal. A project or
 current-external claim produces an evidence-required candidate rather than an
-assistant ledger commit. Provider failure, unexpected tool calls, schema/claim
-coverage failure after repair, or token-budget exhaustion produces a durable
-controlled stop; free-form provider errors never authorize retry or task
-materialization. Full provider-response crash replay is added with the later
-recovery package and must not be inferred from a prepared request alone.
+assistant ledger commit, and retry returns that same candidate. Provider
+failure, unexpected tool calls, schema/claim coverage failure after repair, or
+token-budget exhaustion produces a durable controlled stop; free-form provider
+errors never authorize retry or task materialization. Recovery after candidate
+recording or pending/committed assistant state reuses the exact candidate,
+payload, message ID, turn index, and ledger entry.
 
 Evidence escalation materializes only under a user-derived
 `read_only_eligible` ceiling. Its receipt must reference an exact observed
