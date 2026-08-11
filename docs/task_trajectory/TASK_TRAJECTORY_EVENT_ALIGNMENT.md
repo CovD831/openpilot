@@ -359,6 +359,10 @@ Preferred:
 - `RuntimeStateMetadata.guard_history`
 - `RuntimeStateMetadata.task_purpose`
 - `RuntimeStateMetadata.decomposition_decisions`
+- `RuntimeStateMetadata.diagnostic_conflicts`
+- `RuntimeStateMetadata.diagnostic_risks`
+- `RuntimeStateMetadata.diagnostic_decisions`
+- `RuntimeStateMetadata.diagnostic_progress_signature`
 - `correlation.task_id`
 - `correlation.session_id`
 
@@ -372,6 +376,13 @@ Fallback:
 ### Future direction
 
 Reduce fallback usage instead of inventing a new phase-event metadata type.
+
+The active diagnostic evaluator does not add a parallel trajectory event. Its
+typed decision history is part of the preferred runtime-state payload and the
+checkpoint. Each decision records the canonical state signature it evaluated
+and whether evidence changed since the prior decision. Tool, Guard, and
+verification events remain distinct downstream evidence; trajectory consumers
+must not infer diagnostic progress from decision ordinals or free-form reasons.
 
 ---
 

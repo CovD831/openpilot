@@ -8289,3 +8289,33 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
 - 剩余限制：三个 canary flag 仍默认关闭，真实用户 canary/default switch 由 CRU-7 负责。CRU-5 继续强化
   active diagnostic facts/decision hierarchy 与 trajectory/experiment gates；CRU-4 不引入未观察 transport
   的 replay authority。
+
+## [已完成] CRU-5：Core active diagnostic strengthening
+
+- 观察到的失败：task-owned runtime 只有 known/unknown/resolved string collections 和总体 `risk_level`，
+  conflict/risk lifecycle 与 measure/act/verify/recover/stop disposition 没有 typed owner；`StateUpdater`
+  只比较五个 collection length，等长内容变化会被误报 no-progress，也无法说明新证据改变了什么决策。
+  mini-SWE experiment package 的正式 protocol 只有 ordinary/active 两臂，没有计划要求的
+  fixed/model-directed/active development comparison gate。
+- Metadata/实现：在 `RuntimeStateMetadata` 下新增 bounded owned nested
+  `ActiveDiagnosticConflict`、`ActiveDiagnosticRisk`、`ActiveDiagnosticDecision`，历史 payload 以空集合/
+  `None` 迁移，不新增 `MetadataKind`。`ActiveDiagnosticEvaluator` 计算覆盖 known/unknown/resolved、
+  conflicts/risks、phase/verification、path/file/edit/decomposition/core facts 的 canonical hash；每个 decision
+  记录 state signature、evidence changed、contributing IDs 与具体 need。非补偿层级为 blocking risk →
+  no-progress → failed verification/recover → required verification → conflict/unknown measurement → least-cost
+  bounded work。Capability、Guard、Actor、Verifier 和 completion owner 未改；verification failure 自动形成
+  evidence-linked risk，fresh success 只把它 resolved，不删除历史证据。Report/checkpoint/trajectory 复用
+  同一 state。
+- Experiment interface：experiment-local `ExperimentArm` 增加 `fixed_order`/`model_directed`，新增严格
+  `ThreeArmTrajectoryReceipt`/`ThreeArmComparison`。主比较固定 active vs model-directed；fixed 只作机制
+  baseline。verified success 不一致，或 false success/scope violation/indeterminate replay、trajectory、
+  budget 任一门失败时，cost comparison 不可用。正式 ordinary/active protocol 与 Provider execution
+  authorization 不变。
+- 验证证据：runtime metadata/controller/checkpoint 组合等价范围 **157 passed**；含 diagnostics 的扩展组合
+  等价范围 **192 passed**；three-arm focused **3 passed**；完整 `Code/tests` **1497 passed**（1 个既有
+  pytest deprecation warning），touched Ruff、compileall 与 `git diff --check` 通过。experiment package 的其余测试存在
+  本分支既有缺失冻结 artifacts/module：`exploratory_plan.py`、paired-run plan、candidate evidence receipts
+  和 `core_benefit_screen_v1` protocol 不在工作树，故 package 全量不能作为本切片的 green gate。
+- 剩余限制：CRU-5 提供 production decision contract 和 development comparison interface，不声称新的
+  real-provider 优势。真实用户 task canary/default switch 由 CRU-7；CRU-6 先冻结 verified core source
+  facts 并接入唯一 post-core package builder/admission consumer。

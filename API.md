@@ -33,6 +33,31 @@
   **planning surface** (need catalog + core capability cards + deferred capability cards). The runtime then maps
   `decision_needs` to concrete tools through `ToolRouter`.
 
+### Active Diagnostic Controller
+
+- Input: task-owned `RuntimeStateMetadata` plus one or more bounded
+  `DecisionNeedMetadata` candidates.
+- Output: one typed `measure | act | verify | recover | stop` diagnostic
+  decision and, except for stop, the selected need passed to the existing
+  `ToolRouter`.
+- Responsibility: apply non-compensatory precedence to blocking risks,
+  no-progress, failed verification/recovery, required verification, open
+  conflicts/unknowns, and then least-cost bounded work. It does not select a
+  concrete tool, approve permission/scope, execute an action, or declare task
+  success.
+
+`RuntimeStateMetadata` remains the task owner for known facts, unknowns,
+resolved questions, typed diagnostic conflicts/risks, bounded diagnostic
+decision history, and the latest canonical diagnostic progress signature.
+`ActiveDiagnosticEvaluator` derives that signature from content-bearing state,
+not collection lengths, and records whether evidence changed since the prior
+decision. `ToolRouter`, `RuntimeGuard`, Actor/tool execution, `StateUpdater`, and
+`RuntimeVerifier` retain their existing capability, admission, execution,
+absorption, and verification responsibilities. A failed verification is a
+recover decision even when modified files still require later re-verification;
+successful fresh verification resolves earlier verification-failure risks but
+does not erase their evidence.
+
 ### Executor
 
 - Input: approved plan step and selected tool.

@@ -5,8 +5,8 @@
 > completion、CRU-2C bounded model-supported core、CRU-2D evidence escalation
 > core、CRU-3 governed decomposition 与安全的 feature-flagged single-task
 > evidence handoff 已完成；CRU-4A model-visible bounded tool protocol repair 与
-> CRU-4B durable Provider-step recovery 已完成，下一阶段为 CRU-5 core active
-> diagnostic strengthening。
+> CRU-4B durable Provider-step recovery 与 CRU-5 core active diagnostic
+> strengthening 已完成，下一阶段为 CRU-6 core/post-core integration。
 >
 > 日期：2026-08-10
 >
@@ -1503,6 +1503,16 @@ identity 与 response artifact 校验后恢复解析和 grounding。首次 inval
 - strength preservation；
 - measurement/action/recover/stop evidence；
 - experiment fixtures and trajectory gates。
+
+实施状态：已新增 task-owned typed diagnostic conflict/risk/decision 与
+content-sensitive canonical progress signature；`ActiveDiagnosticEvaluator` 在既有
+ToolRouter/Guard/Actor/StateUpdater/Verifier 之前执行 blocking risk、no-progress、
+failed verification/recover、required verification、conflict/unknown measurement 和
+least-cost bounded action 的非补偿选择。每个 decision 记录 evidence changed/unchanged
+及 contributing IDs，checkpoint/report/trajectory 复用同一 state。experiment-local
+三臂 interface 绑定 fixed_order/model_directed/active_iteration、共享 fingerprints/budget、
+active decision IDs 和非补偿 success/safety/trajectory/budget gates；不改变正式 mini-SWE
+ordinary/active protocol，也不授权 Provider run。CRU-5 完成。
 
 ### CRU-6：Core/Post-Core Integration
 

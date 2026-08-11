@@ -48,6 +48,17 @@ The package deliberately does not modify the OpenPilot production controller,
 convert mini-SWE trajectories into OpenPilot trajectory records, or expose
 hidden evaluator inputs to an agent.
 
+CRU-5 adds a development-only three-arm comparison contract alongside the
+frozen formal `ordinary`/`active_iteration` protocol. The additional
+`fixed_order`, `model_directed`, and `active_iteration` interface binds one
+model/tool/evaluator fingerprint and common budget, requires complete
+provider/budget/tool trajectory receipts, and requires active runs to expose at
+least one stable diagnostic decision ID. The primary comparison is active
+versus model-directed; fixed order is a mechanism baseline. Cost comparison is
+inadmissible when verified success differs or any safety, trajectory, or budget
+gate fails. This interface does not authorize a Provider run or change the
+formal two-arm evidence claim.
+
 Implemented phase-zero slice:
 
 - complete minimal in-memory E2-to-E3 evidence state, including

@@ -83,6 +83,17 @@ resume only from the durable tool/checkpoint boundary already recorded; the
 repair flag does not authorize replay of an unobserved side effect or a fresh
 permission/scope decision.
 
+Task-owned active diagnostic state is part of `RuntimeStateMetadata` and thus
+the existing checkpoint checksum. Resume preserves the exact conflict/risk
+lifecycle, bounded diagnostic decision history, latest decision signature,
+no-progress count, phase, and verification state. The next evaluator decision
+must recompute its canonical signature from current authoritative state; it may
+report unchanged evidence, but it must not reconstruct conflicts/risks from log
+text or treat a new decision-history ordinal as progress. Failed verification
+continues through recover before a fresh verify, and an open blocking risk
+continues to stop automatic action. Guard/permission facts are re-evaluated by
+their existing owners and are not copied into diagnostic risk values.
+
 ## Source of truth
 
 `RuntimeStateMetadata.recovery_status` is the current operational status;

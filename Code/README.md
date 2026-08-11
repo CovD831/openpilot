@@ -50,6 +50,12 @@ resync follows the root permission policy. Failure blocks validation instead of
 falling back to host Python, and resume reattaches and verifies the checkpointed
 environment identity before continuing.
 
+Task-owned active diagnosis records typed conflicts, risks, and
+measure/act/verify/recover/stop decisions in `RuntimeStateMetadata`. Its
+content-sensitive progress signature and decision history survive checkpoints;
+the evaluator selects the next need, while `ToolRouter`, Guard, executors, and
+the verifier keep their existing capability and authority boundaries.
+
 Project improvement runs after a verified core project result. The automatic
 default is an optional enhancement; `--improvement-iterations N` with `N > 0`
 is an explicit required quality gate, while `0` disables improvement. Optional
