@@ -31,6 +31,14 @@ existing read-only tool loop and durable checkpoints. Set both
 An evidence-path failure stops without legacy fallback. Agent Generator routing
 is unchanged.
 
+Before the bounded response step, a strict pre-task admission positively
+recognizes lightweight conversation/knowledge and current-external questions.
+Development, artifact creation, mutation, execution, and validation requests
+enter project execution directly; ambiguous inputs fail safe to that path.
+This does not grant mutation authority or change the public
+`agent_generator | autonomous_iteration` route contract. CLI errors report
+bounded response, external evidence, and project execution as distinct stages.
+
 Bounded Provider requests and observations are conversation-owned durable
 steps. A crash after an exact observed response resumes without a Provider
 replay; a pending or not-yet-bound transport outcome stops fail-closed. Recovery

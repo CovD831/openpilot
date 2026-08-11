@@ -8438,3 +8438,35 @@ provider suite passed **86 tests**; the latest provider/mutation/reasoning/readi
   `3810cd91f516449c7ccfb360234026dfcb957960f58a9cff54d91522ce4e1412`；editable install 报告
   `0.1.0.dev3`。同一交互式 `openpilot-dev` session 已验证问候、deterministic model identity 与 fresh 常熟天气；
   累积 merge 由 tag `v0.1.0-dev.3` 封存。
+
+## [已完成] CRU-7 后开发版：Typed pre-task admission 与项目执行错误分层
+
+- 观察到的失败：真实输入“帮我开发一个贪吃蛇小游戏”虽然顶层 route 正确为
+  `autonomous_iteration`，但 CLI 内部只按 repository/file/path 标记判断 unified entry scope，
+  因此把自然语言开发意图误送入 `BoundedModelResponseController` 的零工具 `response_only`
+  authority。Provider contract 在 bounded response 阶段失败，未产生 tool call 或文件 mutation；
+  interactive CLI 又把所有 unified-entry exception 统一显示为 `Response evidence failed`，造成
+  evidence 尚未开始却被错误归因。
+- Metadata/架构影响：复核 contract catalog、pre-task owner、公开 route、producer/consumer 与权限
+  边界后，不新增 `MetadataKind`，不修改 `agent_generator | autonomous_iteration` 公共路由，也不修改
+  task classifier。新增 controller-owned strict `PreTaskAdmissionDecision`，以
+  `lightweight_response | current_external_response | project_execution` 和稳定 reason code 表达内部
+  准入；该 derived decision 不持久化第二份 authority，不授予 read/write/command/network/mutation 或
+  completion 权限。只有正向识别的轻量/知识问答和 current-external 请求进入 response/evidence；开发、
+  创建、修改、运行、验证、显式项目路径和模糊输入 fail closed 到 project execution。
+- 实现修复：`enhanced_cli` 在 deterministic runtime response 后消费 typed admission；project execution
+  直接复用既有 autopilot，bounded response 与 external evidence 分别由 credential-safe
+  `UnifiedEntryError` 标注，project exception 以 `Project Execution` 标注。底层 exception message 仍不
+  渲染。测试覆盖中英文开发/build、知识反例、问候、天气、substring collision、空/模糊输入、显式路径、
+  顶层 route 保持不变以及三类错误 stage。
+- 验证证据：focused admission/unified-entry/CLI recovery/rollout/version **38 passed**；完整
+  `Code/tests` **1566 passed**；touched Ruff、`compileall`、`git diff --check` 通过。真实
+  `openpilot-dev` smoke 中问候直接回答、常熟天气返回 fresh structured evidence；隔离临时项目中的
+  贪吃蛇请求进入 project inspection、decomposition、environment setup 和 `code_generator`，没有进入
+  bounded response/evidence。生成器随后因独立 completion limit fail closed，错误正确显示为
+  `Task Executor / code_generator`。dev4 wheel SHA-256 为
+  `1b9cbd86c9ba7bd302267efcd760e58b390f43cd42c0e760a1c73a45219eda3f`，editable launcher metadata 与
+  source version 均为 `0.1.0.dev4`。
+- 剩余限制：pre-task admission 是有界规则策略，不替代后续模型分解；无法正向证明为回答类的输入会
+  优先进入受治理项目执行。大型单次代码生成仍可能达到 generator completion limit；这是独立的 task/tool
+  能力边界，不再被误报或回退为 response evidence。

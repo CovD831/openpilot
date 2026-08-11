@@ -187,6 +187,58 @@ def test_feature_flagged_project_file_request_keeps_legacy_autopilot(monkeypatch
     assert calls == ["读取 Code/pyproject.toml 的项目版本号并回答，不要修改文件"]
 
 
+def test_feature_flagged_snake_game_request_enters_project_execution(monkeypatch) -> None:
+    ui = _UI()
+    calls: list[str] = []
+    monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")
+    monkeypatch.setattr(enhanced_cli, "_runtime_diagnostics_enabled", lambda: False)
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_classify_task_route",
+        lambda _goal: _route("autonomous_iteration"),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_try_deterministic_runtime_response",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        BoundedModelResponseController,
+        "complete",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("bounded response called")
+        ),
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_execute_autopilot",
+        lambda goal, *_args, **_kwargs: calls.append(goal) or "project-result",
+    )
+    ingress = SessionIngressState(
+        identity=ConversationIdentity(
+            conversation_id="conversation-1",
+            run_id="run-0",
+            turn_index=0,
+            project_root="/tmp/project",
+        )
+    )
+
+    result = enhanced_cli._execute_goal_interactive(
+        "帮我开发一个贪吃蛇小游戏",
+        ui,
+        tracker=None,
+        llm_client=object(),
+        logger=None,
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+        ingress_state=ingress,
+        settings=_settings(),
+    )
+
+    assert result.turns[-1].content == "Execution result: project-result"
+    assert calls == ["帮我开发一个贪吃蛇小游戏"]
+    assert any("Task route: autonomous_iteration" in message for message in ui.console.messages)
+
+
 def test_unified_response_scope_does_not_match_project_word_substrings() -> None:
     assert enhanced_cli._unified_autonomous_entry_scope(
         "What is your profile?"
@@ -350,4 +402,97 @@ def test_evidence_execution_failure_does_not_fall_back_to_legacy_pipeline(
     assert result.turns[-1].role == "user"
     rendered = "\n".join(ui.console.messages)
     assert "Autonomous iteration stopped before completion" in rendered
+    assert "sensitive detail" not in rendered
+
+
+def test_bounded_response_failure_has_specific_error_title(monkeypatch, tmp_path) -> None:
+    ui = _UI()
+    errors: list[tuple[str, str]] = []
+    ui.show_error = lambda title, details: errors.append((title, details))
+    monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")
+    monkeypatch.setattr(enhanced_cli, "_runtime_diagnostics_enabled", lambda: False)
+    monkeypatch.setattr(enhanced_cli, "_classify_task_route", lambda _goal: _route("autonomous_iteration"))
+    monkeypatch.setattr(enhanced_cli, "_try_deterministic_runtime_response", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        BoundedModelResponseController,
+        "complete",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sensitive detail")),
+    )
+    ingress = SessionIngressState(
+        identity=ConversationIdentity(
+            conversation_id="conversation-1",
+            run_id="run-0",
+            turn_index=0,
+            project_root=str(tmp_path),
+        )
+    )
+
+    enhanced_cli._execute_goal_interactive(
+        "你好，请介绍一下你自己",
+        ui,
+        tracker=None,
+        llm_client=object(),
+        logger=None,
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+        ingress_state=ingress,
+        settings=_settings(),
+    )
+
+    assert errors[0][0] == "Bounded response failed"
+    assert "Stage: Bounded Response" in errors[0][1]
+    assert "sensitive detail" not in errors[0][1]
+
+
+def test_external_evidence_failure_has_specific_error_title(monkeypatch, tmp_path) -> None:
+    ui = _UI()
+    errors: list[tuple[str, str]] = []
+    ui.show_error = lambda title, details: errors.append((title, details))
+    monkeypatch.setenv("OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED", "1")
+    monkeypatch.setattr(enhanced_cli, "_runtime_diagnostics_enabled", lambda: False)
+    monkeypatch.setattr(enhanced_cli, "_classify_task_route", lambda _goal: _route("autonomous_iteration"))
+    monkeypatch.setattr(enhanced_cli, "_try_deterministic_runtime_response", lambda *_args, **_kwargs: None)
+    candidate = SimpleNamespace(evidence_required=True, record=object(), ingress=object())
+    monkeypatch.setattr(BoundedModelResponseController, "complete", lambda *_args, **_kwargs: candidate)
+    monkeypatch.setattr(enhanced_cli, "_runtime_fact_projection", lambda **_kwargs: object())
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_execute_response_evidence_task",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sensitive detail")),
+    )
+    ingress = SessionIngressState(
+        identity=ConversationIdentity(
+            conversation_id="conversation-1",
+            run_id="run-0",
+            turn_index=0,
+            project_root=str(tmp_path),
+        )
+    )
+
+    enhanced_cli._execute_goal_interactive(
+        "今天常熟的天气怎么样",
+        ui,
+        tracker=None,
+        llm_client=object(),
+        logger=None,
+        runtime_options=enhanced_cli.OpenPilotRuntimeOptions(),
+        ingress_state=ingress,
+        settings=_settings(),
+    )
+
+    assert errors[0][0] == "External evidence failed"
+    assert "Stage: External Evidence" in errors[0][1]
+    assert "sensitive detail" not in errors[0][1]
+
+
+def test_project_execution_exception_failure_has_specific_stage() -> None:
+    failure = enhanced_cli._cli_exception_failure(
+        RuntimeError("sensitive detail"),
+        task_id="task-1",
+        stage=enhanced_cli.UnifiedEntryFailureStage.PROJECT_EXECUTION,
+    )
+
+    rendered = enhanced_cli._format_failure_details(failure)
+
+    assert "Stage: Project Execution" in rendered
+    assert "Error Type: RuntimeError" in rendered
     assert "sensitive detail" not in rendered

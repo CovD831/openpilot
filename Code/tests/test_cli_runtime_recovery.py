@@ -191,6 +191,7 @@ def test_ordinary_autonomous_cli_contains_failure_without_traceback(monkeypatch,
     assert traceback_calls == []
     assert ui.errors
     details = ui.errors[-1][1]
-    assert "Stage: CLI" in details
+    expected_stage = "CLI" if runner == "once" else "Project Execution"
+    assert f"Stage: {expected_stage}" in details
     assert "Recoverable: no" in details
     assert "Traceback" not in details

@@ -902,13 +902,21 @@ boundary from initial record through committed assistant record is replay-safe.
 CLI once and interactive autonomous routes expose this path when
 `OPENPILOT_UNIFIED_AUTONOMOUS_ENTRY_ENABLED` is true. It defaults true after
 the CRU-7 usability gate; Agent Generator is checked first and never enters the unified controller.
-Unrecognized deterministic goals continue into the bounded model response
-step. A fully grounded response is committed directly; an evidence-required
-candidate may proceed only when the separately controlled, default-on
+After deterministic runtime facts, a controller-owned typed pre-task admission
+selects `lightweight_response`, `current_external_response`, or
+`project_execution` with a stable reason code. Response admission is positive:
+recognized conversation/knowledge questions may enter the bounded zero-tool
+step, current-external questions may enter its governed evidence bridge, and
+artifact creation, code/project mutation, execution/validation, or ambiguous
+inputs enter project execution. The admission decision grants no read, write,
+command, network, or completion authority. A fully grounded response is
+committed directly; an evidence-required candidate may proceed only when the separately controlled, default-on
 `OPENPILOT_GOVERNED_DECOMPOSITION` flag is enabled. Disabling both flags restores
 the bounded legacy autonomous rollback lane. Evidence execution failure
 is credential-redacted and fail-closed and never falls through to the legacy
-decomposition pipeline.
+decomposition pipeline. CLI failures identify bounded response, external
+evidence, and project execution as separate stages without rendering the
+underlying exception message.
 
 `BoundedModelResponseController` implements the CRU-2C zero-tool model step.
 It builds a bounded newest-turn projection that preserves all required active

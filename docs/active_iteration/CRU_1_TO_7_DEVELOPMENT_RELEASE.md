@@ -2,13 +2,14 @@
 
 ## Release identity
 
-- Package version: `0.1.0.dev3`
+- Package version: `0.1.0.dev4`
 - Git branch: `codex/cru-1-to-4b-dev`
-- Git tag: `v0.1.0-dev.3`
+- Git tag: `v0.1.0-dev.4`
 - Remote baseline: `origin/main` at `21c8e66`
 - CRU-4B functional freeze: `39b1fab`
 - CRU-7 accepted source: `c6b33db`
 - Prior development hardening: `a06853f` / `v0.1.0-dev.2`
+- Prior cumulative release: `fd49b09` / `v0.1.0-dev.3`
 - Release date: 2026-08-11
 
 This cumulative development release merges the complete CRU-1 through CRU-7
@@ -37,6 +38,11 @@ CRU-6 verified core/post-core handoff, and CRU-7 canary/default decisions.
 - dev2 hardening: Chinese claim-boundary compatibility, original-question
   external evidence, evidence-derived response revisions, bounded structured
   `wttr.in` weather lookup, and non-replayable fresh web evidence checkpoints.
+- dev4 admission hardening: typed positive response admission for lightweight
+  and current-external questions; development, artifact creation, mutation,
+  execution/validation, and ambiguous requests fail safe to project execution.
+  Bounded response, external evidence, and project execution failures have
+  distinct credential-redacted CLI stages.
 
 ## Runtime defaults and rollback
 
@@ -53,14 +59,15 @@ Setting unified entry and governed decomposition to `false` restores the
 bounded legacy autonomous lane. Agent Generator routing and its pipeline are
 unchanged.
 
-The local development edition retains a dev2 safety admission around explicit
-repository/file/path tasks: those inputs keep the top-level
-`autonomous_iteration` route but use the legacy project-task autopilot rather
-than allowing a zero-tool file-access refusal to become a successful response.
-Lightweight conversation, deterministic runtime facts, and current-external
-questions use the unified response path. This is a local release hardening on
-top of the frozen CRU-7 result, whose environment had no live external Provider
-or project-mutation evidence.
+The local development edition uses a typed, controller-owned pre-task admission.
+Explicit repository/file/path work, natural development/build/mutation intents,
+execution/validation requests, and ambiguous inputs keep the top-level
+`autonomous_iteration` route but enter project-task execution instead of the
+zero-tool response step. Lightweight conversation, deterministic runtime facts,
+knowledge-only questions, and current-external questions use the unified
+response/evidence path. This is a local release hardening on top of the frozen
+CRU-7 result, whose environment had no live external Provider or project-mutation
+evidence.
 
 Model-visible repair remains default-off because the CRU-7 default-on trial
 regressed duplicate/no-progress behavior. Core/post-core integration remains
@@ -76,19 +83,22 @@ Source CRU-7 evidence recorded:
 - source branch complete `Code/tests`: **1531 passed**;
 - all pre-registered safety counters remained zero.
 
-Merged dev3 evidence recorded before release:
+Merged dev4 evidence recorded before release:
 
-- CRU-5/6/7 plus dev2 overlap tests: **168 passed**;
-- merged complete `Code/tests`: **1546 passed**;
-- merged canary evaluator/three-arm tests: **15 passed**;
-- touched Ruff, `compileall`, JSON validation, and `git diff --check`: passed.
+- focused admission, unified-entry, CLI recovery, rollout-default, and release
+  version tests: **38 passed**;
+- merged complete `Code/tests`: **1566 passed**;
+- touched Ruff, `compileall`, and `git diff --check`: passed.
 
-- isolated wheel: `openpilot-0.1.0.dev3-py3-none-any.whl`, SHA-256
-  `3810cd91f516449c7ccfb360234026dfcb957960f58a9cff54d91522ce4e1412`;
-- editable install reports version `0.1.0.dev3` from this release worktree;
-- interactive `openpilot-dev` smoke in one session completed a greeting,
-  deterministic model identity, and fresh structured Changshu weather;
-- the cumulative merge is sealed by tag `v0.1.0-dev.3`.
+- isolated wheel: `openpilot-0.1.0.dev4-py3-none-any.whl`, SHA-256
+  `1b9cbd86c9ba7bd302267efcd760e58b390f43cd42c0e760a1c73a45219eda3f`;
+- editable install reports version `0.1.0.dev4` from this release worktree;
+- real `openpilot-dev` once-mode smoke completed a greeting and fresh structured
+  Changshu weather. An isolated Snake-game request entered project inspection,
+  decomposition, environment setup, and `code_generator`; it did not call the
+  bounded response/evidence path. The generator then stopped fail-closed at its
+  independent completion limit and reported `Task Executor / code_generator`;
+- the cumulative merge is sealed by tag `v0.1.0-dev.4`.
 
 ## Known limitations
 
@@ -98,6 +108,9 @@ Merged dev3 evidence recorded before release:
   be retried by the user; it is never converted into fabricated evidence.
 - `wttr.in` availability is an external dependency for the structured weather
   path.
+- Large single-call code generation may still reach the generator completion
+  limit; that is reported as a project task/tool failure and is not retried as
+  a lightweight response.
 - Post-core enhancement transaction execution remains outside this release
   until an authoritative consumer is accepted.
 - CRU-4B still forbids replay of an indeterminate Provider transport outcome.

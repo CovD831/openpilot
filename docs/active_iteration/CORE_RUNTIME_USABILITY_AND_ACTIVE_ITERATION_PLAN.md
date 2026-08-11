@@ -1560,6 +1560,12 @@ canary；core/post-core 因尚无 PKG3/PKG4 consumer 同样维持 default-off。
 Generator 未进入弃用范围。当前环境无外部 Provider credential，因此不声称 live token/call/
 latency 优势；hard gate 已通过后成本比较虽合法，但结果 artifact 明确记为未比较。
 
+CRU-7 后的开发版加固补充 typed、fail-closed 的 pre-task admission：只有明确的轻量对话/
+知识问答和 current-external 问答可进入 bounded response/evidence；开发、创建、修改、运行、
+验证以及无法证明为回答类的输入进入 project execution。它不新增顶层 route、不授予工具或
+mutation authority；CLI 将 bounded response、external evidence 与 project execution 失败分别
+标注，避免把项目入口失败误报为 response evidence failure。
+
 ## 17. Feature Flag 与回滚
 
 实施后保留以下窄 flag：

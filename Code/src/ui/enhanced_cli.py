@@ -6,12 +6,17 @@ from dataclasses import dataclass
 from enum import Enum
 import os
 from pathlib import Path
-import re
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from rich.console import Console
 
+from autonomous_iteration.pre_task_admission import (
+    PreTaskAdmissionKind,
+    UnifiedEntryError,
+    UnifiedEntryFailureStage,
+    resolve_pre_task_admission,
+)
 from core.config import EmbeddingSettings, LLMSettings
 from core.instrumented_llm import InstrumentedLLMClient
 from core.model_health import run_startup_model_health_check
@@ -44,23 +49,9 @@ class _UnifiedAutonomousEntryScope(str, Enum):
 
 
 def _unified_autonomous_entry_scope(goal: str) -> _UnifiedAutonomousEntryScope:
-    """Keep the development canary on response-only traffic it can complete safely."""
+    """Compatibility projection of the typed pre-task admission decision."""
 
-    text = str(goal).casefold()
-    chinese_project_markers = ("仓库", "代码库", "项目", "文件", "目录", "源码")
-    english_project_marker = re.search(
-        r"\b(?:repository|repo|codebase|project|file|directory|folder|git)\b|\bsource\s+code\b",
-        text,
-    )
-    path_or_extension = re.search(
-        r"(?:[/\\]|\.(?:py|toml|md|json|ya?ml|tsx?|jsx?|rs|go|java|sh)\b)",
-        text,
-    )
-    if (
-        path_or_extension
-        or english_project_marker
-        or any(marker in text for marker in chinese_project_markers)
-    ):
+    if resolve_pre_task_admission(goal).kind is PreTaskAdmissionKind.PROJECT_EXECUTION:
         return _UnifiedAutonomousEntryScope.LEGACY_AUTOPILOT
     return _UnifiedAutonomousEntryScope.RESPONSE_CANARY
 
@@ -191,28 +182,34 @@ def _try_unified_autonomous_response(
 
     from autonomous_iteration.bounded_model_response import BoundedModelResponseController
 
-    candidate = BoundedModelResponseController(
-        _iteration_turn_store(),
-        llm_client,
-    ).complete(
-        goal,
-        ingress=ingress_state,
-        facts=_runtime_fact_projection(
-            ingress_state=ingress_state,
-            settings=settings,
-            runtime_options=runtime_options,
-        ),
-    )
+    try:
+        candidate = BoundedModelResponseController(
+            _iteration_turn_store(),
+            llm_client,
+        ).complete(
+            goal,
+            ingress=ingress_state,
+            facts=_runtime_fact_projection(
+                ingress_state=ingress_state,
+                settings=settings,
+                runtime_options=runtime_options,
+            ),
+        )
+    except Exception as exc:
+        raise UnifiedEntryError(UnifiedEntryFailureStage.BOUNDED_RESPONSE, exc) from exc
     if not candidate.evidence_required:
         return candidate
-    return _execute_response_evidence_task(
-        candidate,
-        llm_client=llm_client,
-        ui=ui,
-        tracker=tracker,
-        logger=logger,
-        runtime_options=runtime_options,
-    )
+    try:
+        return _execute_response_evidence_task(
+            candidate,
+            llm_client=llm_client,
+            ui=ui,
+            tracker=tracker,
+            logger=logger,
+            runtime_options=runtime_options,
+        )
+    except Exception as exc:
+        raise UnifiedEntryError(UnifiedEntryFailureStage.EXTERNAL_EVIDENCE, exc) from exc
 
 
 def _build_task_execution_context(*, source: str, classification: "TaskRouteMetadata") -> dict[str, object]:
@@ -325,17 +322,25 @@ def _format_failure_details(result: dict) -> str:
     return str(details)
 
 
-def _cli_exception_failure(exc: Exception, *, task_id: str | None = None) -> dict[str, object]:
+def _cli_exception_failure(
+    exc: Exception,
+    *,
+    task_id: str | None = None,
+    stage: UnifiedEntryFailureStage | None = None,
+) -> dict[str, object]:
     """Build a bounded ordinary-mode failure without exposing exception text or a traceback."""
 
+    resolved_stage = stage or (
+        exc.stage if isinstance(exc, UnifiedEntryError) else None
+    )
     return {
         "success": False,
         "failure_reason": "Autonomous iteration stopped before completion.",
-        "failure_stage": "CLI",
+        "failure_stage": resolved_stage.value if resolved_stage is not None else "CLI",
         "failed_tool": "autonomous_iteration",
         "task_id": task_id,
         "failure_id": f"{task_id}:cli" if task_id else "cli",
-        "error_type": type(exc).__name__,
+        "error_type": exc.cause_type if isinstance(exc, UnifiedEntryError) else type(exc).__name__,
         "recoverable": False,
         "recoverability": Recoverability.NOT_RECOVERABLE.value,
         "suggested_recovery": "Retry after reviewing the diagnostic log.",
@@ -626,6 +631,7 @@ def _run_once_mode(
     ui.console.print(f"[bold cyan]Goal:[/bold cyan] {goal}")
     ui.console.print()
     execution_context: dict[str, object] = {}
+    failure_stage: UnifiedEntryFailureStage | None = None
 
     try:
         classification = _classify_task_route(goal)
@@ -681,6 +687,7 @@ def _run_once_mode(
                 ui.console.print(response.content)
                 return 0
 
+        failure_stage = UnifiedEntryFailureStage.PROJECT_EXECUTION
         # Create autopilot with enhanced UI support
         autopilot = IntelligentAutopilot(
             llm_client=active_llm_client,
@@ -726,6 +733,7 @@ def _run_once_mode(
                 _cli_exception_failure(
                     e,
                     task_id=str(execution_context.get("task_id") or "") or None,
+                    stage=failure_stage,
                 )
             ),
         )
@@ -1015,8 +1023,13 @@ def _execute_goal_interactive(
                     task_id=str(execution_context.get("task_id") or "") or None,
                 )
                 show_error = getattr(ui, "show_error", None)
+                error_title = (
+                    exc.stage.title
+                    if isinstance(exc, UnifiedEntryError)
+                    else "Autonomous entry failed"
+                )
                 if callable(show_error):
-                    show_error("Response evidence failed", _format_failure_details(failure))
+                    show_error(error_title, _format_failure_details(failure))
                 else:
                     ui.console.print(_format_failure_details(failure))
                 return ingress_state
@@ -1229,6 +1242,7 @@ def _execute_autopilot(
         failure = _cli_exception_failure(
             e,
             task_id=str((context or {}).get("task_id") or "") or None,
+            stage=UnifiedEntryFailureStage.PROJECT_EXECUTION,
         )
         ui.show_error("Autopilot execution failed", _format_failure_details(failure))
         return failure
