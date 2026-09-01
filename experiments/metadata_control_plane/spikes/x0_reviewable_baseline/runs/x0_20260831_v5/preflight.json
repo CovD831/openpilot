@@ -1,0 +1,11 @@
+{
+  "b1_baseline_commit": "2b9a0f0fb40a43a89633bee1ab6db92273777100",
+  "b1_baseline_id": "B1-openpilot-pi-only-20260831-v1",
+  "b1_working_tree_included": false,
+  "generated_at": "2026-08-31T18:39:48.078654+00:00",
+  "historical_evidence_mutations": 0,
+  "network_calls": 0,
+  "provider_calls": 0,
+  "read_only_git_commands": true,
+  "runner_version": "x0-reviewable-baseline-v1"
+}

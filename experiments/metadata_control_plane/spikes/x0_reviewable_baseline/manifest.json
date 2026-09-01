@@ -1,0 +1,37 @@
+{
+  "experiment_id": "X0-reviewable-baseline-v2",
+  "claim_ids": [],
+  "study_type": "engineering_spike",
+  "question": "Can the current dirty worktree be made reviewable while preventing unresolved tracked historical-evidence deletions from entering a baseline commit?",
+  "hypothesis": "A read-only Git inventory plus an owner-adjudication guard can enumerate all relevant drift and fail closed without restoring, deleting, staging, or rewriting evidence.",
+  "tier": "Tier 0",
+  "provider": null,
+  "model": null,
+  "effort": null,
+  "external_api_key": false,
+  "provider_call_budget": 0,
+  "network_budget": 0,
+  "mutation_scope": "Generated X0 run artifacts only; repository sources and historical evidence are read-only.",
+  "quality_safety_cost_metrics": [
+    "tracked_deletion_count",
+    "protected_deletion_count",
+    "reference_count",
+    "dirty_path_count",
+    "provider_calls"
+  ],
+  "adoption_gate": {
+    "inventory_generated": true,
+    "historical_evidence_mutations": 0,
+    "provider_calls": 0,
+    "unresolved_protected_deletions_before_package_release": 0,
+    "owner_reviewed_b1_commit_pin": true,
+    "dirty_worktree_included_in_b1": false
+  },
+  "claim_boundary": "Supports reviewability, protected-deletion adjudication evidence, and an explicitly owner-reviewed B1 commit pin. It never auto-approves restore/deletion, never includes the dirty worktree in B1, and does not support task-quality/economic claims.",
+  "source_inputs": [
+    "git status --porcelain=v1 -z",
+    "git ls-files --deleted -z",
+    "current working-tree references under project documentation/config roots"
+  ],
+  "output_policy": "immutable no-overwrite run directory"
+}

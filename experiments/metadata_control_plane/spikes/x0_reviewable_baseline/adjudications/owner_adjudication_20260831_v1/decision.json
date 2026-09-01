@@ -1,0 +1,30 @@
+{
+  "adjudication_id": "X0-owner-adjudication-20260831-v1",
+  "authorized_at": "2026-08-31",
+  "authorization_source": "user_owner_instruction_in_current_thread",
+  "source_x0_run": "runs/x0_20260831_v4",
+  "source_path_inventory": "runs/x0_20260831_v4/deletion_adjudication.json",
+  "decision": "restore_from_head",
+  "source_commit": "2b9a0f0fb40a43a89633bee1ab6db92273777100",
+  "collections": [
+    {
+      "path": "experiments/full_architecture_context_observation",
+      "restored_tracked_paths": 108
+    },
+    {
+      "path": "experiments/mini_swe_active_iteration",
+      "restored_tracked_paths": 74
+    },
+    {
+      "path": "experiments/metadata_architecture",
+      "restored_tracked_paths": 15
+    }
+  ],
+  "restored_tracked_paths": 197,
+  "post_restore_tracked_deletions": 0,
+  "previously_observed_untracked_paths_preserved": 193,
+  "overwritten_path_collisions": 0,
+  "staging_mutations": 0,
+  "new_deletions": 0,
+  "execution_scope": "Exact paths from the immutable X0 v4 adjudication inventory; worktree restore from source_commit only."
+}

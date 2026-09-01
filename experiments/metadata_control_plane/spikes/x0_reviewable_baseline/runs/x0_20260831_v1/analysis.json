@@ -1,0 +1,10 @@
+{
+  "b1_baseline_status": "unfrozen_dirty_worktree",
+  "development_package_release_allowed": false,
+  "historical_evidence_mutations_performed": 0,
+  "network_calls": 0,
+  "provider_calls": 0,
+  "required_next_action": "owner_adjudication_restore_or_H4",
+  "unresolved_protected_deletions": 197,
+  "verdict": "blocked_pending_owner_adjudication"
+}

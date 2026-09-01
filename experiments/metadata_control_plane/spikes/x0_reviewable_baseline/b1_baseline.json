@@ -1,0 +1,15 @@
+{
+  "baseline_id": "B1-openpilot-pi-only-20260831-v1",
+  "baseline_role": "current OpenPilot Pi-only production comparison baseline",
+  "pin_type": "git_commit",
+  "source_commit": "2b9a0f0fb40a43a89633bee1ab6db92273777100",
+  "source_branch_at_pin": "codex/metadata-control-plane-refactor",
+  "source_commit_time": "2026-08-13T11:13:14+08:00",
+  "source_commit_subject": "experiment: prepare harness slimming paired pilot",
+  "pinned_at": "2026-08-31",
+  "authority": "user_owner_approved_current_thread",
+  "working_tree_included": false,
+  "dirty_worktree_policy": "excluded",
+  "comparison_checkout_policy": "Use a clean checkout/worktree at source_commit; do not construct B1 from the current dirty worktree.",
+  "claim_boundary": "Pins reproducible source identity only. It does not assert task quality, provider economics, or that later uncommitted production changes belong to B1."
+}

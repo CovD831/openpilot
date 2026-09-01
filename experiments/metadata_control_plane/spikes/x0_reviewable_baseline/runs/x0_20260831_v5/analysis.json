@@ -1,0 +1,17 @@
+{
+  "b1_baseline_commit": "2b9a0f0fb40a43a89633bee1ab6db92273777100",
+  "b1_baseline_id": "B1-openpilot-pi-only-20260831-v1",
+  "b1_baseline_status": "pinned_commit_dirty_worktree_excluded",
+  "b1_working_tree_included": false,
+  "current_authority_conflict_detected": false,
+  "current_authority_reference_files": [],
+  "development_package_release_allowed": true,
+  "exact_deleted_path_reference_count": 0,
+  "historical_evidence_mutations_performed": 0,
+  "network_calls": 0,
+  "protected_collection_reference_count": 549,
+  "provider_calls": 0,
+  "required_next_action": "review_package_without_broad_staging",
+  "unresolved_protected_deletions": 0,
+  "verdict": "reviewable_baseline_ready"
+}

@@ -1,0 +1,8 @@
+{
+  "generated_at": "2026-08-31T17:14:33.787230+00:00",
+  "historical_evidence_mutations": 0,
+  "network_calls": 0,
+  "provider_calls": 0,
+  "read_only_git_commands": true,
+  "runner_version": "x0-reviewable-baseline-v1"
+}

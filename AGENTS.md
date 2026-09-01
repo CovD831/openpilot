@@ -103,6 +103,29 @@ update this file together with `API.md`.
 - If you change API fields, tool behavior, or permission boundaries, update the documentation too.
 
 ## Documentation sync
+Project-wide architecture documentation is routed through
+`docs/architecture/README.md`. The metadata-control-plane program follows
+`docs/architecture/metadata_control_plane/DOCUMENTATION_GOVERNANCE_CN.md`:
+- keep one current normative owner per topic;
+- record cross-cutting decisions in ADRs, sequencing in one roadmap, and
+  experiment outcomes in the evidence index;
+- do not create new unindexed top-level `PHASE_*` documents;
+- preserve raw experiment manifests, receipts, and run results rather than
+  overwriting historical evidence.
+- before broad staging or releasing the metadata-control-plane documentation
+  package, run
+  `python3 experiments/metadata_control_plane/spikes/x0_reviewable_baseline/runner.py --check`;
+  unresolved tracked deletions in protected evidence collections block release,
+  and the guard never grants authority to restore or delete them.
+- the same X0 guard requires an owner-reviewed full Git commit pin for B1;
+  formal B1 comparisons must use a clean checkout/worktree at that commit, and
+  must never include the current dirty worktree implicitly.
+- do not use broad `git add -A` while X0 reports protected historical-evidence
+  deletions as `needs_owner_decision`.
+- an X0 pass is not broad-staging authority; while the worktree contains
+  unrelated changes, stage only explicitly reviewed paths for the current
+  package or slice.
+
 If any of the following changes, review and update them:
 - `AGENTS.md`
 - `API.md`

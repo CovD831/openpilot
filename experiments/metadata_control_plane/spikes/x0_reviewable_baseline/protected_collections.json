@@ -1,0 +1,40 @@
+{
+  "collections": [
+    {
+      "path": "experiments/full_architecture_context_observation",
+      "owner": "context_evaluation_original_experiment_owners"
+    },
+    {
+      "path": "experiments/mini_swe_active_iteration",
+      "owner": "active_iteration_experiment_owner"
+    },
+    {
+      "path": "experiments/metadata_architecture",
+      "owner": "metadata_experiment_owner"
+    },
+    {
+      "path": "experiments/context_projection_pilot",
+      "owner": "context_evaluation"
+    },
+    {
+      "path": "experiments/context_scope_governance",
+      "owner": "context_research"
+    },
+    {
+      "path": "experiments/metadata_control_plane",
+      "owner": "architecture_evaluation"
+    },
+    {
+      "path": "experiments/planner_prompt_pilot",
+      "owner": "planner_evaluation"
+    },
+    {
+      "path": "experiments/provider_native_loop_pilot",
+      "owner": "provider_runtime_evaluation"
+    },
+    {
+      "path": "experiments/local_prompt_slimming_pilot",
+      "owner": "context_evaluation"
+    }
+  ]
+}

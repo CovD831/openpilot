@@ -17,6 +17,14 @@ contracts:
 
 ## Topic documents
 
+### Architecture and metadata-control-plane refactor
+
+- `./architecture/README.md`
+
+This is the single architecture-document route. It separates adopted current
+decisions from the new-generation metadata-control-plane target, migration
+roadmap, evaluation plan, ADRs, and historical-document governance.
+
 ### Task trajectory / real-task diagnostics
 
 - `./task_trajectory/README.md`
