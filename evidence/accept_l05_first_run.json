@@ -1,0 +1,44 @@
+{
+  "schema": "openpilot-l0-acceptance/v1",
+  "status": "passed",
+  "base_root": "/Users/abab/Developer/openpilot-l0",
+  "line_budget": 2000,
+  "summary": {
+    "passed": 6,
+    "failed": 0,
+    "blocked": 0
+  },
+  "gates": [
+    {
+      "gate": "G0-environment",
+      "status": "passed",
+      "detail": "node v22.22.2 (requires >= 22.19); pi 0.84.3; OPENPILOT_LLM_API_KEY set"
+    },
+    {
+      "gate": "G1-cold-start",
+      "status": "passed",
+      "detail": "exit 0"
+    },
+    {
+      "gate": "G2-read-only-loop",
+      "status": "passed",
+      "detail": "stdout contains 555"
+    },
+    {
+      "gate": "G3-trajectory",
+      "status": "passed",
+      "detail": "1 JSONL file(s), tool_call + model_response"
+    },
+    {
+      "gate": "G4-line-budget",
+      "status": "passed",
+      "detail": "745 lines <= 2000"
+    },
+    {
+      "gate": "G5-no-legacy-import",
+      "status": "passed",
+      "detail": "no legacy top-level imports"
+    }
+  ],
+  "generated_at": "2026-09-06T10:39:25.295522+00:00"
+}

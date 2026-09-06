@@ -75,7 +75,13 @@ class EngineConfig:
 
 
 class Engine:
-    """Run one prompt through Pi; every protocol event lands in the trajectory."""
+    """Own one long-lived Pi subprocess; ask() runs one turn per prompt.
+
+    The in-process conversation survives across ask() calls (Pi keeps the
+    message history in memory; --no-session only disables persistence), so a
+    REPL session maps to one engine process. Every turn's protocol events land
+    in the trajectory.
+    """
 
     def __init__(self, session: Session, config: EngineConfig) -> None:
         self.session = session
@@ -83,34 +89,56 @@ class Engine:
         self.state = EngineState.CREATED
         self._buffer = bytearray()
         self._lock = threading.Lock()
+        self._process: subprocess.Popen[bytes] | None = None
+        self._turns = 0
 
-    def run_once(self, spec: TaskSpec, *, bridge: ReadOnlyToolBridge | None = None) -> str:
-        process: subprocess.Popen[bytes] | None = None
+    def start(self, bridge: ReadOnlyToolBridge | None = None) -> None:
+        if self.state is EngineState.RUNNING:
+            return
+        if self.config.enable_read_tool and bridge is None:
+            raise ValueError("read tool requires a bridge")
+        self._process = subprocess.Popen(
+            self.config.argv(),
+            cwd=self.config.cwd or None,
+            env=self._environment(bridge),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=False,
+            bufsize=0,
+        )
+        self.state = EngineState.RUNNING
+        self.session.record("engine_started", {"pid": self._process.pid}, producer="pi")
+
+    def stop(self) -> None:
+        if self.state is EngineState.RUNNING:
+            self.session.record("engine_stopped", {}, producer="pi")
+            self.state = EngineState.STOPPED
+        _stop_process(self._process)
+        self._process = None
+
+    def ask(self, prompt: str, *, first_turn: bool = False) -> str:
+        """Run one conversation turn against the live process."""
+        if self.state is not EngineState.RUNNING or self._process is None:
+            raise RuntimeError("engine is not running")
+        self._turns += 1
+        turn_id = f"turn-{self._turns}"
         deadline = time.monotonic() + max(0.1, self.config.timeout_seconds)
         self._buffer.clear()
+        self.session.record("turn_started", {"prompt": prompt, "turn_id": turn_id}, producer="pi")
         try:
-            if self.config.enable_read_tool and bridge is None:
-                raise ValueError("read tool requires a bridge")
-            process = subprocess.Popen(
-                self.config.argv(),
-                cwd=self.config.cwd or None,
-                env=self._environment(bridge),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=False,
-                bufsize=0,
+            assert self._process.stdin is not None
+            request_id = f"prompt:{self.session.run_id}:{self._turns}"
+            message = compose_turn_message(prompt) if first_turn else prompt
+            self._write_record(
+                self._process, {"id": request_id, "type": "prompt", "message": message}
             )
-            self.state = EngineState.RUNNING
-            self.session.record("engine_started", {"pid": process.pid}, producer="pi")
-            request_id = f"prompt:{self.session.run_id}"
-            self._write_record(process, {"id": request_id, "type": "prompt", "message": spec.goal})
             accepted = False
             ended = False
             while not ended:
-                record = self._read_record(process, deadline)
+                record = self._read_record(self._process, deadline)
                 if record is None:
-                    if process.poll() is not None:
+                    if self._process.poll() is not None:
                         raise EOFError("Pi sidecar exited before agent_end")
                     raise TimeoutError("Pi sidecar response timed out")
                 if record.get("type") == "response" and record.get("id") == request_id:
@@ -125,8 +153,6 @@ class Engine:
                 ended = str(record.get("type") or "") == "agent_end"
             if not accepted:
                 raise RuntimeError("Pi completed without accepting the prompt")
-            self.state = EngineState.STOPPED
-            self.session.record("engine_stopped", {}, producer="pi")
         except (EOFError, TimeoutError, RuntimeError, OSError, ValueError) as exc:
             self.state = EngineState.CRASHED
             self.session.record(
@@ -134,11 +160,17 @@ class Engine:
                 {"error_type": type(exc).__name__, "message": "Pi sidecar failed before a durable stop"},
                 producer="pi",
             )
-        finally:
-            _stop_process(process)
-            if bridge is not None:
-                bridge.stop()
+            _stop_process(self._process)
+            self._process = None
         return self.session.last_model_response()
+
+    def run_once(self, spec: TaskSpec, *, bridge: ReadOnlyToolBridge | None = None) -> str:
+        """Single-shot compatibility path used by --once and acceptance runs."""
+        self.start(bridge)
+        try:
+            return self.ask(spec.goal, first_turn=True)
+        finally:
+            self.stop()
 
     def _environment(self, bridge: ReadOnlyToolBridge | None) -> dict[str, str]:
         inherited = {
@@ -202,6 +234,17 @@ def _map_event_type(event_type: str) -> str:
         "tool_execution_start": "tool_call",
         "tool_execution_end": "tool_result",
     }.get(event_type, "")
+
+
+def compose_turn_message(prompt: str) -> str:
+    """First-turn message: pin the read-only tool contract for the whole session."""
+    return (
+        "Answer the user's task. If inspecting project files is needed, use the "
+        "openpilot_read tool with a project-relative path; it only serves paths "
+        "inside the project. Shell commands, network access, and file writes are "
+        "not available. This contract holds for every later turn in this "
+        "conversation.\n\nUser task:\n" + prompt
+    )
 
 
 def _stop_process(process: subprocess.Popen[bytes] | None) -> None:
