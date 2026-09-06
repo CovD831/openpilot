@@ -99,6 +99,10 @@ class Engine:
             return
         if self.config.enable_read_tool and bridge is None:
             raise ValueError("read tool requires a bridge")
+        if bridge is not None and not bridge.socket_path:
+            # Defensive: spawning Pi without the socket env makes every tool
+            # call fail with "OPENPILOT_PI_TOOL_SOCKET is not configured".
+            bridge.start()
         self._process = subprocess.Popen(
             self.config.argv(),
             cwd=self.config.cwd or None,

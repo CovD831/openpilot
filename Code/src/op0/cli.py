@@ -441,6 +441,7 @@ def _run_repl(project_root: Path) -> int:
     report = _recovery_report_to_str(store, None)
     if report:
         tui.append_block(report)
+    bridge.start()
     engine.start(bridge)
     return tui.run()
 

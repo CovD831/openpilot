@@ -215,9 +215,12 @@ class TuiSession:
         if text.startswith("/"):
             self.on_command(text)
             return
-        if self.registry.pending():
-            self._handle_approval_input(text)
+        if self.registry.pending() and self.mode == "waiting-approval":
+            answer_holder_ref = getattr(self, "_approval_answer", None)
+            if answer_holder_ref is not None:
+                answer_holder_ref["answer"] = text.strip().lower()
             return
+        self.append_block(f"[bold]> {text}[/bold]")
         self.state["goal"] = text
         self.traj.record("task_received", {"goal": text})
         self._run_goal(text, first_turn=True)
@@ -305,18 +308,8 @@ class TuiSession:
             answer_holder: dict[str, str] = {}
             done = threading.Event()
 
-            original_accept = self.input_buffer.accept_handler
-
-            def approval_accept(buffer: Buffer) -> bool:
-                answer_holder["answer"] = buffer.text.strip().lower()
-                buffer.reset()
-                done.set()
-                return False
-
-            self.input_buffer.accept_handler = approval_accept
-            done.wait(timeout=300)
-            self.input_buffer.accept_handler = original_accept
             answer = answer_holder.get("answer", "")
+            self._approval_answer = None
             if answer in ("y", "yes"):
                 try:
                     pending = self.registry.pending()
