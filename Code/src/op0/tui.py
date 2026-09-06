@@ -21,6 +21,7 @@ from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit
+from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.containers import Window
 
@@ -60,6 +61,21 @@ def _rich_to_ansi(markup: str) -> str:
     console = RichConsole(file=buf, force_terminal=True, color_system="truecolor", width=width)
     console.print(markup, markup=True, highlight=False)
     return buf.getvalue().rstrip("\n")
+
+
+
+_APPROVAL_OPTIONS = [
+    ("Yes", "approve and continue"),
+    ("Yes to all", "approve every pending proposal"),
+    ("No", "deny — tell the model what to do instead"),
+]
+
+
+def _diff_stat(diff_preview: str) -> str:
+    lines = diff_preview.splitlines()
+    added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
+    removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
+    return f"+{added} −{removed} lines"
 
 
 
@@ -110,6 +126,12 @@ class TuiSession:
             style="class:hint",
             height=1,
         )
+        self._approval: dict | None = None
+        self._approval_window = Window(
+            content=FormattedTextControl(self._get_approval_card, focusable=False),
+            height=D(min=0, max=14),
+            style="class:approval",
+        )
         def edge(left: str, right: str) -> Window:
             return VSplit(
                 [
@@ -125,6 +147,7 @@ class TuiSession:
                 [
                     self._history_window,
                     self._status_window,
+                    self._approval_window,
                     edge("╭", "╮"),
                     VSplit(
                         [
@@ -152,21 +175,46 @@ class TuiSession:
         kb.add("c-c")(lambda event: self._exit())
         kb.add("c-q")(lambda event: self._exit())
 
-        # claude-code style: approval keys fire immediately, no Enter needed
+        # claude-code style: the approval card is live — ↑↓ move, enter
+        # confirms, 1/2/3 and y/n/a direct-select, esc denies. No typing into
+        # the buffer while the card is up.
         from prompt_toolkit.filters import Condition
 
         approving = Condition(lambda: self.mode == "waiting-approval")
 
-        def _approval_key(key: str):
+        def _submit(answer: str):
+            # y -> approve single; a -> approve all; n -> deny (see _post_turn)
             def handler(event) -> None:
-                if self._approval_answer is not None:
-                    self._approval_answer["answer"] = key
+                if self._approval is not None and self._approval.get("answer") is None:
+                    self._approval["answer"] = answer
                     self.input_buffer.reset()
                     self._refresh()
             return handler
 
-        for key in ("y", "n", "a"):
-            kb.add(key, filter=approving)(_approval_key(key))
+        def _move(delta: int):
+            def handler(event) -> None:
+                if self._approval is not None:
+                    count = len(_APPROVAL_OPTIONS)
+                    self._approval["selected"] = (self._approval["selected"] + delta) % count
+                    self._refresh()
+            return handler
+
+        kb.add("up", filter=approving)(_move(-1))
+        kb.add("down", filter=approving)(_move(1))
+        _name_to_answer = {"Yes": "y", "Yes to all": "a", "No": "n"}
+
+        def _confirm(event) -> None:
+            if self._approval is not None and self._approval.get("answer") is None:
+                name = _APPROVAL_OPTIONS[self._approval["selected"]][0]
+                self._approval["answer"] = _name_to_answer.get(name, "n")
+                self._refresh()
+
+        kb.add("enter", filter=approving)(_confirm)
+        kb.add("escape", filter=approving)(_submit("n"))
+        for key, answer in (("y", "y"), ("n", "n"), ("a", "a")):
+            kb.add(key, filter=approving)(_submit(answer))
+        for key, answer in (("1", "y"), ("2", "a"), ("3", "n")):
+            kb.add(key, filter=approving)(_submit(answer))
         self.app: Application = Application(
             layout=layout,
             key_bindings=kb,
@@ -196,6 +244,31 @@ class TuiSession:
         except Exception:  # noqa: BLE001
             pass
 
+    def _get_approval_card(self):
+        """The live approval card (claude-code shape): summary + selectable options."""
+        approval = self._approval
+        if not approval:
+            return ""
+        proposal = approval["proposal"]
+        grant = proposal.grant
+        lines: list[str] = []
+        label = {"patch": "Patch", "write": "Write", "bash": "Bash"}.get(grant.kind, grant.kind.title())
+        lines.append(f"[bold]● {label} — approval required[/bold]")
+        if grant.command:
+            lines.append(f"[cyan]$ {grant.command}[/cyan]")
+        for path in grant.write_paths:
+            lines.append(f"[cyan]{path}[/cyan]")
+        if grant.diff_preview.strip():
+            lines.append(f"[dim]changes: {_diff_stat(grant.diff_preview)} (verbose expands)[/dim]")
+        lines.append("")
+        for index, (name, description) in enumerate(_APPROVAL_OPTIONS):
+            chosen = index == approval["selected"]
+            marker = "❯" if chosen else " "
+            style = "bold" if chosen else "dim"
+            lines.append(f"{marker} {index + 1}. {name}  [dim]— {description}[/dim]")
+        lines.append("[dim]↑↓ move · enter confirm · y/n/a keys[/dim]")
+        return ANSI(_rich_to_ansi("\n".join(lines)))
+
     def _get_status(self):
         if self.mode == "working":
             frame = _SPINNER_FRAMES[self.spinner_index % len(_SPINNER_FRAMES)]
@@ -203,9 +276,6 @@ class TuiSession:
             if self.queue:
                 text += f"  [dim]{len(self.queue)} queued[/dim]"
             return ANSI(_rich_to_ansi(text))
-        if self.registry.pending():
-            ids = ", ".join(p.proposal_id for p in self.registry.pending())
-            return ANSI(_rich_to_ansi(f"[yellow]approval pending: {ids} — type y / n / a[/yellow]"))
         if self.approval_hint:
             return ANSI(_rich_to_ansi(f"[dim]{self.approval_hint}[/dim]"))
         return ANSI(_rich_to_ansi("[dim]type a task · /help · /exit[/dim]"))
@@ -304,31 +374,20 @@ class TuiSession:
         # approval IS the continue (bounded)
         retries = 0
         while self.registry.pending() and retries < 8:
-            self.mode = "idle"
             pending = self.registry.pending()
-            import io
-
-            from rich.console import Console as RichConsole
-
-            width = ui.console.width
-            buf = io.StringIO()
-            previous_console = ui.console
-            ui.console = RichConsole(file=buf, force_terminal=True, width=width)
-            try:
-                ui.proposal_panel(pending[0], verbose=self.state["verbose"])
-            finally:
-                ui.console = previous_console
-            self.append_block(buf.getvalue())
-            self.approval_hint = "approve pending proposal — type y / n / a"
-            self._refresh()
+            self._approval = {
+                "proposal": pending[0],
+                "pending_count": len(pending),
+                "selected": 0,
+                "answer": None,
+            }
             self.mode = "waiting-approval"
-            answer_holder: dict[str, str] = {}
-            self._approval_answer = answer_holder
             self._refresh()
-            while "answer" not in answer_holder and self.mode == "waiting-approval":
+            while self._approval["answer"] is None and self.mode == "waiting-approval":
                 time.sleep(0.1)
-            answer = answer_holder.get("answer", "")
-            self._approval_answer = None
+            answer = self._approval["answer"] or ""
+            self._approval = None
+            self.mode = "idle"
             if answer in ("y", "yes"):
                 try:
                     pending = self.registry.pending()
