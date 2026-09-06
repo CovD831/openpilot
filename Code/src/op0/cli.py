@@ -305,167 +305,145 @@ def _validate_command(store: ReceiptStore, session: Session, command: str) -> No
     )
 
 
-def _print_recovery_report(store: ReceiptStore, run_id: str | None) -> None:
+def _recovery_report_to_str(store: ReceiptStore, run_id: str | None) -> str:
+    """Recovery report rendered to an ANSI string (projection)."""
+    import io
+
     reconciled = reconcile(store, run_id=run_id)
     if not reconciled:
-        return
+        return ""
     status, actions = resume_plan(reconciled)
-    ui.recovery_report(reconciled, status, actions)
+    width = ui.console.width
+    from rich.console import Console as RichConsole
 
+    buf = io.StringIO()
+    previous = ui.console
+    ui.console = RichConsole(file=buf, force_terminal=True, width=width)
+    try:
+        ui.recovery_report(reconciled, status, actions)
+    finally:
+        ui.console = previous
+    return buf.getvalue()
 
 def _run_repl(project_root: Path) -> int:
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-    from prompt_toolkit.history import InMemoryHistory
+    from op0.tui import TuiSession
 
-    prompt_session: PromptSession[str] = PromptSession(
-        history=InMemoryHistory(),
-        auto_suggest=AutoSuggestFromHistory(),
-    )
     traj = Session(project_root)
     traj.record("session_started", {"project_root": str(project_root)})
     registry = AdmissionRegistry(str(project_root))
     store = ReceiptStore(project_root)
-    unvalidated = len(store.pending_for_run(traj.run_id))
-    ui.banner(str(project_root), _version(), unvalidated)
-    _print_recovery_report(store, None)
+    state = {"goal": "", "saw_response": False, "verbose": False}
+    bridge = _make_bridge(traj, registry, store, str(project_root), goal_state=state)
     engine = Engine(traj, _engine_config(TaskSpec(goal="", project_root=str(project_root))))
 
-    state = {"goal": "", "saw_response": False, "verbose": False}
-    goal_state = state
-    bridge = _make_bridge(traj, registry, store, str(project_root), goal_state=goal_state)
-    bridge.start()
-    engine.start(bridge)
-    first_turn = True
-    try:
-        while True:
+    def handle_command(text: str) -> None:
+        parts = text.split(maxsplit=1)
+        cmd = parts[0]
+        rest = parts[1].strip() if len(parts) > 1 else ""
+        if cmd == "/help":
+            tui.append_block(
+                "[dim]reads free · writes/bash approved (y/n/a) · /validate <cmd> · "
+                "/dismiss <id> · /recover /proposals /verbose /new /clear /exit[/dim]"
+            )
+        elif cmd == "/verbose":
+            state["verbose"] = not state["verbose"]
+            tui.append_block(f"[dim]verbose = {state['verbose']}[/dim]")
+        elif cmd == "/new":
+            traj.record("conversation_reset", {})
+            tui.traj = Session(project_root)
+            engine.session = tui.traj
+            state["saw_response"] = False
+            tui.append_block("[dim](new conversation)[/dim]")
+        elif cmd == "/recover":
+            report = _recovery_report_to_str(store, None)
+            tui.append_block(report or "[dim](nothing to recover)[/dim]")
+        elif cmd == "/proposals":
+            pending = registry.pending()
+            if not pending:
+                tui.append_block("[dim](no pending proposals)[/dim]")
+            for proposal in pending:
+                tui.append_block(ui.render_proposal_to_str(proposal))
+        elif cmd == "/approve" and rest:
+            sub = rest.split(maxsplit=1)
+            target, command = sub[0], (sub[1].strip() if len(sub) > 1 else "")
             try:
-                line = prompt_session.prompt("op0> ")
-            except KeyboardInterrupt:
-                ui.console.print("\n[dim](interrupted) type /exit to quit[/dim]")
-                continue
-            except EOFError:
-                print()
-                return 0
-            text = line.strip()
-            if not text:
-                continue
-            if text in {"/exit", "/quit", "exit", "quit", ":q"}:
-                return 0
-            if text == "/help":
-                ui.console.print(
-                    "[dim]writes/bash need approval (y/n/a at the prompt or /approve <id>) · "
-                    "/validate <cmd> closes receipts · /dismiss <id> retracts one · /verbose /recover /proposals /new /clear /exit[/dim]"
-                )
-                continue
-            if text == "/recover":
-                _print_recovery_report(store, None)
-                continue
-            if text == "/proposals":
-                pending = registry.pending()
-                if not pending:
-                    ui.console.print("(no pending proposals)")
-                for proposal in pending:
-                    ui.proposal_panel(proposal)
-                continue
-            if text.startswith("/approve"):
-                parts = text.split(maxsplit=2)
-                target = parts[1] if len(parts) > 1 else ""
-                command = parts[2].strip() if len(parts) > 2 else ""
-                try:
-                    if target == "all":
-                        consent, ids = registry.approve_all(traj.run_id, validation_command=command)
-                        traj.record(
-                            "consent_bound",
-                            {"consent_id": consent.consent_id, "proposal_ids": list(ids), "batch": True},
-                            producer="admission",
-                        )
-                        ui.console.print(f"[green]approved {len(ids)} proposal(s)[/green] as {consent.consent_id}.")
-                    else:
-                        consent = registry.approve(target, traj.run_id, validation_command=command)
-                        traj.record(
-                            "consent_bound",
-                            {"consent_id": consent.consent_id, "proposal_id": consent.proposal_id},
-                            producer="admission",
-                        )
-                        ui.console.print(f"[green]approved[/green] {consent.consent_id} — say \"continue\".")
-                except Exception as exc:  # noqa: BLE001
-                    ui.console.print(f"[red]approve failed:[/red] {exc}")
-                continue
-            if text.startswith("/validate"):
-                parts = text.split(maxsplit=1)
-                command = parts[1].strip() if len(parts) > 1 else ""
-                if not command:
-                    ui.console.print("usage: /validate <command>")
-                    continue
-                _validate_command(store, traj, command)
-                status, reason = _closure_summary(store, traj.run_id, state["saw_response"])
-                ui.closure_line(status, reason)
-                continue
-            if text.startswith("/dismiss"):
-                parts = text.split()
-                receipt_id = parts[1] if len(parts) > 1 else ""
-                receipt = store.load(receipt_id)
-                if receipt is None:
-                    ui.console.print(f"[red]unknown receipt:[/red] {receipt_id}")
-                    continue
-                dismissed = type(receipt)(**{**receipt.__dict__, "validation_status": "dismissed"})
-                store.save(dismissed)
-                traj.record(
-                    "receipt_dismissed",
-                    {"receipt_id": receipt_id, "path": receipt.path},
-                    producer="receipts",
-                )
-                ui.console.print(f"[dim]dismissed[/dim] {receipt_id} — it no longer counts toward closure.")
-                continue
-            if text.startswith("/deny"):
-                parts = text.split()
-                proposal_id = parts[1] if len(parts) > 1 else ""
-                try:
-                    denied = registry.deny(proposal_id)
-                except Exception as exc:  # noqa: BLE001
-                    ui.console.print(f"[red]deny failed:[/red] {exc}")
-                    continue
+                if target == "all":
+                    consent, ids = registry.approve_all(traj.run_id, validation_command=command)
+                    traj.record(
+                        "consent_bound",
+                        {"consent_id": consent.consent_id, "proposal_ids": list(ids), "batch": True},
+                        producer="admission",
+                    )
+                    tui.append_block(f"[green]approved {len(ids)} proposal(s)[/green] as {consent.consent_id}")
+                else:
+                    consent = registry.approve(target, traj.run_id, validation_command=command)
+                    traj.record(
+                        "consent_bound",
+                        {"consent_id": consent.consent_id, "proposal_id": consent.proposal_id},
+                        producer="admission",
+                    )
+                    tui.append_block(f"[green]approved[/green] {consent.consent_id}")
+            except Exception as exc:  # noqa: BLE001
+                tui.append_block(f"[red]approve failed:[/red] {exc}")
+        elif cmd == "/deny" and rest:
+            try:
+                denied = registry.deny(rest)
                 traj.record("proposal_denied", {"proposal_id": denied.proposal_id}, producer="admission")
-                ui.console.print(f"[red]denied[/red] {denied.proposal_id}")
-                continue
-            if text == "/new":
-                traj.record("conversation_reset", {})
-                traj = Session(project_root)
-                engine.session = traj
-                state["saw_response"] = False
-                first_turn = True
-                ui.console.print("[dim](new conversation)[/dim]")
-                continue
-            if text == "/clear":
-                ui.console.clear()
-                ui.banner(str(project_root), _version(), 0)
-                continue
-            if text == "/verbose":
-                state["verbose"] = not state["verbose"]
-                ui.console.print(f"[dim]verbose = {state['verbose']}[/dim]")
-                continue
+                tui.append_block(f"[red]denied[/red] {rest}")
+            except Exception as exc:  # noqa: BLE001
+                tui.append_block(f"[red]deny failed:[/red] {exc}")
+        elif cmd == "/validate" and rest:
+            pending = store.pending_for_run(traj.run_id)
+            if not pending:
+                tui.append_block("[dim](no pending receipt to validate)[/dim]")
+            else:
+                try:
+                    updated, completed = record_validation(
+                        store, pending[-1], command=rest, cwd=traj.project_root
+                    )
+                    traj.record(
+                        "validation_completed",
+                        {"receipt_id": updated.receipt_id, "returncode": completed.returncode,
+                         "status": updated.validation_status},
+                        producer="receipts",
+                    )
+                    tui.append_block(
+                        f"validation [{updated.validation_status}] exit {completed.returncode} for {updated.receipt_id}"
+                    )
+                except subprocess.TimeoutExpired:
+                    tui.append_block("[yellow](validation timed out)[/yellow]")
+        elif cmd == "/dismiss" and rest:
+            receipt = store.load(rest)
+            if receipt is None:
+                tui.append_block(f"[red]unknown receipt:[/red] {rest}")
+            else:
+                retracted = type(receipt)(**{**receipt.__dict__, "validation_status": "dismissed"})
+                store.save(retracted)
+                traj.record("receipt_dismissed", {"receipt_id": rest, "path": receipt.path}, producer="receipts")
+                tui.append_block(f"[dim]dismissed[/dim] {rest}")
+        elif cmd == "/clear":
+            tui.blocks.clear()
+            tui.append_block(f"[dim]◆ op0 v{_version()} — project: {project_root}[/dim]")
+        else:
+            tui.append_block(f"[dim]unknown command: {cmd} — /help[/dim]")
 
-            state["goal"] = text
-            _ask_and_show(engine, traj, store, state, text, first_turn=first_turn)
-            first_turn = False
-            if engine.state.value == "crashed":
-                engine.start(bridge)
-                first_turn = True
-            # approval IS the continue: after y/a, re-run the pending task
-            # automatically until the model finishes or approvals run out.
-            retries = 0
-            while retries < 8:
-                outcome = _handle_pending(registry, traj, store, state, prompt_session)
-                if outcome != "approved":
-                    break
-                retries += 1
-                _ask_and_show(engine, traj, store, state, state["goal"], first_turn=False)
-                if engine.state.value == "crashed":
-                    engine.start(bridge)
-    finally:
-        engine.stop()
-        bridge.stop()
+    tui = TuiSession(
+        project_root,
+        traj,
+        registry,
+        store,
+        bridge,
+        engine,
+        version=_version(),
+        on_command=handle_command,
+        state=state,
+    )
+    report = _recovery_report_to_str(store, None)
+    if report:
+        tui.append_block(report)
+    engine.start(bridge)
+    return tui.run()
+
 
 
 def _version() -> str:

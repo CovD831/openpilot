@@ -237,3 +237,52 @@ def render_turn_tools(events: list, *, verbose: bool = False) -> None:
                     for extra in preview.splitlines()[1:6]:
                         console.print(f"      [dim]{extra[:110]}[/dim]")
     console.print()
+
+
+def render_markdown_to_str(text: str) -> str:
+    """Render the response markdown to an ANSI string for the transcript."""
+    global console
+    import io
+
+    width = console.width
+    previous = console
+    capture = Console(file=io.StringIO(), force_terminal=True, width=width)
+    console = capture
+    try:
+        markdown_response(text)
+    finally:
+        console = previous
+    return capture.file.getvalue()
+
+
+def render_closure_to_str(status: str, reason: str) -> str:
+    global console
+    import io
+
+    width = console.width
+    previous = console
+    capture = Console(file=io.StringIO(), force_terminal=True, width=width)
+    console = capture
+    try:
+        closure_line(status, reason)
+    finally:
+        console = previous
+    return capture.file.getvalue()
+
+
+def render_proposal_to_str(proposal) -> str:
+    """Proposal panel rendered to an ANSI string (projection)."""
+    import io
+
+    width = console.width
+    previous = console
+    from rich.console import Console as RichConsole
+
+    capture = RichConsole(file=io.StringIO(), force_terminal=True, width=width)
+    console_tmp = console
+    globals()["console"] = capture
+    try:
+        proposal_panel(proposal)
+    finally:
+        globals()["console"] = console_tmp
+    return capture.file.getvalue()
