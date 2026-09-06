@@ -151,6 +151,22 @@ class TuiSession:
         kb = KeyBindings()
         kb.add("c-c")(lambda event: self._exit())
         kb.add("c-q")(lambda event: self._exit())
+
+        # claude-code style: approval keys fire immediately, no Enter needed
+        from prompt_toolkit.filters import Condition
+
+        approving = Condition(lambda: self.mode == "waiting-approval")
+
+        def _approval_key(key: str):
+            def handler(event) -> None:
+                if self._approval_answer is not None:
+                    self._approval_answer["answer"] = key
+                    self.input_buffer.reset()
+                    self._refresh()
+            return handler
+
+        for key in ("y", "n", "a"):
+            kb.add(key, filter=approving)(_approval_key(key))
         self.app: Application = Application(
             layout=layout,
             key_bindings=kb,
@@ -282,7 +298,8 @@ class TuiSession:
 
     def _post_turn(self) -> None:
         if self.engine.state.value == "crashed":
-            self.bridge.start()
+            self.bridge.start()  # fresh socket first, then a fresh Pi process
+            self.engine.start(self.bridge)
             self.append_block("[yellow](engine crashed; restarting)[/yellow]")
         # approval IS the continue (bounded)
         retries = 0
@@ -306,8 +323,10 @@ class TuiSession:
             self._refresh()
             self.mode = "waiting-approval"
             answer_holder: dict[str, str] = {}
-            done = threading.Event()
-
+            self._approval_answer = answer_holder
+            self._refresh()
+            while "answer" not in answer_holder and self.mode == "waiting-approval":
+                time.sleep(0.1)
             answer = answer_holder.get("answer", "")
             self._approval_answer = None
             if answer in ("y", "yes"):
