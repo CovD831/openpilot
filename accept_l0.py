@@ -242,6 +242,42 @@ def gate_admission(base_root: Path) -> dict[str, str]:
         return _gate("G6-admission", "failed", f"{type(exc).__name__}: {exc}")
 
 
+def gate_closure(base_root: Path) -> dict[str, str]:
+    """G7: closure comes from validation evidence; model self-report never upgrades it."""
+    if not (base_root / "Code" / "src" / "op0" / "receipts.py").exists():
+        return _gate("G7-closure", "blocked", "op0.receipts not implemented yet")
+    sys.path.insert(0, str(base_root / "Code" / "src"))
+    try:
+        from op0.receipts import ReceiptStore, decide_closure, record_validation  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        return _gate("G7-closure", "failed", f"import failed: {exc}")
+
+    fixture = Path(tempfile.mkdtemp(prefix="op0-accept-closure-"))
+    try:
+        store = ReceiptStore(fixture)
+        target = fixture / "f.txt"
+        target.write_text("a\n", encoding="utf-8")
+        receipt = store.write_patch_receipt(
+            run_id="run_g7", consent_id="c", proposal_id="p", admission_id="a",
+            path=str(target), hash_before="hb", hash_after="ha", validation_command="",
+        )
+        if decide_closure([], saw_model_response=True)[0] != "success":
+            return _gate("G7-closure", "failed", "read-only closure broken")
+        if decide_closure([receipt], saw_model_response=True)[0] != "indeterminate":
+            return _gate("G7-closure", "failed", "unvalidated receipt did not yield indeterminate")
+        updated, _ = record_validation(store, receipt, command="true", cwd=str(fixture))
+        if decide_closure([updated], saw_model_response=True)[0] != "success":
+            return _gate("G7-closure", "failed", "validated receipt did not yield success")
+        failed, _ = record_validation(store, updated, command="false", cwd=str(fixture))
+        if decide_closure([failed], saw_model_response=True)[0] != "failed":
+            return _gate("G7-closure", "failed", "failed validation did not yield failed")
+        if store.load(receipt.receipt_id) is None:
+            return _gate("G7-closure", "failed", "receipt not durable")
+        return _gate("G7-closure", "passed", "success/indeterminate/failed all evidence-driven")
+    except Exception as exc:  # noqa: BLE001
+        return _gate("G7-closure", "failed", f"{type(exc).__name__}: {exc}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="L0 clean-base acceptance gate")
     parser.add_argument("--base-root", required=True, help="clean-base worktree root")
@@ -261,6 +297,7 @@ def main() -> int:
             gate_line_budget(base_root),
             gate_no_legacy_import(base_root),
             gate_admission(base_root),
+            gate_closure(base_root),
         ]
     )
 

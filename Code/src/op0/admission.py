@@ -47,6 +47,7 @@ class ConsentGrant:
     admission_id: str
     run_id: str
     write_paths: tuple[str, ...]
+    validation_command: str = ""
 
 
 def _canonical(path: str) -> str:
@@ -100,7 +101,7 @@ class AdmissionRegistry:
             raise AdmissionError(f"unknown proposal: {proposal_id}")
         return proposal
 
-    def approve(self, proposal_id: str, run_id: str) -> ConsentGrant:
+    def approve(self, proposal_id: str, run_id: str, *, validation_command: str = "") -> ConsentGrant:
         proposal = self.get(proposal_id)
         if proposal.status != "pending":
             raise AdmissionError(f"proposal {proposal_id} is {proposal.status}, not pending")
@@ -114,6 +115,7 @@ class AdmissionRegistry:
             admission_id=proposal.grant.admission_id,
             run_id=run_id,
             write_paths=proposal.grant.write_paths,
+            validation_command=validation_command.strip(),
         )
         self._consents[consent.consent_id] = consent
         return consent

@@ -28,11 +28,13 @@ class ReadOnlyToolBridge:
         scoped_roots: tuple[str, ...],
         *,
         patch_authorizer: Callable[[str], Any] | None = None,
+        on_patch_applied: Callable[[str, str, str, Any], None] | None = None,
         on_request: Callable[[dict[str, Any]], None] | None = None,
         on_result: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.scoped_roots = tuple(Path(root).expanduser().resolve(strict=False) for root in scoped_roots)
         self.patch_authorizer = patch_authorizer
+        self.on_patch_applied = on_patch_applied
         self.on_request = on_request
         self.on_result = on_result
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
@@ -173,8 +175,17 @@ class ReadOnlyToolBridge:
             body = [line + newline_style for line in replacement.splitlines()]
         else:
             body = [replacement]
+        from op0.receipts import file_hash
+
+        hash_before = file_hash(path)
         lines[line_start - 1 : line_end] = body
         path.write_text("".join(lines), encoding="utf-8")
+        hash_after = file_hash(path)
+        if self.on_patch_applied is not None:
+            try:
+                self.on_patch_applied(str(path), hash_before, hash_after, consent)
+            except Exception:  # noqa: BLE001
+                pass
         consent_id = getattr(consent, "consent_id", "")
         return (
             f"patch applied to {path.name} lines {line_start}-{line_end} "

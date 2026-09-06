@@ -1,8 +1,8 @@
 """op0 CLI: claude-code-style REPL over the Pi execution base.
 
-L1: patches are demand-driven admitted. When the model asks for a patch, the
-bridge creates a typed proposal; until /approve binds a consent to this run,
-every patch request is refused at the bridge. Reads stay scope-checked.
+L1: patches are demand-driven admitted — no write without an approved consent.
+L2: every applied patch yields a durable receipt (file hashes); a run closes
+only on validation evidence. What the model says is never evidence.
 """
 
 from __future__ import annotations
@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -17,15 +18,113 @@ from op0.admission import AdmissionRegistry, Proposal
 from op0.bridge import ReadOnlyToolBridge
 from op0.contracts import TaskSpec
 from op0.engine import Engine, EngineConfig
+from op0.receipts import ReceiptStore, decide_closure, file_hash, record_validation
 from op0.session import Session
 
 
+def _print_response(text: str) -> None:
+    print()
+    print(text if text else "(no model response observed)")
+    print()
+
+
+def _proposal_json(proposal: Proposal) -> str:
+    return json.dumps(
+        {
+            "proposal_id": proposal.proposal_id,
+            "task_id": proposal.grant.task_id,
+            "goal": proposal.grant.goal,
+            "write_paths": list(proposal.grant.write_paths),
+            "read_roots": list(proposal.grant.read_roots),
+            "status": proposal.status,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _closure_summary(store: ReceiptStore, run_id: str, saw_model_response: bool) -> str:
+    status, reason = decide_closure(store.all(run_id=run_id), saw_model_response=saw_model_response)
+    return f"closure: {status} — {reason}"
+
+
+def _apply_patch_receipt(
+    store: ReceiptStore,
+    session: Session,
+    registry: AdmissionRegistry,
+    path: str,
+    hash_before: str,
+    hash_after: str,
+    consent,
+) -> None:
+    receipt = store.write_patch_receipt(
+        run_id=session.run_id,
+        consent_id=consent.consent_id,
+        proposal_id=consent.proposal_id,
+        admission_id=consent.admission_id,
+        path=path,
+        hash_before=hash_before,
+        hash_after=hash_after,
+        validation_command=consent.validation_command,
+    )
+    session.record(
+        "patch_receipt_written",
+        {
+            "receipt_id": receipt.receipt_id,
+            "path": path,
+            "hash_before": hash_before,
+            "hash_after": hash_after,
+            "validation_status": receipt.validation_status,
+        },
+        producer="receipts",
+    )
+    if receipt.validation_command:
+        updated, completed = record_validation(
+            store, receipt, command=receipt.validation_command, cwd=registry.project_root
+        )
+        session.record(
+            "validation_completed",
+            {
+                "receipt_id": updated.receipt_id,
+                "command": updated.validation_command,
+                "returncode": completed.returncode,
+                "status": updated.validation_status,
+            },
+            producer="receipts",
+        )
+
+
+def _validate_command(store: ReceiptStore, session: Session, command: str) -> None:
+    pending = store.pending_for_run(session.run_id)
+    if not pending:
+        print("(no pending receipt to validate in this run)")
+        return
+    receipt = pending[-1]
+    try:
+        updated, completed = record_validation(store, receipt, command=command, cwd=session.project_root)
+    except subprocess.TimeoutExpired:
+        print("(validation timed out)")
+        return
+    session.record(
+        "validation_completed",
+        {
+            "receipt_id": updated.receipt_id,
+            "command": command,
+            "returncode": completed.returncode,
+            "status": updated.validation_status,
+        },
+        producer="receipts",
+    )
+    print(f"validation {updated.validation_status} (exit {completed.returncode}) for {updated.receipt_id}")
+
+
 def run_once_task(spec: TaskSpec) -> str:
-    """Single-shot path (--once): read-only only; patches would need the REPL flow."""
+    """Single-shot path (--once): read-only only; patches need the REPL flow."""
     session = Session(spec.resolved_root())
     session.record("task_received", {"goal": spec.goal, "project_root": spec.project_root})
     registry = AdmissionRegistry(spec.project_root)
-    bridge = _make_bridge(session, registry, spec.project_root, current_goal=spec.goal)
+    store = ReceiptStore(spec.project_root)
+    bridge = _make_bridge(session, registry, store, spec.project_root, current_goal=spec.goal)
     bridge.start()
     engine = Engine(session, _engine_config(spec))
     try:
@@ -38,6 +137,7 @@ def run_once_task(spec: TaskSpec) -> str:
 def _make_bridge(
     session: Session,
     registry: AdmissionRegistry,
+    store: ReceiptStore,
     project_root: str,
     *,
     current_goal: str,
@@ -65,30 +165,19 @@ def _make_bridge(
             )
             raise
 
+    def on_patch_applied(path: str, hash_before: str, hash_after: str, consent) -> None:
+        _apply_patch_receipt(store, session, registry, path, hash_before, hash_after, consent)
+
     return ReadOnlyToolBridge(
         (project_root,),
         patch_authorizer=authorize,
+        on_patch_applied=on_patch_applied,
         on_request=lambda payload: session.record(
             "tool_call", payload, producer="bridge", call_id=str(payload.get("toolCallId") or "")
         ),
         on_result=lambda payload: session.record(
             "tool_result", payload, producer="bridge", call_id=str(payload.get("toolCallId") or "")
         ),
-    )
-
-
-def _proposal_json(proposal: Proposal) -> str:
-    return json.dumps(
-        {
-            "proposal_id": proposal.proposal_id,
-            "task_id": proposal.grant.task_id,
-            "goal": proposal.grant.goal,
-            "write_paths": list(proposal.grant.write_paths),
-            "read_roots": list(proposal.grant.read_roots),
-            "status": proposal.status,
-        },
-        ensure_ascii=False,
-        indent=2,
     )
 
 
@@ -102,21 +191,6 @@ def _engine_config(spec: TaskSpec) -> EngineConfig:
     )
 
 
-def _print_response(text: str) -> None:
-    print()
-    print(text if text else "(no model response observed)")
-    print()
-
-
-def _print_pending(registry: AdmissionRegistry) -> None:
-    pending = registry.pending()
-    for proposal in pending:
-        print(f"— patch proposal (needs approval):")
-        print(_proposal_json(proposal))
-    if pending:
-        print(f"Approve with /approve {pending[0].proposal_id} then retry the task; /deny to refuse.\n")
-
-
 def _run_repl(project_root: Path) -> int:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
@@ -126,14 +200,15 @@ def _run_repl(project_root: Path) -> int:
         history=InMemoryHistory(),
         auto_suggest=AutoSuggestFromHistory(),
     )
-    print("op0 L1 - read free, writes admitted (/approve). Type a task, /help, or /exit.")
+    print("op0 L2 - writes admitted, closure on validation evidence. /help for commands.")
 
     traj = Session(project_root)
     traj.record("session_started", {"project_root": str(project_root)})
     registry = AdmissionRegistry(str(project_root))
+    store = ReceiptStore(project_root)
     engine = Engine(traj, _engine_config(TaskSpec(goal="", project_root=str(project_root))))
 
-    state = {"goal": ""}
+    state = {"goal": "", "saw_response": False}
 
     def authorize(raw_path: str):
         canonical = str(Path(raw_path).expanduser().resolve(strict=False))
@@ -158,9 +233,13 @@ def _run_repl(project_root: Path) -> int:
             )
             raise
 
+    def on_patch_applied(path: str, hash_before: str, hash_after: str, consent) -> None:
+        _apply_patch_receipt(store, traj, registry, path, hash_before, hash_after, consent)
+
     bridge = ReadOnlyToolBridge(
         (str(project_root),),
         patch_authorizer=authorize,
+        on_patch_applied=on_patch_applied,
         on_request=lambda payload: traj.record(
             "tool_call", payload, producer="bridge", call_id=str(payload.get("toolCallId") or "")
         ),
@@ -188,8 +267,8 @@ def _run_repl(project_root: Path) -> int:
                 return 0
             if text == "/help":
                 print(
-                    "Multi-turn tasks; writes need /approve. "
-                    "Commands: /proposals /approve <id> /deny <id> /new /clear /exit"
+                    "Writes need /approve <id> [validation command]; /validate <command> closes a "
+                    "receipt; /proposals /new /clear /exit"
                 )
                 continue
             if text == "/proposals":
@@ -200,9 +279,11 @@ def _run_repl(project_root: Path) -> int:
                     print(_proposal_json(proposal))
                 continue
             if text.startswith("/approve"):
-                proposal_id = text.split()[1] if len(text.split()) > 1 else ""
+                parts = text.split(maxsplit=2)
+                proposal_id = parts[1] if len(parts) > 1 else ""
+                command = parts[2].strip() if len(parts) > 2 else ""
                 try:
-                    consent = registry.approve(proposal_id, traj.run_id)
+                    consent = registry.approve(proposal_id, traj.run_id, validation_command=command)
                 except Exception as exc:  # noqa: BLE001
                     print(f"approve failed: {exc}")
                     continue
@@ -212,13 +293,25 @@ def _run_repl(project_root: Path) -> int:
                         "consent_id": consent.consent_id,
                         "proposal_id": consent.proposal_id,
                         "run_id": consent.run_id,
+                        "validation_command": consent.validation_command,
                     },
                     producer="admission",
                 )
-                print(f"approved: {consent.consent_id} — retry the task to apply the patch.")
+                hint = f" auto-validates with: {command}" if command else " (no validation yet — /validate closes it)"
+                print(f"approved: {consent.consent_id} — retry the task.{hint}")
+                continue
+            if text.startswith("/validate"):
+                parts = text.split(maxsplit=1)
+                command = parts[1].strip() if len(parts) > 1 else ""
+                if not command:
+                    print("usage: /validate <command>")
+                    continue
+                _validate_command(store, traj, command)
+                print(_closure_summary(store, traj.run_id, state["saw_response"]))
                 continue
             if text.startswith("/deny"):
-                proposal_id = text.split()[1] if len(text.split()) > 1 else ""
+                parts = text.split()
+                proposal_id = parts[1] if len(parts) > 1 else ""
                 try:
                     denied = registry.deny(proposal_id)
                 except Exception as exc:  # noqa: BLE001
@@ -231,6 +324,7 @@ def _run_repl(project_root: Path) -> int:
                 traj.record("conversation_reset", {})
                 traj = Session(project_root)
                 engine.session = traj
+                state["saw_response"] = False
                 first_turn = True
                 print("(new conversation)")
                 continue
@@ -242,20 +336,29 @@ def _run_repl(project_root: Path) -> int:
             traj.record("task_received", {"goal": text})
             response = engine.ask(text, first_turn=first_turn)
             first_turn = False
+            if response:
+                state["saw_response"] = True
             traj.record("run_finished", {"response_chars": len(response)})
             if engine.state.value == "crashed":
                 print("(engine crashed; restarting for next turn)")
                 engine.start(bridge)
                 first_turn = True
             _print_response(response)
-            _print_pending(registry)
+            pending = registry.pending()
+            for proposal in pending:
+                print("— patch proposal (needs approval):")
+                print(_proposal_json(proposal))
+            if pending:
+                print(f"/approve {pending[0].proposal_id} [validation command] then retry.\n")
+            else:
+                print(_closure_summary(store, traj.run_id, state["saw_response"]))
     finally:
         engine.stop()
         bridge.stop()
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="op0", description="op0 L1 execution base")
+    parser = argparse.ArgumentParser(prog="op0", description="op0 L2 execution base")
     parser.add_argument("--once", help="run one read-only goal and exit")
     parser.add_argument("--project-path", default=".", help="project root for this task")
     args = parser.parse_args(argv)
