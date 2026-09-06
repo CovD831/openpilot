@@ -81,3 +81,23 @@ def test_resume_plan_closed_when_all_validated(tmp_path: Path) -> None:
     assert actions == []
     assert reconciled[0].needs_validation is False
     assert reconcile_one(store, reconciled[0].receipt).disk_state == APPLIED
+
+
+def test_bash_receipt_and_directory_paths_never_crash_reconcile(tmp_path: Path) -> None:
+    """Regression: a bash receipt has path='' (resolves to '.'); a write receipt
+    may point at a directory. Reconciliation must classify, not raise."""
+    store = ReceiptStore(tmp_path)
+    store.write_bash_receipt(
+        run_id=RUN, consent_id="c", proposal_id="p", admission_id="a",
+        command="echo hi", exit_code=0, output_tail="hi",
+    )
+    store.write_patch_receipt(
+        run_id=RUN, consent_id="c2", proposal_id="p2", admission_id="a2",
+        path=str(tmp_path), hash_before="x", hash_after="y", validation_command="",
+    )
+    reconciled = reconcile(store, run_id=RUN)
+    by_state = {item.disk_state for item in reconciled}
+    assert "command" in by_state
+    assert "mismatch" in by_state
+    status, _ = resume_plan(reconciled)
+    assert status in ("indeterminate", "closed", "clean")
