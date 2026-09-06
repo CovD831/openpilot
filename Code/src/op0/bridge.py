@@ -31,6 +31,25 @@ _ALLOWED_TOOLS = frozenset(
 )
 
 
+def patched_text(old_text: str, line_start: int, line_end: int, replacement: str) -> str:
+    """Pure line-range replacement; also used to render approval diffs."""
+    lines = old_text.splitlines(keepends=True)
+    if line_end > len(lines):
+        raise ValueError(f"line range {line_start}-{line_end} exceeds file length {len(lines)}")
+    before = "".join(lines[line_start - 1 : line_end])
+    newline_style = "\r\n" if before.endswith("\r\n") else "\n"
+    had_trailing_newline = before.endswith(("\n", "\r\n"))
+    if replacement.endswith(("\n", "\r\n")) or not replacement:
+        body = replacement.splitlines(keepends=True)
+    elif had_trailing_newline:
+        body = [line + newline_style for line in replacement.splitlines()]
+    else:
+        body = [replacement]
+    lines[line_start - 1 : line_end] = body
+    return "".join(lines)
+
+
+
 class ReadOnlyToolBridge:
     """Serves reads/search (scope-checked) and patch/write/bash (consent-checked)."""
 
@@ -38,8 +57,8 @@ class ReadOnlyToolBridge:
         self,
         scoped_roots: tuple[str, ...],
         *,
-        patch_authorizer: Callable[[str], Any] | None = None,
-        command_authorizer: Callable[[str], Any] | None = None,
+        patch_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
+        command_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         on_patch_applied: Callable[[str, str, str, Any], None] | None = None,
         on_bash_executed: Callable[[str, int, str, Any], None] | None = None,
         on_request: Callable[[dict[str, Any]], None] | None = None,
@@ -178,30 +197,21 @@ class ReadOnlyToolBridge:
         if self.patch_authorizer is None:
             raise PermissionError("patching is not enabled in this session")
         raw_path = str(args.get("path") or "")
-        consent = self.patch_authorizer(raw_path)
+        consent = self.patch_authorizer(raw_path, args)
         path = Path(self._resolve_scoped(raw_path))
         line_start = int(args.get("lineStart") or 0)
         line_end = int(args.get("lineEnd") or 0)
         replacement = str(args.get("replacementText") or "")
         if line_start < 1 or line_end < line_start:
             raise ValueError("invalid line range")
-        lines = path.read_text(encoding="utf-8", errors="strict").splitlines(keepends=True)
-        if line_end > len(lines):
-            raise ValueError(f"line range {line_start}-{line_end} exceeds file length {len(lines)}")
-        before = "".join(lines[line_start - 1 : line_end])
-        newline_style = "\r\n" if before.endswith("\r\n") else "\n"
-        had_trailing_newline = before.endswith(("\n", "\r\n"))
-        if replacement.endswith(("\n", "\r\n")) or not replacement:
-            body = replacement.splitlines(keepends=True)
-        elif had_trailing_newline:
-            body = [line + newline_style for line in replacement.splitlines()]
-        else:
-            body = [replacement]
+        old_text = path.read_text(encoding="utf-8", errors="strict")
+        old_lines = old_text.splitlines(keepends=True)
+        before = "".join(old_lines[line_start - 1 : line_end])
+        new_text = patched_text(old_text, line_start, line_end, replacement)
         from op0.receipts import file_hash
 
         hash_before = file_hash(path)
-        lines[line_start - 1 : line_end] = body
-        path.write_text("".join(lines), encoding="utf-8")
+        path.write_text(new_text, encoding="utf-8")
         hash_after = file_hash(path)
         if self.on_patch_applied is not None:
             try:
@@ -233,7 +243,7 @@ class ReadOnlyToolBridge:
         if not raw_path:
             raise ValueError("openpilot_write requires a path")
         resolved = Path(self._resolve_scoped(raw_path))
-        consent = self.patch_authorizer(resolved)
+        consent = self.patch_authorizer(resolved, args)
         from op0.receipts import file_hash
 
         hash_before = file_hash(resolved) if resolved.is_file() else "absent"
@@ -256,7 +266,7 @@ class ReadOnlyToolBridge:
         command = str(args.get("command") or "").strip()
         if not command:
             raise ValueError("openpilot_bash requires a command")
-        consent = self.command_authorizer(command)
+        consent = self.command_authorizer(command, args)
         try:
             completed = subprocess.run(
                 command,

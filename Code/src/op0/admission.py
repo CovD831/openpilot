@@ -31,6 +31,7 @@ class AdmissionGrant:
     created_at: str
     kind: str = "patch"  # patch | write | bash
     command: str = ""    # bash proposals carry the exact command
+    diff_preview: str = ""  # projection-only: what the change would look like
 
     def is_mutation(self) -> bool:
         return bool(self.write_paths) or bool(self.command)
@@ -92,6 +93,7 @@ class AdmissionRegistry:
         read_roots: tuple[str, ...] = (),
         *,
         kind: str = "patch",
+        diff_preview: str = "",
     ) -> Proposal:
         grant = AdmissionGrant(
             admission_id=f"adm_{uuid4().hex[:12]}",
@@ -102,6 +104,7 @@ class AdmissionRegistry:
             write_paths=(_canonical(write_path),),
             created_at=datetime.now(UTC).isoformat(),
             kind=kind,
+            diff_preview=diff_preview,
         )
         return self._register(grant)
 

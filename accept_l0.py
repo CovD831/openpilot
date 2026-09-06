@@ -339,8 +339,8 @@ def gate_capabilities(base_root: Path) -> dict[str, str]:
     registry = AdmissionRegistry(str(fixture))
     bridge = ReadOnlyToolBridge(
         (str(fixture),),
-        patch_authorizer=lambda p: registry.authorize_patch(p, "run_g9"),
-        command_authorizer=lambda c: registry.authorize_command(c, "run_g9"),
+        patch_authorizer=lambda p, a: registry.authorize_patch(p, "run_g9"),
+        command_authorizer=lambda c, a: registry.authorize_command(c, "run_g9"),
     )
     bridge.start()
 

@@ -88,7 +88,7 @@ def test_bridge_patch_writes_receipt(tmp_path: Path) -> None:
 
     bridge = ReadOnlyToolBridge(
         (str(tmp_path),),
-        patch_authorizer=lambda p: registry.authorize_patch(p, RUN),
+        patch_authorizer=lambda p, a: registry.authorize_patch(p, RUN),
         on_patch_applied=on_applied,
     )
     bridge.start()

@@ -9,6 +9,7 @@ description = "op0: minimal Pi-runtime execution base (L0 clean base)."
 requires-python = ">=3.11"
 dependencies = [
     "prompt-toolkit>=3.0.0",
+    "rich>=13.7.0",
 ]
 
 [project.scripts]

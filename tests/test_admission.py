@@ -69,7 +69,7 @@ def test_patch_flow_denied_then_applied(tmp_path: Path) -> None:
     target = tmp_path / "code.txt"
     target.write_text("line1\nline2\nline3\n", encoding="utf-8")
     registry = AdmissionRegistry(str(tmp_path))
-    bridge = ReadOnlyToolBridge((str(tmp_path),), patch_authorizer=lambda p: registry.authorize_patch(p, RUN))
+    bridge = ReadOnlyToolBridge((str(tmp_path),), patch_authorizer=lambda p, a: registry.authorize_patch(p, RUN))
     bridge.start()
     patch_request = {
         "type": "tool_call",

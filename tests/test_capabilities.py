@@ -46,7 +46,7 @@ def test_bash_requires_own_consent_and_receipts(tmp_path: Path) -> None:
 
     bridge = ReadOnlyToolBridge(
         (str(tmp_path),),
-        command_authorizer=lambda c: registry.authorize_command(c, RUN),
+        command_authorizer=lambda c, a: registry.authorize_command(c, RUN),
         on_bash_executed=on_bash,
     )
     bridge.start()
@@ -83,7 +83,7 @@ def test_write_creates_file_with_receipt(tmp_path: Path) -> None:
 
     bridge = ReadOnlyToolBridge(
         (str(tmp_path),),
-        patch_authorizer=lambda p: registry.authorize_patch(p, RUN),
+        patch_authorizer=lambda p, a: registry.authorize_patch(p, RUN),
         on_patch_applied=on_applied,
     )
     bridge.start()
