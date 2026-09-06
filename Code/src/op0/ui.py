@@ -74,7 +74,7 @@ def _diff_block(diff_text: str) -> Syntax:
     return Syntax(diff_text, "diff", theme="ansi_dark", word_wrap=True)
 
 
-def proposal_panel(proposal) -> None:
+def proposal_panel(proposal, *, verbose: bool = False) -> None:
     """Render one pending proposal with its change preview."""
     grant = proposal.grant
     label = _KIND_LABELS.get(grant.kind, grant.kind.upper())
@@ -93,7 +93,15 @@ def proposal_panel(proposal) -> None:
         )
     )
     if grant.diff_preview.strip():
-        console.print(_diff_block(grant.diff_preview))
+        lines = grant.diff_preview.splitlines()
+        added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
+        removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
+        if verbose:
+            console.print(_diff_block(grant.diff_preview))
+        else:
+            console.print(
+                f"  [dim]changes: +{added} −{removed} lines (verbose to expand)[/dim]"
+            )
     console.print(
         f"  [dim]y = approve · n = deny · a = approve all pending · or /validate later[/dim]\n"
     )
@@ -270,7 +278,7 @@ def render_closure_to_str(status: str, reason: str) -> str:
     return capture.file.getvalue()
 
 
-def render_proposal_to_str(proposal) -> str:
+def render_proposal_to_str(proposal, *, verbose: bool = False) -> str:
     """Proposal panel rendered to an ANSI string (projection)."""
     import io
 
@@ -282,7 +290,7 @@ def render_proposal_to_str(proposal) -> str:
     console_tmp = console
     globals()["console"] = capture
     try:
-        proposal_panel(proposal)
+        proposal_panel(proposal, verbose=verbose)
     finally:
         globals()["console"] = console_tmp
     return capture.file.getvalue()

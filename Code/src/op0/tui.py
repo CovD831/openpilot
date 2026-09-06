@@ -20,7 +20,7 @@ from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout import HSplit, Layout
+from prompt_toolkit.layout import HSplit, Layout, VSplit
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.containers import Window
 
@@ -31,6 +31,36 @@ from op0.session import Session
 
 _MAX_HISTORY_BLOCKS = 400
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def _tui_style() -> "Style":
+    """Colors aligned with the claude-code look: dim rounded frame, orange accents."""
+    from prompt_toolkit.styles import Style as PTStyle
+
+    return PTStyle.from_dict(
+        {
+            "border": "#ff8c38",
+            "border-dim": "#7a4a28",
+            "prompt": "#ff8c38 bold",
+            "hint": "#6f6d66",
+            "status": "#ff8c38",
+        }
+    )
+
+
+
+def _rich_to_ansi(markup: str) -> str:
+    """Render rich markup to real ANSI escape codes for prompt_toolkit."""
+    import io
+
+    from rich.console import Console as RichConsole
+
+    width = ui.console.width
+    buf = io.StringIO()
+    console = RichConsole(file=buf, force_terminal=True, color_system="truecolor", width=width)
+    console.print(markup, markup=True, highlight=False)
+    return buf.getvalue().rstrip("\n")
+
 
 
 class TuiSession:
@@ -75,18 +105,45 @@ class TuiSession:
             content=FormattedTextControl(self._get_status, focusable=False),
             height=1,
         )
+        self._hint_window = Window(
+            content=FormattedTextControl("  ? shortcuts · /help · /exit"),
+            style="class:hint",
+            height=1,
+        )
+        def edge(left: str, right: str) -> Window:
+            return VSplit(
+                [
+                    Window(width=1, content=FormattedTextControl(left), style="class:border", dont_extend_height=True),
+                    Window(char="─", style="class:border-dim"),
+                    Window(width=1, content=FormattedTextControl(right), style="class:border", dont_extend_height=True),
+                ],
+                height=1,
+            )
+
         layout = Layout(
             HSplit(
                 [
                     self._history_window,
-                    Window(height=1, char="─", style="class:separator"),
                     self._status_window,
-                    Window(
-                        content=BufferControl(buffer=self.input_buffer),
-                        height=3,
-                        style="class:input",
-                        dont_extend_height=True,
+                    edge("╭", "╮"),
+                    VSplit(
+                        [
+                            Window(width=1, char="│", style="class:border"),
+                            Window(
+                                width=2,
+                                content=FormattedTextControl("> "),
+                                dont_extend_height=True,
+                            ),
+                            Window(
+                                content=BufferControl(buffer=self.input_buffer),
+                                dont_extend_height=True,
+                            ),
+                            Window(width=1, char="│", style="class:border"),
+                        ],
+                        height=1,
                     ),
+                    edge("╰", "╯"),
+                    self._hint_window,
                 ]
             ),
             focused_element=self.input_buffer,
@@ -99,12 +156,14 @@ class TuiSession:
             key_bindings=kb,
             full_screen=True,
             mouse_support=False,
+            style=_tui_style(),
         )
 
     # -- transcript projection ------------------------------------------
 
-    def append_block(self, ansi_text: str) -> None:
-        self.blocks.append(ansi_text)
+    def append_block(self, markup_text: str) -> None:
+        """Accept rich markup; store it as real ANSI (projection is rendered once)."""
+        self.blocks.append(_rich_to_ansi(markup_text))
         if len(self.blocks) > _MAX_HISTORY_BLOCKS:
             self.blocks = self.blocks[-_MAX_HISTORY_BLOCKS:]
         self._scroll_bottom()
@@ -125,14 +184,15 @@ class TuiSession:
         if self.mode == "working":
             frame = _SPINNER_FRAMES[self.spinner_index % len(_SPINNER_FRAMES)]
             text = f"{frame} {self.status_text or 'working…'}"
-            queued = f"  [dim]{len(self.queue)} queued[/dim]" if self.queue else ""
-            return ANSI(f"{text}{queued}")
+            if self.queue:
+                text += f"  [dim]{len(self.queue)} queued[/dim]"
+            return ANSI(_rich_to_ansi(text))
         if self.registry.pending():
             ids = ", ".join(p.proposal_id for p in self.registry.pending())
-            return ANSI(f"[yellow]approval pending: {ids} — type y / n / a[/yellow]")
+            return ANSI(_rich_to_ansi(f"[yellow]approval pending: {ids} — type y / n / a[/yellow]"))
         if self.approval_hint:
-            return ANSI(f"[dim]{self.approval_hint}[/dim]")
-        return ANSI("[dim]type a task · /help · /exit[/dim]")
+            return ANSI(_rich_to_ansi(f"[dim]{self.approval_hint}[/dim]"))
+        return ANSI(_rich_to_ansi("[dim]type a task · /help · /exit[/dim]"))
 
     # -- input ------------------------------------------------------------
 
@@ -225,6 +285,20 @@ class TuiSession:
         retries = 0
         while self.registry.pending() and retries < 8:
             self.mode = "idle"
+            pending = self.registry.pending()
+            import io
+
+            from rich.console import Console as RichConsole
+
+            width = ui.console.width
+            buf = io.StringIO()
+            previous_console = ui.console
+            ui.console = RichConsole(file=buf, force_terminal=True, width=width)
+            try:
+                ui.proposal_panel(pending[0], verbose=self.state["verbose"])
+            finally:
+                ui.console = previous_console
+            self.append_block(buf.getvalue())
             self.approval_hint = "approve pending proposal — type y / n / a"
             self._refresh()
             self.mode = "waiting-approval"
