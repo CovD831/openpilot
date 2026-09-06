@@ -208,15 +208,26 @@ def _ask_and_show(engine: Engine, traj: Session, store: ReceiptStore, state: dic
     traj.record("run_finished", {"response_chars": len(response)})
     if engine.state.value == "crashed":
         ui.console.print("[yellow](engine crashed; restarting for next turn)[/yellow]")
+    events = traj.load_events()
+    turn_start = max(
+        (i for i, e in enumerate(events) if e.event_type == "turn_started"), default=None
+    )
+    if turn_start is not None:
+        ui.render_turn_tools(events[turn_start:], verbose=state["verbose"])
     ui.markdown_response(response)
     status, reason = _closure_summary(store, traj.run_id, state["saw_response"])
     ui.closure_line(status, reason)
 
 
-def _handle_pending(registry: AdmissionRegistry, traj: Session, store: ReceiptStore, state: dict, prompt_session) -> None:
+def _handle_pending(registry: AdmissionRegistry, traj: Session, store: ReceiptStore, state: dict, prompt_session) -> str:
+    """Show pending proposals and apply the answer.
+
+    Returns "approved" | "denied" | "" — "approved" means the caller should
+    re-run the pending task immediately (approval is the continue).
+    """
     pending = registry.pending()
     if not pending:
-        return
+        return ""
     ui.proposal_panel(pending[0])
     if len(pending) > 1:
         ui.console.print(f"[yellow]({len(pending)} proposals pending — 'a' approves all)[/yellow]")
@@ -229,21 +240,25 @@ def _handle_pending(registry: AdmissionRegistry, traj: Session, store: ReceiptSt
                 {"consent_id": consent.consent_id, "proposal_id": consent.proposal_id, "run_id": consent.run_id},
                 producer="admission",
             )
-            ui.console.print(f"[green]approved[/green] {consent.consent_id} — say \"continue\" to re-run the task.")
-        elif answer in ("a", "all"):
+            ui.console.print(f"[green]approved[/green] {consent.consent_id}\n")
+            return "approved"
+        if answer in ("a", "all"):
             consent, ids = registry.approve_all(traj.run_id)
             traj.record(
                 "consent_bound",
                 {"consent_id": consent.consent_id, "proposal_ids": list(ids), "run_id": consent.run_id, "batch": True},
                 producer="admission",
             )
-            ui.console.print(f"[green]approved {len(ids)} proposal(s)[/green] as {consent.consent_id}.")
-        elif answer in ("n", "no"):
+            ui.console.print(f"[green]approved {len(ids)} proposal(s)[/green] as {consent.consent_id}\n")
+            return "approved"
+        if answer in ("n", "no"):
             denied = registry.deny(pending[0].proposal_id)
             traj.record("proposal_denied", {"proposal_id": denied.proposal_id}, producer="admission")
             ui.console.print(f"[red]denied[/red] {denied.proposal_id}")
+            return "denied"
     except Exception as exc:  # noqa: BLE001
         ui.console.print(f"[red]approval failed:[/red] {exc}")
+    return ""
 
 
 def run_once_task(spec: TaskSpec) -> str:
@@ -316,7 +331,7 @@ def _run_repl(project_root: Path) -> int:
     _print_recovery_report(store, None)
     engine = Engine(traj, _engine_config(TaskSpec(goal="", project_root=str(project_root))))
 
-    state = {"goal": "", "saw_response": False}
+    state = {"goal": "", "saw_response": False, "verbose": False}
     goal_state = state
     bridge = _make_bridge(traj, registry, store, str(project_root), goal_state=goal_state)
     bridge.start()
@@ -340,7 +355,7 @@ def _run_repl(project_root: Path) -> int:
             if text == "/help":
                 ui.console.print(
                     "[dim]writes/bash need approval (y/n/a at the prompt or /approve <id>) · "
-                    "/validate <cmd> closes receipts · /recover /proposals /new /clear /exit[/dim]"
+                    "/validate <cmd> closes receipts · /verbose /recover /proposals /new /clear /exit[/dim]"
                 )
                 continue
             if text == "/recover":
@@ -410,6 +425,10 @@ def _run_repl(project_root: Path) -> int:
                 ui.console.clear()
                 ui.banner(str(project_root), _version(), 0)
                 continue
+            if text == "/verbose":
+                state["verbose"] = not state["verbose"]
+                ui.console.print(f"[dim]verbose = {state['verbose']}[/dim]")
+                continue
 
             state["goal"] = text
             _ask_and_show(engine, traj, store, state, text, first_turn=first_turn)
@@ -417,7 +436,17 @@ def _run_repl(project_root: Path) -> int:
             if engine.state.value == "crashed":
                 engine.start(bridge)
                 first_turn = True
-            _handle_pending(registry, traj, store, state, prompt_session)
+            # approval IS the continue: after y/a, re-run the pending task
+            # automatically until the model finishes or approvals run out.
+            retries = 0
+            while retries < 8:
+                outcome = _handle_pending(registry, traj, store, state, prompt_session)
+                if outcome != "approved":
+                    break
+                retries += 1
+                _ask_and_show(engine, traj, store, state, state["goal"], first_turn=False)
+                if engine.state.value == "crashed":
+                    engine.start(bridge)
     finally:
         engine.stop()
         bridge.stop()

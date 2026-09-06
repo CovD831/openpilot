@@ -1,0 +1,64 @@
+{
+  "schema": "openpilot-l0-acceptance/v1",
+  "status": "passed",
+  "base_root": "/Users/abab/Developer/openpilot-l0",
+  "line_budget": 2400,
+  "summary": {
+    "passed": 10,
+    "failed": 0,
+    "blocked": 0
+  },
+  "gates": [
+    {
+      "gate": "G0-environment",
+      "status": "passed",
+      "detail": "node v22.22.2 (requires >= 22.19); pi 0.84.3; OPENPILOT_LLM_API_KEY set"
+    },
+    {
+      "gate": "G1-cold-start",
+      "status": "passed",
+      "detail": "exit 0"
+    },
+    {
+      "gate": "G2-read-only-loop",
+      "status": "passed",
+      "detail": "stdout contains 555"
+    },
+    {
+      "gate": "G3-trajectory",
+      "status": "passed",
+      "detail": "1 JSONL file(s), tool_call + model_response"
+    },
+    {
+      "gate": "G4-line-budget",
+      "status": "passed",
+      "detail": "2051 lines <= 2400"
+    },
+    {
+      "gate": "G5-no-legacy-import",
+      "status": "passed",
+      "detail": "no legacy top-level imports"
+    },
+    {
+      "gate": "G6-admission",
+      "status": "passed",
+      "detail": "deny/approve/bind/scope all enforced"
+    },
+    {
+      "gate": "G7-closure",
+      "status": "passed",
+      "detail": "success/indeterminate/failed all evidence-driven"
+    },
+    {
+      "gate": "G8-recovery",
+      "status": "passed",
+      "detail": "crash window reconciled; no side effect replayed"
+    },
+    {
+      "gate": "G9-capabilities",
+      "status": "passed",
+      "detail": "bash/write consent-gated; search free and scoped"
+    }
+  ],
+  "generated_at": "2026-09-06T13:05:52.526389+00:00"
+}

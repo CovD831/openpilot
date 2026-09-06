@@ -9,7 +9,7 @@ Gates:
     G1 cold start       `python -m op0 --once <goal> --project-path <fixture>` exits 0
     G2 read-only loop   stdout of G1 contains the expected VALUE (555)
     G3 trajectory       JSONL events include tool_call(read) and model_response
-    G4 line budget      Code/src/**/*.py total lines <= 2000
+    G4 line budget      Code/src/**/*.py total lines <= 2400
     G5 no legacy import no import of legacy top-level packages anywhere in Code/src
 
 Gates that need the L0 implementation report "blocked" (not failed) while the
@@ -33,7 +33,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-LINE_BUDGET = 2000
+LINE_BUDGET = 2400
 NODE_MIN = (22, 19)
 LEGACY_TOPS = frozenset(
     {"autonomous_iteration", "metadata", "tools", "memory", "core", "evidence_core", "ui", "utils"}

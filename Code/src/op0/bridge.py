@@ -163,7 +163,13 @@ class ReadOnlyToolBridge:
             }
         if self.on_result is not None:
             try:
-                self.on_result({"toolCallId": call_id, "success": response["success"]})
+                self.on_result(
+                    {
+                        "toolCallId": call_id,
+                        "success": response["success"],
+                        "preview": str(response.get("content") or "")[:240],
+                    }
+                )
             except Exception:  # noqa: BLE001
                 pass
         return response

@@ -151,3 +151,89 @@ def make_diff_preview(kind: str, args: dict[str, Any], project_root: str) -> str
         )
     )
     return diff[:4000]
+
+
+# -- turn transcript (claude-code style folding) -----------------------------
+
+_COLLAPSIBLE = {"openpilot_read", "openpilot_search"}
+
+
+def _short_args(tool: str, args: dict[str, Any]) -> str:
+    if tool == "openpilot_bash":
+        return str(args.get("command") or "")[:80]
+    path = str(args.get("path") or "")
+    name = Path(path).name or path
+    if tool == "openpilot_read":
+        return name
+    if tool == "openpilot_search":
+        return f"{args.get('pattern', '')!r} in {name or 'project'}"
+    if tool == "openpilot_patch":
+        return f"{name} L{args.get('lineStart')}–{args.get('lineEnd')}"
+    if tool == "openpilot_write":
+        return f"{name} ({len(str(args.get('content') or ''))} chars)"
+    return name
+
+
+def render_turn_tools(events: list, *, verbose: bool = False) -> None:
+    """Project one turn's tool calls claude-code style.
+
+    Consecutive reads/searches collapse into one summary line; patch/write/
+    bash stay visible; every result shows a one-line folded preview unless
+    verbose. Derived entirely from trajectory events.
+    """
+    calls: list[tuple[str, dict, str, str]] = []  # tool, args, call_id, preview
+    results: dict[str, dict] = {}
+    for event in events:
+        if event.event_type == "tool_call" and event.producer == "bridge":
+            payload = event.payload or {}
+            calls.append(
+                (
+                    str(payload.get("toolName") or ""),
+                    dict(payload.get("args") or {}),
+                    str(payload.get("toolCallId") or ""),
+                    "",
+                )
+            )
+        elif event.event_type == "tool_result" and event.producer == "bridge":
+            payload = event.payload or {}
+            results[str(payload.get("toolCallId") or "")] = payload
+
+    groups: list[tuple[str, list[int]]] = []
+    for index, (tool, _args, _cid, _preview) in enumerate(calls):
+        collapsible = tool in _COLLAPSIBLE
+        if groups and collapsible and groups[-1][0] == "read-search":
+            groups[-1][1].append(index)
+        elif collapsible:
+            groups.append(("read-search", [index]))
+        else:
+            groups.append((tool, [index]))
+
+    for group_kind, indices in groups:
+        if group_kind == "read-search" and len(indices) > 1 and not verbose:
+            reads = sum(1 for i in indices if calls[i][0] == "openpilot_read")
+            searches = len(indices) - reads
+            parts = []
+            if reads:
+                parts.append(f"Read×{reads}")
+            if searches:
+                parts.append(f"Search×{searches}")
+            console.print(f"  [dim]⏺ {' + '.join(parts)} (collapsed)[/dim]")
+            continue
+        for i in indices:
+            tool, args, call_id, _ = calls[i]
+            short = tool.replace("openpilot_", "").title()
+            ok = results.get(call_id, {}).get("success")
+            mark_style = "green" if ok is not False else "red"
+            console.print(
+                f"  [{mark_style}]⏺[/{mark_style}] [bold]{short}[/bold][dim]({_short_args(tool, args)})[/dim]"
+            )
+            preview = str(results.get(call_id, {}).get("preview") or "")
+            if preview:
+                first_line = preview.splitlines()[0][:100]
+                more = len(preview.splitlines()) - 1
+                suffix = f" [dim](+{more} lines)[/dim]" if more > 0 and not verbose else ""
+                console.print(f"    [dim]⎿ {first_line}{suffix}[/dim]")
+                if verbose and more > 0:
+                    for extra in preview.splitlines()[1:6]:
+                        console.print(f"      [dim]{extra[:110]}[/dim]")
+    console.print()
