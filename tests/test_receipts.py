@@ -122,3 +122,18 @@ def test_bridge_patch_writes_receipt(tmp_path: Path) -> None:
         assert seen["consent"] == receipts[0].consent_id
     finally:
         bridge.stop()
+
+
+def test_dismissed_receipt_counts_for_nothing(tmp_path: Path) -> None:
+    store = ReceiptStore(tmp_path)
+    target = tmp_path / "f.txt"
+    target.write_text("a\n", encoding="utf-8")
+    receipt = store.write_patch_receipt(
+        run_id="r", consent_id="c", proposal_id="p", admission_id="a",
+        path=str(target), hash_before="x", hash_after="y", validation_command="",
+    )
+    retracted = type(receipt)(**{**receipt.__dict__, "validation_status": "dismissed"})
+    store.save(retracted)
+    from op0.receipts import decide_closure
+    status, _ = decide_closure(store.all(run_id="r"), saw_model_response=True)
+    assert status == "success"  # dismissed evidence counts for nothing

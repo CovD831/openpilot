@@ -355,7 +355,7 @@ def _run_repl(project_root: Path) -> int:
             if text == "/help":
                 ui.console.print(
                     "[dim]writes/bash need approval (y/n/a at the prompt or /approve <id>) · "
-                    "/validate <cmd> closes receipts · /verbose /recover /proposals /new /clear /exit[/dim]"
+                    "/validate <cmd> closes receipts · /dismiss <id> retracts one · /verbose /recover /proposals /new /clear /exit[/dim]"
                 )
                 continue
             if text == "/recover":
@@ -401,6 +401,22 @@ def _run_repl(project_root: Path) -> int:
                 _validate_command(store, traj, command)
                 status, reason = _closure_summary(store, traj.run_id, state["saw_response"])
                 ui.closure_line(status, reason)
+                continue
+            if text.startswith("/dismiss"):
+                parts = text.split()
+                receipt_id = parts[1] if len(parts) > 1 else ""
+                receipt = store.load(receipt_id)
+                if receipt is None:
+                    ui.console.print(f"[red]unknown receipt:[/red] {receipt_id}")
+                    continue
+                dismissed = type(receipt)(**{**receipt.__dict__, "validation_status": "dismissed"})
+                store.save(dismissed)
+                traj.record(
+                    "receipt_dismissed",
+                    {"receipt_id": receipt_id, "path": receipt.path},
+                    producer="receipts",
+                )
+                ui.console.print(f"[dim]dismissed[/dim] {receipt_id} — it no longer counts toward closure.")
                 continue
             if text.startswith("/deny"):
                 parts = text.split()

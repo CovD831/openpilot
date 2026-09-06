@@ -178,7 +178,10 @@ def record_validation(
 
 
 def decide_closure(receipts: list[Receipt], *, saw_model_response: bool) -> tuple[str, str]:
-    """Closure decision from evidence only; saw_model_response never upgrades it."""
+    """Closure decision from evidence only; saw_model_response never upgrades it.
+    Dismissed receipts are human-retracted evidence and count for nothing."""
+    relevant = [r for r in receipts if r.validation_status != "dismissed"]
+    receipts = relevant
     if not receipts:
         if saw_model_response:
             return "success", "read-only run with an observed model response"

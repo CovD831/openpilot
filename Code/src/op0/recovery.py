@@ -67,7 +67,10 @@ def resume_plan(reconciled: list[ReconciledReceipt]) -> tuple[str, list[str]]:
     if not reconciled:
         return "clean", []
     actions: list[str] = []
-    file_reconciled = [item for item in reconciled if item.disk_state != COMMAND]
+    file_reconciled = [
+        item for item in reconciled
+        if item.disk_state != COMMAND and item.receipt.validation_status != "dismissed"
+    ]
     if any(item.disk_state == APPLIED and item.receipt.validation_status == "pending" for item in file_reconciled):
         actions.append("run /validate <command> on the pending receipts to close them")
     if any(item.disk_state == APPLIED and item.receipt.validation_status == "failed" for item in file_reconciled):
