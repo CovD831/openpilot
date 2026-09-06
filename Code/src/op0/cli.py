@@ -30,18 +30,18 @@ def _print_response(text: str) -> None:
 
 
 def _proposal_json(proposal: Proposal) -> str:
-    return json.dumps(
-        {
-            "proposal_id": proposal.proposal_id,
-            "task_id": proposal.grant.task_id,
-            "goal": proposal.grant.goal,
-            "write_paths": list(proposal.grant.write_paths),
-            "read_roots": list(proposal.grant.read_roots),
-            "status": proposal.status,
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
+    payload: dict[str, object] = {
+        "proposal_id": proposal.proposal_id,
+        "task_id": proposal.grant.task_id,
+        "kind": proposal.grant.kind,
+        "goal": proposal.grant.goal,
+        "write_paths": list(proposal.grant.write_paths),
+        "read_roots": list(proposal.grant.read_roots),
+        "status": proposal.status,
+    }
+    if proposal.grant.command:
+        payload["command"] = proposal.grant.command
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def _closure_summary(store: ReceiptStore, run_id: str, saw_model_response: bool) -> str:
@@ -179,6 +179,7 @@ def _make_bridge(
                 "patch_proposed",
                 {
                     "proposal_id": proposal.proposal_id,
+                    "kind": proposal.grant.kind,
                     "path": canonical,
                     "write_paths": list(proposal.grant.write_paths),
                 },
@@ -186,13 +187,54 @@ def _make_bridge(
             )
             raise
 
+    def authorize_cmd(command: str):
+        try:
+            consent = registry.authorize_command(command, session.run_id)
+            session.record(
+                "command_authorized",
+                {"command": command, "consent_id": consent.consent_id},
+                producer="admission",
+            )
+            return consent
+        except PermissionError:
+            proposal = registry.propose_command(current_goal, command)
+            session.record(
+                "command_proposed",
+                {"proposal_id": proposal.proposal_id, "command": command},
+                producer="admission",
+            )
+            raise
+
     def on_patch_applied(path: str, hash_before: str, hash_after: str, consent) -> None:
         _apply_patch_receipt(store, session, registry, path, hash_before, hash_after, consent)
+
+    def on_bash_executed(command: str, exit_code: int, output: str, consent) -> None:
+        receipt = store.write_bash_receipt(
+            run_id=session.run_id,
+            consent_id=consent.consent_id,
+            proposal_id=consent.proposal_id,
+            admission_id=consent.admission_id,
+            command=command,
+            exit_code=exit_code,
+            output_tail=output,
+        )
+        session.record(
+            "bash_receipt_written",
+            {
+                "receipt_id": receipt.receipt_id,
+                "command": command,
+                "exit_code": exit_code,
+                "validation_status": receipt.validation_status,
+            },
+            producer="receipts",
+        )
 
     return ReadOnlyToolBridge(
         (project_root,),
         patch_authorizer=authorize,
+        command_authorizer=authorize_cmd,
         on_patch_applied=on_patch_applied,
+        on_bash_executed=on_bash_executed,
         on_request=lambda payload: session.record(
             "tool_call", payload, producer="bridge", call_id=str(payload.get("toolCallId") or "")
         ),
@@ -221,7 +263,7 @@ def _run_repl(project_root: Path) -> int:
         history=InMemoryHistory(),
         auto_suggest=AutoSuggestFromHistory(),
     )
-    print("op0 L3 - admitted writes, evidence closure, crash recovery. /help for commands.")
+    print("op0 L4 - full tool surface, every side effect admitted and receipted. /help for commands.")
 
     traj = Session(project_root)
     traj.record("session_started", {"project_root": str(project_root)})
@@ -248,6 +290,7 @@ def _run_repl(project_root: Path) -> int:
                 "patch_proposed",
                 {
                     "proposal_id": proposal.proposal_id,
+                    "kind": proposal.grant.kind,
                     "path": canonical,
                     "write_paths": list(proposal.grant.write_paths),
                 },
@@ -255,13 +298,54 @@ def _run_repl(project_root: Path) -> int:
             )
             raise
 
+    def authorize_cmd(command: str):
+        try:
+            consent = registry.authorize_command(command, traj.run_id)
+            traj.record(
+                "command_authorized",
+                {"command": command, "consent_id": consent.consent_id},
+                producer="admission",
+            )
+            return consent
+        except PermissionError:
+            proposal = registry.propose_command(state["goal"], command)
+            traj.record(
+                "command_proposed",
+                {"proposal_id": proposal.proposal_id, "command": command},
+                producer="admission",
+            )
+            raise
+
     def on_patch_applied(path: str, hash_before: str, hash_after: str, consent) -> None:
         _apply_patch_receipt(store, traj, registry, path, hash_before, hash_after, consent)
+
+    def on_bash_executed(command: str, exit_code: int, output: str, consent) -> None:
+        receipt = store.write_bash_receipt(
+            run_id=traj.run_id,
+            consent_id=consent.consent_id,
+            proposal_id=consent.proposal_id,
+            admission_id=consent.admission_id,
+            command=command,
+            exit_code=exit_code,
+            output_tail=output,
+        )
+        traj.record(
+            "bash_receipt_written",
+            {
+                "receipt_id": receipt.receipt_id,
+                "command": command,
+                "exit_code": exit_code,
+                "validation_status": receipt.validation_status,
+            },
+            producer="receipts",
+        )
 
     bridge = ReadOnlyToolBridge(
         (str(project_root),),
         patch_authorizer=authorize,
+        command_authorizer=authorize_cmd,
         on_patch_applied=on_patch_applied,
+        on_bash_executed=on_bash_executed,
         on_request=lambda payload: traj.record(
             "tool_call", payload, producer="bridge", call_id=str(payload.get("toolCallId") or "")
         ),
@@ -289,8 +373,8 @@ def _run_repl(project_root: Path) -> int:
                 return 0
             if text == "/help":
                 print(
-                    "Writes need /approve <id> [validation command]; /validate <command> closes a "
-                    "receipt; /recover reconciles durable receipts; /proposals /new /clear /exit"
+                    "Writes and bash need /approve <id> [validation command] or /approve all; "
+                    "/validate <command> closes a receipt; /recover /proposals /new /clear /exit"
                 )
                 continue
             if text == "/recover":
@@ -305,8 +389,28 @@ def _run_repl(project_root: Path) -> int:
                 continue
             if text.startswith("/approve"):
                 parts = text.split(maxsplit=2)
-                proposal_id = parts[1] if len(parts) > 1 else ""
+                target = parts[1] if len(parts) > 1 else ""
                 command = parts[2].strip() if len(parts) > 2 else ""
+                if target == "all":
+                    try:
+                        consent, approved_ids = registry.approve_all(traj.run_id, validation_command=command)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"approve failed: {exc}")
+                        continue
+                    traj.record(
+                        "consent_bound",
+                        {
+                            "consent_id": consent.consent_id,
+                            "proposal_ids": list(approved_ids),
+                            "run_id": consent.run_id,
+                            "batch": True,
+                            "validation_command": consent.validation_command,
+                        },
+                        producer="admission",
+                    )
+                    print(f"approved {len(approved_ids)} proposal(s) as {consent.consent_id} — retry the task.")
+                    continue
+                proposal_id = target
                 try:
                     consent = registry.approve(proposal_id, traj.run_id, validation_command=command)
                 except Exception as exc:  # noqa: BLE001

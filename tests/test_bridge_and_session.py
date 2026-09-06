@@ -74,9 +74,17 @@ def test_bridge_rejects_unknown_tool(tmp_path: Path) -> None:
 def test_session_trajectory_roundtrip(tmp_path: Path) -> None:
     session = Session(tmp_path)
     session.record("tool_call", {"path": "answer.txt"}, producer="bridge", call_id="c1")
-    session.record("model_response", {"text": "555"})
+    session.record(
+        "model_response",
+        {"message": {"role": "assistant", "content": [{"type": "text", "text": "555"}], "stopReason": "stop"}},
+    )
+    # a user message_end must never be mistaken for a model response
+    session.record(
+        "model_response",
+        {"message": {"role": "user", "content": [{"type": "text", "text": "user prompt"}], "stopReason": "stop"}},
+    )
     events = session.load_events()
-    assert [e.event_type for e in events] == ["tool_call", "model_response"]
+    assert [e.event_type for e in events] == ["tool_call", "model_response", "model_response"]
     assert events[0].payload["path"] == "answer.txt"
     assert session.last_model_response() == "555"
     assert session.path.exists() and session.path.suffix == ".jsonl"

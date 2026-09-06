@@ -40,6 +40,30 @@ def response_text_from_payload(value: Any, *, depth: int = 0) -> str:
     return ""
 
 
+def assistant_text_from_payload(payload: Any) -> str:
+    """Extract the assistant's visible text from one Pi message_end record.
+
+    Pi emits message_end for user and assistant messages alike; only an
+    assistant message with a non-error stopReason carries a model response.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    message = payload.get("message")
+    if not isinstance(message, dict) or message.get("role") != "assistant":
+        return ""
+    if str(message.get("stopReason") or "") == "error":
+        return ""
+    parts: list[str] = []
+    content = message.get("content")
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text" and item.get("text"):
+                parts.append(str(item["text"]))
+    elif isinstance(content, str) and content.strip():
+        parts.append(content)
+    return "\n".join(parts).strip()
+
+
 def sanitize_terminal_text(value: str) -> str:
     """Strip ANSI escapes and bidi/invisible characters; bound the length."""
     without_ansi = _ANSI_ESCAPE.sub("", str(value))

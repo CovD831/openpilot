@@ -1,14 +1,19 @@
-"""Tool bridge: Pi tool calls -> op0-adjudicated file access (LF-JSONL unix socket).
+"""Tool bridge: Pi tool calls -> op0-adjudicated side effects (LF-JSONL unix socket).
 
-Reads serve paths inside the declared scope. Patches require an approved
-consent covering the exact path; the consent decision lives in op0.admission,
-never in the model or in Pi.
+Reads and search serve paths inside the declared scope. Patches and writes
+require a consent covering the exact path; every bash command needs its own
+approved consent. The consent decision lives in op0.admission, never in the
+model or in Pi.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
+import os
+import re
 import socket
+import subprocess
 import tempfile
 import threading
 from pathlib import Path
@@ -16,25 +21,35 @@ from typing import Any, Callable
 
 _MAX_REQUEST_BYTES = 1_000_000
 _MAX_CONTENT_BYTES = 16_384
+_MAX_OUTPUT_BYTES = 8_000
+_SEARCH_HIT_LIMIT = 60
+_BASH_TIMEOUT_SECONDS = 60.0
 _CONNECTION_TIMEOUT_SECONDS = 5.0
-_ALLOWED_TOOLS = frozenset({"openpilot_read", "openpilot_patch"})
+_SKIPPED_DIRS = {".git", ".openpilot", ".venv", "node_modules", "__pycache__", ".pytest_cache", "runs"}
+_ALLOWED_TOOLS = frozenset(
+    {"openpilot_read", "openpilot_patch", "openpilot_write", "openpilot_bash", "openpilot_search"}
+)
 
 
 class ReadOnlyToolBridge:
-    """Serves openpilot_read (scope check) and openpilot_patch (consent check)."""
+    """Serves reads/search (scope-checked) and patch/write/bash (consent-checked)."""
 
     def __init__(
         self,
         scoped_roots: tuple[str, ...],
         *,
         patch_authorizer: Callable[[str], Any] | None = None,
+        command_authorizer: Callable[[str], Any] | None = None,
         on_patch_applied: Callable[[str, str, str, Any], None] | None = None,
+        on_bash_executed: Callable[[str, int, str, Any], None] | None = None,
         on_request: Callable[[dict[str, Any]], None] | None = None,
         on_result: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.scoped_roots = tuple(Path(root).expanduser().resolve(strict=False) for root in scoped_roots)
         self.patch_authorizer = patch_authorizer
+        self.command_authorizer = command_authorizer
         self.on_patch_applied = on_patch_applied
+        self.on_bash_executed = on_bash_executed
         self.on_request = on_request
         self.on_result = on_result
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
@@ -105,10 +120,17 @@ class ReadOnlyToolBridge:
                 raise ValueError("invalid OpenPilot tool request")
             if self.on_request is not None:
                 self.on_request(request)
+            args = dict(request.get("args") or {})
             if tool == "openpilot_read":
-                content = self._read_scoped(str((request.get("args") or {}).get("path") or ""))
+                content = self._read_scoped(str(args.get("path") or ""))
+            elif tool == "openpilot_patch":
+                content = self._apply_patch(args)
+            elif tool == "openpilot_write":
+                content = self._apply_write(args)
+            elif tool == "openpilot_bash":
+                content = self._run_bash(args)
             else:
-                content = self._apply_patch(dict(request.get("args") or {}))
+                content = self._search(args)
             response: dict[str, Any] = {
                 "toolCallId": call_id,
                 "success": True,
@@ -199,9 +221,102 @@ class ReadOnlyToolBridge:
         resolved = path.resolve(strict=False)
         if not self._in_scope(resolved):
             raise PermissionError("path is outside the declared scope")
-        if not resolved.is_file():
-            raise FileNotFoundError(f"path is not a regular file: {raw_path}")
         return str(resolved)
+
+    # -- write -----------------------------------------------------------
+
+    def _apply_write(self, args: dict[str, Any]) -> str:
+        if self.patch_authorizer is None:
+            raise PermissionError("writing is not enabled in this session")
+        raw_path = str(args.get("path") or "")
+        content = str(args.get("content") or "")
+        if not raw_path:
+            raise ValueError("openpilot_write requires a path")
+        resolved = Path(self._resolve_scoped(raw_path))
+        consent = self.patch_authorizer(resolved)
+        from op0.receipts import file_hash
+
+        hash_before = file_hash(resolved) if resolved.is_file() else "absent"
+        resolved.parent.mkdir(parents=True, exist_ok=True)
+        resolved.write_text(content, encoding="utf-8")
+        hash_after = file_hash(resolved)
+        if self.on_patch_applied is not None:
+            try:
+                self.on_patch_applied(str(resolved), hash_before, hash_after, consent)
+            except Exception:  # noqa: BLE001
+                pass
+        action = "overwrote" if hash_before != "absent" else "created"
+        return f"{action} {resolved.name} ({len(content)} chars, consent {consent.consent_id})"
+
+    # -- bash ------------------------------------------------------------
+
+    def _run_bash(self, args: dict[str, Any]) -> str:
+        if self.command_authorizer is None:
+            raise PermissionError("bash is not enabled in this session")
+        command = str(args.get("command") or "").strip()
+        if not command:
+            raise ValueError("openpilot_bash requires a command")
+        consent = self.command_authorizer(command)
+        try:
+            completed = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=_BASH_TIMEOUT_SECONDS,
+                cwd=self.scoped_roots[0] if self.scoped_roots else None,
+            )
+        except subprocess.TimeoutExpired as exc:
+            if self.on_bash_executed is not None:
+                try:
+                    self.on_bash_executed(command, 124, f"timeout after {_BASH_TIMEOUT_SECONDS}s", consent)
+                except Exception:  # noqa: BLE001
+                    pass
+            raise ValueError(f"command timed out after {_BASH_TIMEOUT_SECONDS}s") from exc
+        output = (completed.stdout or "") + (("\n[stderr]\n" + completed.stderr) if completed.stderr else "")
+        output = output.strip()
+        if self.on_bash_executed is not None:
+            try:
+                self.on_bash_executed(command, completed.returncode, output, consent)
+            except Exception:  # noqa: BLE001
+                pass
+        tail = output[-_MAX_OUTPUT_BYTES:]
+        return f"exit {completed.returncode}\n{tail}" if tail else f"exit {completed.returncode}"
+
+    # -- search ----------------------------------------------------------
+
+    def _search(self, args: dict[str, Any]) -> str:
+        pattern = str(args.get("pattern") or "")
+        glob = str(args.get("glob") or "*")
+        if not pattern:
+            raise ValueError("openpilot_search requires a pattern")
+        try:
+            matcher = re.compile(pattern)
+        except re.error:
+            matcher = None
+        root = self.scoped_roots[0] if self.scoped_roots else Path.cwd()
+        hits: list[str] = []
+        for current, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in _SKIPPED_DIRS]
+            for name in files:
+                if not fnmatch.fnmatch(name, glob):
+                    continue
+                file_path = Path(current) / name
+                if not self._in_scope(file_path):
+                    continue
+                try:
+                    for number, line in enumerate(
+                        file_path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+                    ):
+                        matched = matcher.search(line) if matcher is not None else pattern in line
+                        if matched:
+                            hits.append(f"{file_path.relative_to(root)}:{number}: {line.strip()[:200]}")
+                            if len(hits) >= _SEARCH_HIT_LIMIT:
+                                hits.append("(truncated)")
+                                return "\n".join(hits)
+                except OSError:
+                    continue
+        return "\n".join(hits) if hits else "(no matches)"
 
 
 def _bounded_content(content: str) -> str:

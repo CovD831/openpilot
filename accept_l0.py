@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -322,6 +323,72 @@ def gate_recovery(base_root: Path) -> dict[str, str]:
         return _gate("G8-recovery", "failed", f"{type(exc).__name__}: {exc}")
 
 
+def gate_capabilities(base_root: Path) -> dict[str, str]:
+    """G9: bash/write need per-action consent; search is free but scope-bounded."""
+    if not (base_root / "Code" / "src" / "op0" / "bridge.py").exists():
+        return _gate("G9-capabilities", "blocked", "op0.bridge not implemented yet")
+    sys.path.insert(0, str(base_root / "Code" / "src"))
+    try:
+        from op0.admission import AdmissionRegistry  # noqa: PLC0415
+        from op0.bridge import ReadOnlyToolBridge  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        return _gate("G9-capabilities", "failed", f"import failed: {exc}")
+
+    fixture = Path(tempfile.mkdtemp(prefix="op0-accept-cap-"))
+    (fixture / "seed.txt").write_text("NEEDLE here\n", encoding="utf-8")
+    registry = AdmissionRegistry(str(fixture))
+    bridge = ReadOnlyToolBridge(
+        (str(fixture),),
+        patch_authorizer=lambda p: registry.authorize_patch(p, "run_g9"),
+        command_authorizer=lambda c: registry.authorize_command(c, "run_g9"),
+    )
+    bridge.start()
+
+    def call(tool: str, args: dict, call_id: str) -> dict:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.settimeout(10)
+        client.connect(bridge.socket_path)
+        client.sendall(
+            json.dumps({"type": "tool_call", "toolName": tool, "toolCallId": call_id, "args": args}).encode("utf-8")
+            + b"\n"
+        )
+        buffer = bytearray()
+        while b"\n" not in buffer:
+            chunk = client.recv(4096)
+            if not chunk:
+                break
+            buffer.extend(chunk)
+        client.close()
+        return json.loads(bytes(buffer.split(b"\n", 1)[0]).decode("utf-8"))
+
+    try:
+        if call("openpilot_bash", {"command": "echo g9"}, "b1")["success"]:
+            return _gate("G9-capabilities", "failed", "bash ran without consent")
+        if call("openpilot_write", {"path": str(fixture / "n.txt"), "content": "x"}, "w1")["success"]:
+            return _gate("G9-capabilities", "failed", "write ran without consent")
+        search = call("openpilot_search", {"pattern": "NEEDLE"}, "s1")
+        if not search["success"] or "NEEDLE" not in search["content"]:
+            return _gate("G9-capabilities", "failed", f"search broken: {search['content'][:80]}")
+
+        bash_proposal = registry.propose_command("g9 bash", "echo g9-ok")
+        registry.approve(bash_proposal.proposal_id, "run_g9")
+        bash = call("openpilot_bash", {"command": "echo g9-ok"}, "b2")
+        if not bash["success"] or "g9-ok" not in bash["content"]:
+            return _gate("G9-capabilities", "failed", f"bash failed: {bash['content'][:80]}")
+
+        write_path = fixture / "g9.txt"
+        write_proposal = registry.propose("g9 write", str(write_path), kind="write")
+        registry.approve(write_proposal.proposal_id, "run_g9")
+        write = call("openpilot_write", {"path": str(write_path), "content": "written"}, "w2")
+        if not write["success"] or not write_path.exists():
+            return _gate("G9-capabilities", "failed", f"write failed: {write['content'][:80]}")
+        return _gate("G9-capabilities", "passed", "bash/write consent-gated; search free and scoped")
+    except Exception as exc:  # noqa: BLE001
+        return _gate("G9-capabilities", "failed", f"{type(exc).__name__}: {exc}")
+    finally:
+        bridge.stop()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="L0 clean-base acceptance gate")
     parser.add_argument("--base-root", required=True, help="clean-base worktree root")
@@ -343,6 +410,7 @@ def main() -> int:
             gate_admission(base_root),
             gate_closure(base_root),
             gate_recovery(base_root),
+            gate_capabilities(base_root),
         ]
     )
 

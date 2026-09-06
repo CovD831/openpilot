@@ -65,12 +65,12 @@ class Session:
         return events
 
     def last_model_response(self) -> str:
-        from op0.response import response_text_from_payload
+        from op0.response import assistant_text_from_payload
 
         for event in reversed(self.load_events()):
             if event.event_type != "model_response":
                 continue
-            text = response_text_from_payload(event.payload)
+            text = assistant_text_from_payload(event.payload)
             if text:
                 return text
         return ""

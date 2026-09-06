@@ -91,16 +91,60 @@ export default function openpilotToolBridge(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
-    name: "openpilot_validate",
-    label: "OpenPilot Validate",
-    description: "Run only the exact validation command declared by OpenPilot.",
+    name: "openpilot_write",
+    label: "OpenPilot Write",
+    description: "Create or overwrite one admitted path through the OpenPilot Action Gateway.",
     parameters: Type.Object({
-      command: Type.String({ description: "Exact validation command supplied by OpenPilot" }),
+      path: Type.String({ description: "Project-relative path in the declared write scope" }),
+      content: Type.String({ description: "Full file content to write" }),
     }),
     executionMode: "sequential",
     async execute(toolCallId, params, signal) {
       const response = await invokeGateway(
-        { type: "tool_call", toolName: "openpilot_validate", toolCallId, args: params },
+        { type: "tool_call", toolName: "openpilot_write", toolCallId, args: params },
+        signal,
+      );
+      if (!response.success) throw new Error(response.content);
+      return {
+        content: [{ type: "text", text: response.content }],
+        details: { gateway: "openpilot", success: response.success },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "openpilot_bash",
+    label: "OpenPilot Bash",
+    description: "Run one command in the project root through the OpenPilot Action Gateway; every command needs an explicit human-approved consent.",
+    parameters: Type.Object({
+      command: Type.String({ description: "Exact shell command to run in the project root" }),
+    }),
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal) {
+      const response = await invokeGateway(
+        { type: "tool_call", toolName: "openpilot_bash", toolCallId, args: params },
+        signal,
+      );
+      if (!response.success) throw new Error(response.content);
+      return {
+        content: [{ type: "text", text: response.content }],
+        details: { gateway: "openpilot", success: response.success },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "openpilot_search",
+    label: "OpenPilot Search",
+    description: "Search project files for a substring or regex through the OpenPilot Action Gateway.",
+    parameters: Type.Object({
+      pattern: Type.String({ description: "Substring or regular expression to find" }),
+      glob: Type.Optional(Type.String({ description: "Optional glob filter like *.py" })),
+    }),
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal) {
+      const response = await invokeGateway(
+        { type: "tool_call", toolName: "openpilot_search", toolCallId, args: params },
         signal,
       );
       if (!response.success) throw new Error(response.content);

@@ -35,6 +35,10 @@ class Receipt:
     validation_status: str = "pending"  # pending | passed | failed
     validation_detail: str = ""
     validation_at: str = ""
+    kind: str = "patch"  # patch | write | bash
+    command: str = ""    # bash receipts carry the exact command
+    exit_code: int | None = None
+    output_tail: str = ""
 
     def to_json(self) -> str:
         return json.dumps(
@@ -69,6 +73,7 @@ class ReceiptStore:
         hash_before: str,
         hash_after: str,
         validation_command: str,
+        kind: str = "patch",
     ) -> Receipt:
         receipt = Receipt(
             receipt_id=f"rcp_{uuid4().hex[:12]}",
@@ -82,6 +87,37 @@ class ReceiptStore:
             created_at=datetime.now(UTC).isoformat(),
             validation_command=validation_command,
             validation_status="pending",
+            kind=kind,
+        )
+        self._path(receipt.receipt_id).write_text(receipt.to_json(), encoding="utf-8")
+        return receipt
+
+    def write_bash_receipt(
+        self,
+        *,
+        run_id: str,
+        consent_id: str,
+        proposal_id: str,
+        admission_id: str,
+        command: str,
+        exit_code: int,
+        output_tail: str,
+    ) -> Receipt:
+        receipt = Receipt(
+            receipt_id=f"rcp_{uuid4().hex[:12]}",
+            run_id=run_id,
+            consent_id=consent_id,
+            proposal_id=proposal_id,
+            admission_id=admission_id,
+            path="",
+            hash_before="n/a",
+            hash_after="n/a",
+            created_at=datetime.now(UTC).isoformat(),
+            validation_status="passed" if exit_code == 0 else "pending",
+            kind="bash",
+            command=command,
+            exit_code=exit_code,
+            output_tail=output_tail[-2000:],
         )
         self._path(receipt.receipt_id).write_text(receipt.to_json(), encoding="utf-8")
         return receipt

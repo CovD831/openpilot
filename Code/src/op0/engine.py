@@ -65,7 +65,7 @@ class EngineConfig:
         if self.enable_read_tool:
             extension = str(Path(__file__).resolve().parents[2] / "pi_sidecar" / "openpilot_tool_bridge.ts")
             argv.extend(
-                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch")
+                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search")
             )
         else:
             argv.append("--no-tools")
@@ -239,13 +239,19 @@ def _map_event_type(event_type: str) -> str:
 
 
 def compose_turn_message(prompt: str) -> str:
-    """First-turn message: pin the read-only tool contract for the whole session."""
+    """First-turn message: pin the tool contract for the whole session (L4 surface)."""
     return (
-        "Answer the user's task. If inspecting project files is needed, use the "
-        "openpilot_read tool with a project-relative path; it only serves paths "
-        "inside the project. Shell commands, network access, and file writes are "
-        "not available. This contract holds for every later turn in this "
-        "conversation.\n\nUser task:\n" + prompt
+        "You are op0, working inside the user's project through the OpenPilot "
+        "gateway. Tools: openpilot_read (read a project file), openpilot_search "
+        "(search file contents), openpilot_patch (replace lines of an existing "
+        "file), openpilot_write (create or overwrite a file), openpilot_bash "
+        "(run one shell command in the project root). Reads and search run "
+        "freely; every patch, write, or bash call is refused once until the "
+        "human approves it. When a call is refused for approval, briefly tell "
+        "the user which approval you need and stop — do not try to work around "
+        "the gateway. After the human approves and asks you to continue, retry "
+        "the exact same call. Use project-relative paths. This contract holds "
+        "for every later turn in this conversation.\n\nUser task:\n" + prompt
     )
 
 
