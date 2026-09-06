@@ -278,6 +278,50 @@ def gate_closure(base_root: Path) -> dict[str, str]:
         return _gate("G7-closure", "failed", f"{type(exc).__name__}: {exc}")
 
 
+def gate_recovery(base_root: Path) -> dict[str, str]:
+    """G8: crash-window reconciliation is read-only; applied side effects never replay."""
+    if not (base_root / "Code" / "src" / "op0" / "recovery.py").exists():
+        return _gate("G8-recovery", "blocked", "op0.recovery not implemented yet")
+    sys.path.insert(0, str(base_root / "Code" / "src"))
+    try:
+        from op0.receipts import ReceiptStore, file_hash, record_validation  # noqa: PLC0415
+        from op0.recovery import APPLIED, reconcile, resume_plan  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        return _gate("G8-recovery", "failed", f"import failed: {exc}")
+
+    fixture = Path(tempfile.mkdtemp(prefix="op0-accept-rec-"))
+    try:
+        target = fixture / "code.txt"
+        target.write_text("before\n", encoding="utf-8")
+        store = ReceiptStore(fixture)
+        hash_before = file_hash(target)
+        target.write_text("after\n", encoding="utf-8")
+        store.write_patch_receipt(
+            run_id="run_g8", consent_id="c", proposal_id="p", admission_id="a",
+            path=str(target), hash_before=hash_before, hash_after=file_hash(target),
+            validation_command="",
+        )
+
+        fresh_store = ReceiptStore(fixture)
+        reconciled = reconcile(fresh_store, run_id="run_g8")
+        if reconciled[0].disk_state != APPLIED:
+            return _gate("G8-recovery", "failed", f"expected applied, got {reconciled[0].disk_state}")
+        status, actions = resume_plan(reconciled)
+        if status != "indeterminate" or not actions:
+            return _gate("G8-recovery", "failed", "crash window not reported indeterminate")
+
+        disk = file_hash(target)
+        record_validation(fresh_store, reconciled[0].receipt, command="true", cwd=str(fixture))
+        if file_hash(target) != disk:
+            return _gate("G8-recovery", "failed", "validation mutated the file")
+        final = reconcile(fresh_store, run_id="run_g8")
+        if resume_plan(final)[0] != "closed":
+            return _gate("G8-recovery", "failed", "validated receipts did not close")
+        return _gate("G8-recovery", "passed", "crash window reconciled; no side effect replayed")
+    except Exception as exc:  # noqa: BLE001
+        return _gate("G8-recovery", "failed", f"{type(exc).__name__}: {exc}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="L0 clean-base acceptance gate")
     parser.add_argument("--base-root", required=True, help="clean-base worktree root")
@@ -298,6 +342,7 @@ def main() -> int:
             gate_no_legacy_import(base_root),
             gate_admission(base_root),
             gate_closure(base_root),
+            gate_recovery(base_root),
         ]
     )
 

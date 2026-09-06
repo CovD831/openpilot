@@ -19,6 +19,7 @@ from op0.bridge import ReadOnlyToolBridge
 from op0.contracts import TaskSpec
 from op0.engine import Engine, EngineConfig
 from op0.receipts import ReceiptStore, decide_closure, file_hash, record_validation
+from op0.recovery import reconcile, resume_plan
 from op0.session import Session
 
 
@@ -118,6 +119,26 @@ def _validate_command(store: ReceiptStore, session: Session, command: str) -> No
     print(f"validation {updated.validation_status} (exit {completed.returncode}) for {updated.receipt_id}")
 
 
+def _print_recovery_report(store: ReceiptStore, run_id: str | None) -> None:
+    """Startup recovery: classify durable receipts against disk; read-only."""
+    reconciled = reconcile(store, run_id=run_id)
+    if not reconciled:
+        return
+    status, actions = resume_plan(reconciled)
+    print(f"— recovery: {len(reconciled)} durable receipt(s) found, state={status}")
+    for item in reconciled:
+        marker = {"applied": "on-disk", "reverted": "reverted", "missing": "missing", "mismatch": "changed"}[
+            item.disk_state
+        ]
+        print(
+            f"    {item.receipt.receipt_id} {marker} "
+            f"validation={item.receipt.validation_status} path={Path(item.receipt.path).name}"
+        )
+    for action in actions:
+        print(f"    -> {action}")
+    print()
+
+
 def run_once_task(spec: TaskSpec) -> str:
     """Single-shot path (--once): read-only only; patches need the REPL flow."""
     session = Session(spec.resolved_root())
@@ -200,12 +221,13 @@ def _run_repl(project_root: Path) -> int:
         history=InMemoryHistory(),
         auto_suggest=AutoSuggestFromHistory(),
     )
-    print("op0 L2 - writes admitted, closure on validation evidence. /help for commands.")
+    print("op0 L3 - admitted writes, evidence closure, crash recovery. /help for commands.")
 
     traj = Session(project_root)
     traj.record("session_started", {"project_root": str(project_root)})
     registry = AdmissionRegistry(str(project_root))
     store = ReceiptStore(project_root)
+    _print_recovery_report(store, None)
     engine = Engine(traj, _engine_config(TaskSpec(goal="", project_root=str(project_root))))
 
     state = {"goal": "", "saw_response": False}
@@ -268,8 +290,11 @@ def _run_repl(project_root: Path) -> int:
             if text == "/help":
                 print(
                     "Writes need /approve <id> [validation command]; /validate <command> closes a "
-                    "receipt; /proposals /new /clear /exit"
+                    "receipt; /recover reconciles durable receipts; /proposals /new /clear /exit"
                 )
+                continue
+            if text == "/recover":
+                _print_recovery_report(store, None)
                 continue
             if text == "/proposals":
                 pending = registry.pending()
