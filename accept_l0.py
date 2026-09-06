@@ -205,6 +205,43 @@ def gate_no_legacy_import(base_root: Path) -> dict[str, str]:
     return _gate("G5-no-legacy-import", "passed", "no legacy top-level imports")
 
 
+def gate_admission(base_root: Path) -> dict[str, str]:
+    """G6: deny blocks approval; approval binds a consent; out-of-scope patches fail."""
+    if not (base_root / "Code" / "src" / "op0" / "admission.py").exists():
+        return _gate("G6-admission", "blocked", "op0.admission not implemented yet")
+    sys.path.insert(0, str(base_root / "Code" / "src"))
+    try:
+        from op0.admission import AdmissionError, AdmissionRegistry  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001
+        return _gate("G6-admission", "failed", f"import failed: {exc}")
+
+    fixture = Path(tempfile.mkdtemp(prefix="op0-accept-adm-"))
+    target = fixture / "code.txt"
+    target.write_text("line1\nline2\n", encoding="utf-8")
+    try:
+        registry = AdmissionRegistry(str(fixture))
+        proposal = registry.propose("g", str(target))
+        registry.deny(proposal.proposal_id)
+        try:
+            registry.approve(proposal.proposal_id, "run_x")
+            return _gate("G6-admission", "failed", "denied proposal was approvable")
+        except AdmissionError:
+            pass
+        proposal2 = registry.propose("g", str(target))
+        consent = registry.approve(proposal2.proposal_id, "run_x")
+        if consent.run_id != "run_x":
+            return _gate("G6-admission", "failed", "consent not bound to run")
+        registry.authorize_patch(str(target), "run_x")
+        try:
+            registry.authorize_patch(str(fixture / "other.txt"), "run_x")
+            return _gate("G6-admission", "failed", "out-of-scope path authorized")
+        except PermissionError:
+            pass
+        return _gate("G6-admission", "passed", "deny/approve/bind/scope all enforced")
+    except Exception as exc:  # noqa: BLE001
+        return _gate("G6-admission", "failed", f"{type(exc).__name__}: {exc}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="L0 clean-base acceptance gate")
     parser.add_argument("--base-root", required=True, help="clean-base worktree root")
@@ -223,6 +260,7 @@ def main() -> int:
             gate_trajectory(base_root, fixture),
             gate_line_budget(base_root),
             gate_no_legacy_import(base_root),
+            gate_admission(base_root),
         ]
     )
 
