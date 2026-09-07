@@ -62,3 +62,28 @@ def test_y_binding_routes_answer(tmp_path: Path) -> None:
     assert tui._approval["answer"] == "y"
     tui._approval = None  # what _post_turn does with the answer
     assert tui._get_approval_card() == ""
+
+
+def test_read_paging_and_proposal_dedupe(tmp_path: Path) -> None:
+    from op0.bridge import ReadOnlyToolBridge
+
+    tui, registry = _make(tmp_path)
+    big = tmp_path / "big.html"
+    big.write_text("\n".join(f"line {n}" for n in range(1, 701)), encoding="utf-8")
+    bridge = ReadOnlyToolBridge((str(tmp_path),))
+    control = tui.input_buffer_control  # ensure TUI built fine
+
+    page1 = bridge._read_scoped(str(big))
+    assert "1\tline 1" in page1
+    assert "line 400" in page1 and "line 401" not in page1
+    assert "offset=401" in page1
+    page2 = bridge._read_scoped(str(big), {"offset": 401})
+    assert "line 401" in page2 and "line 700" in page2
+
+    # retrying the same bash proposal reuses it — no card pile-up
+    p1 = registry.propose_command("g", "ls -la")
+    p2 = registry.propose_command("g", "ls -la")
+    assert p1.proposal_id == p2.proposal_id
+    p3 = registry.propose("g", str(tmp_path / "f.txt"), kind="write")
+    p4 = registry.propose("g", str(tmp_path / "f.txt"), kind="write")
+    assert p3.proposal_id == p4.proposal_id

@@ -155,7 +155,7 @@ class TuiSession:
         )
         self._approval_window = Window(
             content=FormattedTextControl(self._get_approval_card, focusable=False),
-            height=D(min=0, max=14),
+            height=10,  # fixed: dynamic heights leave redraw residue outside full-screen
             style="class:approval",
         )
         self._hint_window = Window(
@@ -279,7 +279,9 @@ class TuiSession:
             style = "bold" if chosen else "dim"
             lines.append(f"{marker} {index + 1}. {name}  [dim]— {description}[/dim]")
         lines.append("[dim]↑↓ move · enter confirm · y/n/a keys[/dim]")
-        return ANSI(_rich_to_ansi("\n".join(lines)))
+        while len(lines) < 9:  # pad so the fixed-height window never shows residue
+            lines.append("")
+        return ANSI(_rich_to_ansi("\n".join(lines[:9])))
 
     # -- input ------------------------------------------------------------
 

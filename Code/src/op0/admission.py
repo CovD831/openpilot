@@ -95,6 +95,10 @@ class AdmissionRegistry:
         kind: str = "patch",
         diff_preview: str = "",
     ) -> Proposal:
+        canonical = _canonical(write_path)
+        for existing in self.pending():
+            if existing.grant.kind == kind and existing.grant.write_paths == (canonical,):
+                return existing  # a retry of the same target reuses the proposal
         grant = AdmissionGrant(
             admission_id=f"adm_{uuid4().hex[:12]}",
             task_id=self._next_task_id(),
@@ -109,6 +113,10 @@ class AdmissionRegistry:
         return self._register(grant)
 
     def propose_command(self, goal: str, command: str) -> Proposal:
+        normalized = " ".join(command.split())
+        for existing in self.pending():
+            if existing.grant.kind == "bash" and existing.grant.command == normalized:
+                return existing  # a retry of the same command reuses the proposal
         grant = AdmissionGrant(
             admission_id=f"adm_{uuid4().hex[:12]}",
             task_id=self._next_task_id(),

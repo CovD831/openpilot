@@ -51,6 +51,8 @@ export default function openpilotToolBridge(pi: ExtensionAPI) {
     description: "Read one project-owned path through the OpenPilot Action Gateway.",
     parameters: Type.Object({
       path: Type.String({ description: "Project-relative file path admitted by OpenPilot" }),
+      offset: Type.Optional(Type.Integer({ description: "1-based line to start reading from (default 1)" })),
+      limit: Type.Optional(Type.Integer({ description: "Max lines per read (default 400, max 800)" })),
     }),
     executionMode: "sequential",
     async execute(toolCallId, params, signal) {

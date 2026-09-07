@@ -31,6 +31,16 @@ _ALLOWED_TOOLS = frozenset(
 )
 
 
+
+
+def _bounded(text: str, limit: int) -> str:
+    data = text.encode("utf-8", errors="replace")
+    if len(data) <= limit:
+        return text
+    return data[:limit].decode("utf-8", errors="ignore") + "\n[truncated]"
+
+
+
 def patched_text(old_text: str, line_start: int, line_end: int, replacement: str) -> str:
     """Pure line-range replacement; also used to render approval diffs."""
     lines = old_text.splitlines(keepends=True)
@@ -47,7 +57,6 @@ def patched_text(old_text: str, line_start: int, line_end: int, replacement: str
         body = [replacement]
     lines[line_start - 1 : line_end] = body
     return "".join(lines)
-
 
 
 class ReadOnlyToolBridge:
@@ -141,7 +150,7 @@ class ReadOnlyToolBridge:
                 self.on_request(request)
             args = dict(request.get("args") or {})
             if tool == "openpilot_read":
-                content = self._read_scoped(str(args.get("path") or ""))
+                content = self._read_scoped(str(args.get("path") or ""), args)
             elif tool == "openpilot_patch":
                 content = self._apply_patch(args)
             elif tool == "openpilot_write":
@@ -176,7 +185,7 @@ class ReadOnlyToolBridge:
 
     # -- read ------------------------------------------------------------
 
-    def _read_scoped(self, raw_path: str) -> str:
+    def _read_scoped(self, raw_path: str, args: dict[str, Any] | None = None) -> str:
         if not raw_path:
             raise ValueError("openpilot_read requires a path")
         path = Path(raw_path).expanduser()
@@ -187,7 +196,21 @@ class ReadOnlyToolBridge:
             raise PermissionError("path is outside the declared read scope")
         if not resolved.is_file():
             raise FileNotFoundError(f"path is not a regular file: {raw_path}")
-        return resolved.read_text(encoding="utf-8", errors="replace")
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+        # claude-code-style paging: 1-based offset, line-numbered output, so
+        # big files are read in slices instead of pushing the model toward
+        # bash workarounds.
+        lines = text.splitlines()
+        total = len(lines)
+        offset = max(int((args or {}).get("offset") or 1), 1)
+        limit = min(int((args or {}).get("limit") or 400), 800)
+        start = min(offset - 1, total)
+        end = min(start + limit, total)
+        numbered = "\n".join(f"{n + 1:>6}\t{lines[n]}" for n in range(start, end))
+        numbered = _bounded_content(numbered)
+        if end < total:
+            numbered += f"\n[showing lines {start + 1}-{end} of {total}; pass offset={end + 1} for the next page]"
+        return numbered
 
     def _in_scope(self, resolved: Path) -> bool:
         for root in self.scoped_roots:
