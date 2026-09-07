@@ -8,6 +8,7 @@ alter a recorded permission outcome: if rendering fails, the run continues.
 from __future__ import annotations
 
 import difflib
+import io
 import re
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,10 @@ def closure_line(status: str, reason: str) -> None:
     console.print(f"  [{style}]{mark} closure: {status}[/{style}] [dim]— {reason}[/dim]")
 
 
+def console_default():
+    return console
+
+
 def markdown_response(text: str) -> None:
     """Render the response with always-visible colors: prose as plain text
     (terminal default color), fenced code highlighted. rich Markdown's theme
@@ -95,8 +100,9 @@ def _diff_block(diff_text: str) -> Syntax:
     return Syntax(diff_text, "diff", theme="ansi_dark", word_wrap=True)
 
 
-def proposal_panel(proposal, *, verbose: bool = False) -> None:
+def proposal_panel(proposal, *, verbose: bool = False, console=None) -> None:
     """Render one pending proposal with its change preview."""
+    console = console or console_default()
     grant = proposal.grant
     label = _KIND_LABELS.get(grant.kind, grant.kind.upper())
     body_lines: list[str] = [f"[bold]{grant.goal}[/bold]"]
@@ -128,7 +134,8 @@ def proposal_panel(proposal, *, verbose: bool = False) -> None:
     )
 
 
-def recovery_report(reconciled: list, status: str, actions: list[str]) -> None:
+def recovery_report(reconciled: list, status: str, actions: list[str], console=None) -> None:
+    console = console or console_default()
     table = Table(title="recovery — durable receipts vs disk", border_style="yellow")
     table.add_column("receipt", style="dim")
     table.add_column("path")
@@ -203,13 +210,14 @@ def _short_args(tool: str, args: dict[str, Any]) -> str:
     return name
 
 
-def render_turn_tools(events: list, *, verbose: bool = False) -> None:
+def render_turn_tools(events: list, *, verbose: bool = False, console=None) -> None:
     """Project one turn's tool calls claude-code style.
 
     Consecutive reads/searches collapse into one summary line; patch/write/
     bash stay visible; every result shows a one-line folded preview unless
     verbose. Derived entirely from trajectory events.
     """
+    console = console or console_default()
     calls: list[tuple[str, dict, str, str]] = []  # tool, args, call_id, preview
     results: dict[str, dict] = {}
     for event in events:
@@ -300,17 +308,10 @@ def render_closure_to_str(status: str, reason: str) -> str:
 
 def render_proposal_to_str(proposal, *, verbose: bool = False) -> str:
     """Proposal panel rendered to an ANSI string (projection)."""
-    import io
-
-    width = console.width
-    previous = console
     from rich.console import Console as RichConsole
 
-    capture = RichConsole(file=io.StringIO(), force_terminal=True, width=width)
-    console_tmp = console
-    globals()["console"] = capture
-    try:
-        proposal_panel(proposal, verbose=verbose)
-    finally:
-        globals()["console"] = console_tmp
+    capture = RichConsole(
+        file=io.StringIO(), force_terminal=True, color_system="truecolor", width=console.width
+    )
+    proposal_panel(proposal, verbose=verbose, console=capture)
     return capture.file.getvalue()

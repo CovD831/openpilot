@@ -333,17 +333,13 @@ def _recovery_report_to_str(store: ReceiptStore, run_id: str | None) -> str:
     if not reconciled:
         return ""
     status, actions = resume_plan(reconciled)
-    width = ui.console.width
     from rich.console import Console as RichConsole
 
-    buf = io.StringIO()
-    previous = ui.console
-    ui.console = RichConsole(file=buf, force_terminal=True, width=width)
-    try:
-        ui.recovery_report(reconciled, status, actions)
-    finally:
-        ui.console = previous
-    return buf.getvalue()
+    capture = RichConsole(
+        file=io.StringIO(), force_terminal=True, color_system="truecolor", width=ui.console.width
+    )
+    ui.recovery_report(reconciled, status, actions, console=capture)
+    return capture.file.getvalue()
 
 def _run_repl(project_root: Path) -> int:
     from op0.tui import TuiSession

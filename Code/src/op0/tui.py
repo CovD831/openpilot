@@ -182,7 +182,6 @@ class TuiSession:
             HSplit(
                 [
                     self._history_window,
-                    self._status_window,
                     self._approval_window,
                     edge("╭", "╮"),
                     VSplit(
@@ -198,6 +197,7 @@ class TuiSession:
                         height=1,
                     ),
                     edge("╰", "╯"),
+                    self._status_window,
                     self._hint_window,
                 ]
             ),
@@ -506,14 +506,10 @@ class TuiSession:
 
 
 def _capture_turn_tools(events, *, verbose: bool) -> str:
-    width = ui.console.width
-    buf = io.StringIO()
-    previous = ui.console
     from rich.console import Console as RichConsole
 
-    ui.console = RichConsole(file=buf, force_terminal=True, width=width)
-    try:
-        ui.render_turn_tools(events, verbose=verbose)
-    finally:
-        ui.console = previous
-    return buf.getvalue()
+    capture = RichConsole(
+        file=io.StringIO(), force_terminal=True, color_system="truecolor", width=ui.console.width
+    )
+    ui.render_turn_tools(events, verbose=verbose, console=capture)
+    return capture.file.getvalue()
