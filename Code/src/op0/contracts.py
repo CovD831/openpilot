@@ -18,7 +18,7 @@ class TaskSpec:
     goal: str
     project_root: str
     read_paths: tuple[str, ...] = ()
-    timeout_seconds: float = 180.0
+    timeout_seconds: float = 600.0
 
     def resolved_root(self) -> Path:
         return Path(self.project_root).expanduser().resolve(strict=False)

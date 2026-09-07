@@ -347,8 +347,29 @@ class TuiSession:
         self.append_block(f"[bold]> {text}[/bold]")
         self.state["goal"] = text
         self.traj.record("task_received", {"goal": text})
+        self._crash_retries = 0
         self._run_goal(text, first_turn=True)
         self._post_turn()
+        # a crashed engine restarts and CONTINUES the task (bounded) —
+        # auto mode means the user should never have to nudge it back alive
+        while (
+            self.engine.state.value == "crashed"
+            and self._crash_retries < 3
+            and self.state["goal"]
+        ):
+            self._crash_retries += 1
+            self.bridge.start()  # fresh socket first, then a fresh Pi process
+            self.engine.start(self.bridge)
+            self.append_block(
+                f"[yellow](engine crashed; restarting — continuing the task, "
+                f"attempt {self._crash_retries}/3)[/yellow]"
+            )
+            self._run_goal(self.state["goal"], first_turn=False)
+            self._post_turn()
+        if self.engine.state.value == "crashed":
+            self.append_block(
+                "[red]engine crashed 3 times — task paused. Check /recover, then re-send the task.[/red]"
+            )
 
     # -- task execution ----------------------------------------------------
 
@@ -375,6 +396,11 @@ class TuiSession:
 
         if response_holder.get("error"):
             self.append_block(f"[red]turn error:[/red] {response_holder['error']}")
+        if self.engine.state.value == "crashed":
+            # never claim closure for a turn the engine did not finish
+            self.traj.record("run_finished", {"response_chars": 0, "crashed": True})
+            self.append_block("[yellow](turn interrupted by engine crash — restarting and continuing)[/yellow]")
+            return
         events = self.traj.load_events()
         turn_start = max(
             (i for i, e in enumerate(events) if e.event_type == "turn_started"), default=None
@@ -395,10 +421,6 @@ class TuiSession:
         self.append_block(ui.render_closure_to_str(status, reason))
 
     def _post_turn(self) -> None:
-        if self.engine.state.value == "crashed":
-            self.bridge.start()  # fresh socket first, then a fresh Pi process
-            self.engine.start(self.bridge)
-            self.append_block("[yellow](engine crashed; restarting)[/yellow]")
         retries = 0
         while self.registry.pending() and retries < 8:
             pending = self.registry.pending()
