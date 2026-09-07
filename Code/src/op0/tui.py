@@ -217,7 +217,7 @@ class TuiSession:
         self.app: Application = Application(
             layout=layout,
             key_bindings=KeyBindings(),
-            full_screen=True,
+            full_screen=False,
             mouse_support=False,
             style=_tui_style(),
             input=input,

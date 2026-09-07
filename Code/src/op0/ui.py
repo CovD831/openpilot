@@ -71,7 +71,7 @@ def markdown_response(text: str) -> None:
     if not (text or "").strip():
         console.print("[dim](no model response observed)[/dim]")
         return
-    console.print()
+    console.print()  # one separator line between the tool transcript and the answer
     parts = re.split(r"```(\w*)\n?(.*?)```", text, flags=re.S)
     for i, part in enumerate(parts):
         if i % 3 == 1:
@@ -87,6 +87,7 @@ def _plain_md(md: str) -> str:
     """Strip markdown decoration so plain text stays readable everywhere."""
     md = re.sub(r"^#{1,6}\s*", "", md, flags=re.M)
     md = md.replace("**", "").replace("__", "")
+    md = re.sub(r"`([^`]*)`", r"\1", md)
     return md
 
 
