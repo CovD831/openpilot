@@ -232,6 +232,8 @@ class TuiSession:
         kb = KeyBindings()
         kb.add("c-c")(lambda event: self._exit())
         kb.add("c-q")(lambda event: self._exit())
+        idle = Condition(lambda: self.mode == "idle")
+        kb.add("s-tab", filter=idle)(lambda event: self._toggle_mode())
         self.app.key_bindings.bindings.extend(kb.bindings)
 
     # -- transcript projection ------------------------------------------
@@ -241,8 +243,29 @@ class TuiSession:
         self.blocks.append(_rich_to_ansi(markup_text))
         if len(self.blocks) > _MAX_HISTORY_BLOCKS:
             self.blocks = self.blocks[-_MAX_HISTORY_BLOCKS:]
+        self._trim_to_terminal()
         self._scroll_bottom()
         self._refresh()
+
+    def _trim_to_terminal(self) -> None:
+        """Keep only the tail of the transcript that fits on screen.
+
+        vertical_scroll alone is not enough (some terminals reset it on
+        resize); clipping whole blocks guarantees the newest content is
+        always visible without manual resizing.
+        """
+        import shutil
+
+        keep_rows = max(shutil.get_terminal_size().lines - 6, 10)
+        total = 0
+        cut = 0
+        for i in range(len(self.blocks) - 1, -1, -1):
+            total += self.blocks[i].count("\n") + 1
+            if total > keep_rows:
+                cut = i + 1
+                break
+        if cut > 0:
+            self.blocks = self.blocks[cut:]
 
     def _get_history(self):
         return ANSI("\n".join(self.blocks) + "\n")
@@ -262,7 +285,13 @@ class TuiSession:
             return ANSI(_rich_to_ansi(text))
         if self.approval_hint:
             return ANSI(_rich_to_ansi(f"[dim]{self.approval_hint}[/dim]"))
-        return ANSI(_rich_to_ansi("[dim]type a task · /help · /exit[/dim]"))
+        mode = self.state.get("approval_mode", "ask")
+        mode_text = (
+            "[yellow]auto-approve on[/yellow] (shift+tab to switch)"
+            if mode == "auto"
+            else "[dim]ask mode · shift+tab to auto-approve[/dim]"
+        )
+        return ANSI(_rich_to_ansi(f"[dim]type a task · /help · /exit · [/dim]{mode_text}"))
 
     def _get_approval_card(self):
         """The live approval card (claude-code shape): summary + selectable options."""
@@ -439,6 +468,25 @@ class TuiSession:
             self.app.invalidate()
         except Exception:  # noqa: BLE001
             pass
+
+    def _toggle_mode(self) -> None:
+        new_mode = "auto" if self.state.get("approval_mode", "ask") == "ask" else "ask"
+        self.state["approval_mode"] = new_mode
+        self.traj.record("approval_mode_changed", {"mode": new_mode}, producer="tui")
+        if new_mode == "auto" and self.registry.pending():
+            consent, ids = self.registry.approve_all(self.traj.run_id)
+            self.traj.record(
+                "consent_bound",
+                {"consent_id": consent.consent_id, "proposal_ids": list(ids), "batch": True, "auto": True},
+                producer="admission",
+            )
+            self.append_block(f"[yellow]auto-approve on — cleared {len(ids)} pending proposal(s)[/yellow]")
+        self.append_block(
+            f"[yellow]approval mode: {new_mode}[/yellow]"
+            if new_mode == "auto"
+            else "[dim]approval mode: ask[/dim]"
+        )
+        self._refresh()
 
     def _exit(self) -> None:
         self.mode = "exiting"

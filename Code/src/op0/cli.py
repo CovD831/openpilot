@@ -71,6 +71,22 @@ def _apply_patch_receipt(store, session, registry, path, hash_before, hash_after
 
 
 def _make_bridge(session, registry, store, project_root: str, *, goal_state: dict) -> ReadOnlyToolBridge:
+    def _auto_consent(proposal):
+        """Auto mode: approved the moment it exists (still recorded —
+        consent_bound carries auto: true)."""
+        consent = registry.approve(proposal.proposal_id, session.run_id)
+        session.record(
+            "consent_bound",
+            {"consent_id": consent.consent_id, "proposal_id": consent.proposal_id, "auto": True},
+            producer="admission",
+        )
+        session.record(
+            "patch_authorized",
+            {"consent_id": consent.consent_id, "auto": True},
+            producer="admission",
+        )
+        return consent
+
     def authorize(raw_path: str, args: dict):
         canonical = str(Path(raw_path).expanduser().resolve(strict=False))
         try:
@@ -97,6 +113,8 @@ def _make_bridge(session, registry, store, project_root: str, *, goal_state: dic
                 },
                 producer="admission",
             )
+            if goal_state.get("approval_mode") == "auto":
+                return _auto_consent(proposal)
             raise
 
     def authorize_cmd(command: str, args: dict):
@@ -115,6 +133,8 @@ def _make_bridge(session, registry, store, project_root: str, *, goal_state: dic
                 {"proposal_id": proposal.proposal_id, "command": command},
                 producer="admission",
             )
+            if goal_state.get("approval_mode") == "auto":
+                return _auto_consent(proposal)
             raise
 
     def on_patch_applied(path: str, hash_before: str, hash_after: str, consent) -> None:
@@ -332,7 +352,7 @@ def _run_repl(project_root: Path) -> int:
     traj.record("session_started", {"project_root": str(project_root)})
     registry = AdmissionRegistry(str(project_root))
     store = ReceiptStore(project_root)
-    state = {"goal": "", "saw_response": False, "verbose": False}
+    state = {"goal": "", "saw_response": False, "verbose": False, "approval_mode": "ask"}
     bridge = _make_bridge(traj, registry, store, str(project_root), goal_state=state)
     engine = Engine(traj, _engine_config(TaskSpec(goal="", project_root=str(project_root))))
 
@@ -421,6 +441,11 @@ def _run_repl(project_root: Path) -> int:
                 store.save(retracted)
                 traj.record("receipt_dismissed", {"receipt_id": rest, "path": receipt.path}, producer="receipts")
                 tui.append_block(f"[dim]dismissed[/dim] {rest}")
+        elif cmd == "/mode":
+            new_mode = "auto" if state.get("approval_mode", "ask") == "ask" else "ask"
+            state["approval_mode"] = new_mode
+            traj.record("approval_mode_changed", {"mode": new_mode}, producer="tui")
+            tui.append_block(f"[yellow]approval mode: {new_mode}[/yellow]")
         elif cmd == "/clear":
             tui.blocks.clear()
             tui.append_block(f"[dim]◆ op0 v{_version()} — project: {project_root}[/dim]")

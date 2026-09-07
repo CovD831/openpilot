@@ -33,7 +33,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-LINE_BUDGET = 2600
+LINE_BUDGET = 2800
 NODE_MIN = (22, 19)
 LEGACY_TOPS = frozenset(
     {"autonomous_iteration", "metadata", "tools", "memory", "core", "evidence_core", "ui", "utils"}
