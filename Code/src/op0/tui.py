@@ -550,7 +550,9 @@ class TuiSession:
         self.append_block("[dim]type a task · /help · /exit[/dim]")
         from prompt_toolkit.patch_stdout import patch_stdout
 
-        with patch_stdout():
+        # raw=True: print() carries real ANSI escape codes (tool colors);
+        # without it patch_stdout escapes them into literal '?[32m' garbage.
+        with patch_stdout(raw=True):
             self.app.run()
         return 0
 
