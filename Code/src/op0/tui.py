@@ -149,10 +149,6 @@ class TuiSession:
         for key, answer in (("1", "y"), ("2", "a"), ("3", "n")):
             approval_kb.add(key, filter=approving)(_submit(answer))
 
-        self._history_window = Window(
-            content=FormattedTextControl(self._get_history, focusable=False),
-            always_hide_cursor=True,
-        )
         self._status_window = Window(
             content=FormattedTextControl(self._get_status, focusable=False),
             height=1,
@@ -181,7 +177,7 @@ class TuiSession:
         layout = Layout(
             HSplit(
                 [
-                    self._history_window,
+                    Window(height=1, char=" "),
                     self._approval_window,
                     edge("╭", "╮"),
                     VSplit(
@@ -239,42 +235,9 @@ class TuiSession:
     # -- transcript projection ------------------------------------------
 
     def append_block(self, markup_text: str) -> None:
-        """Accept rich markup; store it as real ANSI (rendered once)."""
-        self.blocks.append(_rich_to_ansi(markup_text))
-        if len(self.blocks) > _MAX_HISTORY_BLOCKS:
-            self.blocks = self.blocks[-_MAX_HISTORY_BLOCKS:]
-        self._trim_to_terminal()
-        self._scroll_bottom()
-        self._refresh()
-
-    def _trim_to_terminal(self) -> None:
-        """Keep only the tail of the transcript that fits on screen.
-
-        vertical_scroll alone is not enough (some terminals reset it on
-        resize); clipping whole blocks guarantees the newest content is
-        always visible without manual resizing.
-        """
-        import shutil
-
-        keep_rows = max(shutil.get_terminal_size().lines - 6, 10)
-        total = 0
-        cut = 0
-        for i in range(len(self.blocks) - 1, -1, -1):
-            total += self.blocks[i].count("\n") + 1
-            if total > keep_rows:
-                cut = i + 1
-                break
-        if cut > 0:
-            self.blocks = self.blocks[cut:]
-
-    def _get_history(self):
-        return ANSI("\n".join(self.blocks) + "\n")
-
-    def _scroll_bottom(self) -> None:
-        try:
-            self._history_window.vertical_scroll = 10**9
-        except Exception:  # noqa: BLE001
-            pass
+        """Accept rich markup; render to ANSI and print into the terminal
+        scrollback (patch_stdout inserts it above the input bar, in order)."""
+        print(_rich_to_ansi(markup_text), flush=True)
 
     def _get_status(self):
         if self.mode == "working":
@@ -386,13 +349,21 @@ class TuiSession:
                 response_holder["response"] = ""
                 response_holder["error"] = f"{type(exc).__name__}: {exc}"
 
+        events_at_start = len(self.traj.load_events())
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
+        shown_calls: set[str] = set()
+        shown_thinking = 0
         while thread.is_alive():
             self.spinner_index += 1
+            self._stream_events(events_at_start, shown_calls)
+            thinking_now = self._count_thinking(events_at_start)
+            if thinking_now > shown_thinking:
+                shown_thinking = thinking_now
             self._refresh()
             time.sleep(0.12)
         thread.join()
+        self._stream_thinking_summary(events_at_start)
 
         if response_holder.get("error"):
             self.append_block(f"[red]turn error:[/red] {response_holder['error']}")
@@ -401,12 +372,6 @@ class TuiSession:
             self.traj.record("run_finished", {"response_chars": 0, "crashed": True})
             self.append_block("[yellow](turn interrupted by engine crash — restarting and continuing)[/yellow]")
             return
-        events = self.traj.load_events()
-        turn_start = max(
-            (i for i, e in enumerate(events) if e.event_type == "turn_started"), default=None
-        )
-        if turn_start is not None:
-            self.append_block(_capture_turn_tools(events[turn_start:], verbose=self.state["verbose"]))
         response = response_holder.get("response", "")
         if response:
             self.state["saw_response"] = True
@@ -419,6 +384,66 @@ class TuiSession:
             saw_model_response=self.state["saw_response"],
         )
         self.append_block(ui.render_closure_to_str(status, reason))
+
+    def _stream_events(self, start_index: int, shown_calls: set[str]) -> None:
+        """Print tool calls the moment they happen (claude-code streaming)."""
+        events = self.traj.load_events()
+        for event in events[start_index:]:
+            if event.producer != "bridge":
+                continue
+            payload = event.payload or {}
+            call_id = str(payload.get("toolCallId") or "")
+            if event.event_type == "tool_call" and call_id not in shown_calls:
+                shown_calls.add(call_id)
+                tool = str(payload.get("toolName") or "").replace("openpilot_", "").title()
+                args = dict(payload.get("args") or {})
+                if tool == "Bash":
+                    detail = str(args.get("command") or "")[:80]
+                elif "lineStart" in args:
+                    detail = f"{Path(str(args.get('path') or '')).name} L{args.get('lineStart')}-{args.get('lineEnd')}"
+                elif tool == "Search":
+                    detail = f"{args.get('pattern', '')!r}"
+                else:
+                    detail = Path(str(args.get("path") or "")).name
+                print(f"  \033[32m●\033[0m \033[1m{tool}\033[0m \033[2m{detail}\033[0m", flush=True)
+            elif event.event_type == "tool_result" and call_id:
+                key = f"result:{call_id}"
+                if key not in shown_calls:
+                    shown_calls.add(key)
+                    preview = str(payload.get("preview") or "").splitlines()
+                    first = preview[0][:90] if preview else ""
+                    mark = "\033[2m⎿\033[0m" if payload.get("success") else "\033[31m⎿\033[0m"
+                    print(f"    {mark} \033[2m{first}\033[0m", flush=True)
+
+    def _count_thinking(self, start_index: int) -> int:
+        count = 0
+        for event in self.traj.load_events()[start_index:]:
+            if event.event_type != "model_response":
+                continue
+            message = (event.payload or {}).get("message") or {}
+            if message.get("role") != "assistant":
+                continue
+            count += sum(
+                1
+                for item in message.get("content") or []
+                if isinstance(item, dict) and item.get("type") == "thinking"
+            )
+        return count
+
+    def _stream_thinking_summary(self, start_index: int) -> None:
+        """One dim line per thinking block, claude-code style (low-key)."""
+        for event in self.traj.load_events()[start_index:]:
+            if event.event_type != "model_response":
+                continue
+            message = (event.payload or {}).get("message") or {}
+            if message.get("role") != "assistant":
+                continue
+            for item in message.get("content") or []:
+                if isinstance(item, dict) and item.get("type") == "thinking":
+                    thought = str(item.get("thinking") or "").strip().replace("\n", " ")
+                    if thought:
+                        print(f"  \033[2m✻ {thought[:100]}…\033[0m", flush=True)
+
 
     def _post_turn(self) -> None:
         retries = 0
@@ -523,7 +548,10 @@ class TuiSession:
         self.append_block(f"[dim]◆ op0 v{self.version} — governed coding agent[/dim]")
         self.append_block(f"[dim]project: {self.project_root}[/dim]")
         self.append_block("[dim]type a task · /help · /exit[/dim]")
-        self.app.run()
+        from prompt_toolkit.patch_stdout import patch_stdout
+
+        with patch_stdout():
+            self.app.run()
         return 0
 
 
