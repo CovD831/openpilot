@@ -1,16 +1,21 @@
 """op0 TUI: full-screen layout with a fixed bottom input bar.
 
-Layout mirrors the claude-code shape (learned from the CCB source):
+Layout mirrors the claude-code shape (studied from the CCB source):
   - top:   scrolling transcript — a read-only projection of the trajectory
            (tool calls folded claude-code style, responses as markdown text)
-  - bottom: a fixed input bar, always visible, with a status line above it.
+  - middle: a live status line, and a live approval card when the model
+            requests a side effect
+  - bottom: a fixed input bar, always visible.
 
 The UI owns no facts: everything rendered comes from the session, registry,
-and receipt store; input is the only thing the UI produces.
+and receipt store; input is the only thing the UI produces. Approval keys
+(y/n/a, 1/2/3, arrows, enter, esc) live on the focused BufferControl so
+they beat character insertion while the card is up.
 """
 
 from __future__ import annotations
 
+import io
 import json
 import threading
 import time
@@ -18,12 +23,14 @@ from pathlib import Path
 
 from prompt_toolkit.application import Application
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit
-from prompt_toolkit.layout.dimension import D
-from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.dimension import D
+from prompt_toolkit.styles import Style as PTStyle
 
 from op0 import ui
 from op0.admission import AdmissionRegistry
@@ -33,42 +40,13 @@ from op0.session import Session
 _MAX_HISTORY_BLOCKS = 400
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-
-def _tui_style() -> "Style":
-    """Colors aligned with the claude-code look: dim rounded frame, orange accents."""
-    from prompt_toolkit.styles import Style as PTStyle
-
-    return PTStyle.from_dict(
-        {
-            "border": "#ff8c38",
-            "border-dim": "#7a4a28",
-            "prompt": "#ff8c38 bold",
-            "hint": "#6f6d66",
-            "status": "#ff8c38",
-        }
-    )
-
-
-
-def _rich_to_ansi(markup: str) -> str:
-    """Render rich markup to real ANSI escape codes for prompt_toolkit."""
-    import io
-
-    from rich.console import Console as RichConsole
-
-    width = ui.console.width
-    buf = io.StringIO()
-    console = RichConsole(file=buf, force_terminal=True, color_system="truecolor", width=width)
-    console.print(markup, markup=True, highlight=False)
-    return buf.getvalue().rstrip("\n")
-
-
-
 _APPROVAL_OPTIONS = [
     ("Yes", "approve and continue"),
     ("Yes to all", "approve every pending proposal"),
     ("No", "deny — tell the model what to do instead"),
 ]
+
+_NAME_TO_ANSWER = {"Yes": "y", "Yes to all": "a", "No": "n"}
 
 
 def _diff_stat(diff_preview: str) -> str:
@@ -78,10 +56,31 @@ def _diff_stat(diff_preview: str) -> str:
     return f"+{added} −{removed} lines"
 
 
+def _rich_to_ansi(markup: str) -> str:
+    """Render rich markup to real ANSI escape codes for prompt_toolkit."""
+    width = ui.console.width
+    buf = io.StringIO()
+    console = __import__("rich.console", fromlist=["Console"]).Console(
+        file=buf, force_terminal=True, color_system="truecolor", width=width
+    )
+    console.print(markup, markup=True, highlight=False)
+    return buf.getvalue().rstrip("\n")
+
+
+def _tui_style() -> PTStyle:
+    """Colors aligned with the claude-code look: dim rounded frame, orange accents."""
+    return PTStyle.from_dict(
+        {
+            "border": "#ff8c38",
+            "border-dim": "#7a4a28",
+            "prompt": "#ff8c38 bold",
+            "hint": "#6f6d66",
+            "approval": "#ff8c38",
+        }
+    )
+
 
 class TuiSession:
-    """Owns the full-screen app: transcript above, fixed input bar below."""
-
     def __init__(
         self,
         project_root: Path,
@@ -94,6 +93,8 @@ class TuiSession:
         version: str,
         on_command,
         state: dict,
+        input=None,
+        output=None,
     ) -> None:
         self.project_root = project_root
         self.traj = traj
@@ -102,17 +103,52 @@ class TuiSession:
         self.bridge = bridge
         self.engine = engine
         self.version = version
-        self.on_command = on_command  # (text) -> None, runs in worker thread
+        self.on_command = on_command
         self.state = state
 
         self.blocks: list[str] = []
-        self.mode = "idle"            # idle | working | exiting
+        self.mode = "idle"  # idle | working | waiting-approval | exiting
         self.status_text = ""
         self.spinner_index = 0
         self.queue: list[str] = []
         self.approval_hint = ""
+        self._approval: dict | None = None
 
         self.input_buffer = Buffer(multiline=False, accept_handler=self._accept)
+        self.input_buffer_control = None  # set once the layout is built
+
+        # -- approval bindings live on the focused control: they beat the
+        #    buffer's character insertion, so 'y' approves instead of typing.
+        approving = Condition(lambda: self.mode == "waiting-approval")
+        approval_kb = KeyBindings()
+
+        def _submit(answer: str):
+            def handler(event) -> None:
+                if self._approval is not None and self._approval.get("answer") is None:
+                    self._approval["answer"] = answer
+                    self.input_buffer.reset()
+                    self._refresh()
+            return handler
+
+        def _move(delta: int):
+            def handler(event) -> None:
+                if self._approval is not None:
+                    count = len(_APPROVAL_OPTIONS)
+                    self._approval["selected"] = (self._approval["selected"] + delta) % count
+                    self._refresh()
+            return handler
+
+        approval_kb.add("up", filter=approving)(_move(-1))
+        approval_kb.add("down", filter=approving)(_move(1))
+        approval_kb.add("enter", filter=approving)(
+            lambda event: _submit(_NAME_TO_ANSWER[_APPROVAL_OPTIONS[self._approval["selected"]][0]])(event)
+        )
+        approval_kb.add("escape", filter=approving)(_submit("n"))
+        for key, answer in (("y", "y"), ("n", "n"), ("a", "a")):
+            approval_kb.add(key, filter=approving)(_submit(answer))
+        for key, answer in (("1", "y"), ("2", "a"), ("3", "n")):
+            approval_kb.add(key, filter=approving)(_submit(answer))
+
         self._history_window = Window(
             content=FormattedTextControl(self._get_history, focusable=False),
             always_hide_cursor=True,
@@ -121,17 +157,17 @@ class TuiSession:
             content=FormattedTextControl(self._get_status, focusable=False),
             height=1,
         )
-        self._hint_window = Window(
-            content=FormattedTextControl("  ? shortcuts · /help · /exit"),
-            style="class:hint",
-            height=1,
-        )
-        self._approval: dict | None = None
         self._approval_window = Window(
             content=FormattedTextControl(self._get_approval_card, focusable=False),
             height=D(min=0, max=14),
             style="class:approval",
         )
+        self._hint_window = Window(
+            content=FormattedTextControl("  ? shortcuts · /help · /exit"),
+            style="class:hint",
+            height=1,
+        )
+
         def edge(left: str, right: str) -> Window:
             return VSplit(
                 [
@@ -152,13 +188,9 @@ class TuiSession:
                     VSplit(
                         [
                             Window(width=1, char="│", style="class:border"),
+                            Window(width=2, content=FormattedTextControl("> "), dont_extend_height=True),
                             Window(
-                                width=2,
-                                content=FormattedTextControl("> "),
-                                dont_extend_height=True,
-                            ),
-                            Window(
-                                content=BufferControl(buffer=self.input_buffer),
+                                content=BufferControl(buffer=self.input_buffer, key_bindings=approval_kb),
                                 dont_extend_height=True,
                             ),
                             Window(width=1, char="│", style="class:border"),
@@ -171,78 +203,66 @@ class TuiSession:
             ),
             focused_element=self.input_buffer,
         )
-        kb = KeyBindings()
-        kb.add("c-c")(lambda event: self._exit())
-        kb.add("c-q")(lambda event: self._exit())
+        def _find_buffer_control(container):
+            if isinstance(container, Window) and isinstance(container.content, BufferControl):
+                return container.content
+            for child in getattr(container, "children", []) or []:
+                found = _find_buffer_control(child)
+                if found is not None:
+                    return found
+            return None
 
-        # claude-code style: the approval card is live — ↑↓ move, enter
-        # confirms, 1/2/3 and y/n/a direct-select, esc denies. No typing into
-        # the buffer while the card is up.
-        from prompt_toolkit.filters import Condition
+        self.input_buffer_control = _find_buffer_control(layout.container)
 
-        approving = Condition(lambda: self.mode == "waiting-approval")
-
-        def _submit(answer: str):
-            # y -> approve single; a -> approve all; n -> deny (see _post_turn)
-            def handler(event) -> None:
-                if self._approval is not None and self._approval.get("answer") is None:
-                    self._approval["answer"] = answer
-                    self.input_buffer.reset()
-                    self._refresh()
-            return handler
-
-        def _move(delta: int):
-            def handler(event) -> None:
-                if self._approval is not None:
-                    count = len(_APPROVAL_OPTIONS)
-                    self._approval["selected"] = (self._approval["selected"] + delta) % count
-                    self._refresh()
-            return handler
-
-        kb.add("up", filter=approving)(_move(-1))
-        kb.add("down", filter=approving)(_move(1))
-        _name_to_answer = {"Yes": "y", "Yes to all": "a", "No": "n"}
-
-        def _confirm(event) -> None:
-            if self._approval is not None and self._approval.get("answer") is None:
-                name = _APPROVAL_OPTIONS[self._approval["selected"]][0]
-                self._approval["answer"] = _name_to_answer.get(name, "n")
-                self._refresh()
-
-        kb.add("enter", filter=approving)(_confirm)
-        kb.add("escape", filter=approving)(_submit("n"))
-        for key, answer in (("y", "y"), ("n", "n"), ("a", "a")):
-            kb.add(key, filter=approving)(_submit(answer))
-        for key, answer in (("1", "y"), ("2", "a"), ("3", "n")):
-            kb.add(key, filter=approving)(_submit(answer))
         self.app: Application = Application(
             layout=layout,
-            key_bindings=kb,
+            key_bindings=KeyBindings(),
             full_screen=True,
             mouse_support=False,
             style=_tui_style(),
+            input=input,
+            output=output,
         )
+        self.app.key_bindings.bindings.extend(
+            [
+                b
+                for b in approval_kb.bindings
+            ]
+        )
+        kb = KeyBindings()
+        kb.add("c-c")(lambda event: self._exit())
+        kb.add("c-q")(lambda event: self._exit())
+        self.app.key_bindings.bindings.extend(kb.bindings)
 
     # -- transcript projection ------------------------------------------
 
     def append_block(self, markup_text: str) -> None:
-        """Accept rich markup; store it as real ANSI (projection is rendered once)."""
+        """Accept rich markup; store it as real ANSI (rendered once)."""
         self.blocks.append(_rich_to_ansi(markup_text))
         if len(self.blocks) > _MAX_HISTORY_BLOCKS:
             self.blocks = self.blocks[-_MAX_HISTORY_BLOCKS:]
         self._scroll_bottom()
-        self.app.invalidate()
+        self._refresh()
 
     def _get_history(self):
-        from prompt_toolkit.formatted_text import ANSI as FTANSI
-
-        return FTANSI("\n".join(self.blocks) + "\n")
+        return ANSI("\n".join(self.blocks) + "\n")
 
     def _scroll_bottom(self) -> None:
         try:
             self._history_window.vertical_scroll = 10**9
         except Exception:  # noqa: BLE001
             pass
+
+    def _get_status(self):
+        if self.mode == "working":
+            frame = _SPINNER_FRAMES[self.spinner_index % len(_SPINNER_FRAMES)]
+            text = f"{frame} {self.status_text or 'working…'}"
+            if self.queue:
+                text += f"  [dim]{len(self.queue)} queued[/dim]"
+            return ANSI(_rich_to_ansi(text))
+        if self.approval_hint:
+            return ANSI(_rich_to_ansi(f"[dim]{self.approval_hint}[/dim]"))
+        return ANSI(_rich_to_ansi("[dim]type a task · /help · /exit[/dim]"))
 
     def _get_approval_card(self):
         """The live approval card (claude-code shape): summary + selectable options."""
@@ -269,17 +289,6 @@ class TuiSession:
         lines.append("[dim]↑↓ move · enter confirm · y/n/a keys[/dim]")
         return ANSI(_rich_to_ansi("\n".join(lines)))
 
-    def _get_status(self):
-        if self.mode == "working":
-            frame = _SPINNER_FRAMES[self.spinner_index % len(_SPINNER_FRAMES)]
-            text = f"{frame} {self.status_text or 'working…'}"
-            if self.queue:
-                text += f"  [dim]{len(self.queue)} queued[/dim]"
-            return ANSI(_rich_to_ansi(text))
-        if self.approval_hint:
-            return ANSI(_rich_to_ansi(f"[dim]{self.approval_hint}[/dim]"))
-        return ANSI(_rich_to_ansi("[dim]type a task · /help · /exit[/dim]"))
-
     # -- input ------------------------------------------------------------
 
     def _accept(self, buffer: Buffer) -> bool:
@@ -302,15 +311,17 @@ class TuiSession:
             self.on_command(text)
             return
         if self.registry.pending() and self.mode == "waiting-approval":
-            answer_holder_ref = getattr(self, "_approval_answer", None)
-            if answer_holder_ref is not None:
-                answer_holder_ref["answer"] = text.strip().lower()
+            if self._approval is not None and self._approval.get("answer") is None:
+                answer = text.strip().lower()
+                self._approval["answer"] = {"y": "y", "a": "a", "n": "n"}.get(answer, "n")
             return
         self.append_block(f"[bold]> {text}[/bold]")
         self.state["goal"] = text
         self.traj.record("task_received", {"goal": text})
         self._run_goal(text, first_turn=True)
         self._post_turn()
+
+    # -- task execution ----------------------------------------------------
 
     def _run_goal(self, goal: str, *, first_turn: bool) -> None:
         self.mode = "working"
@@ -340,24 +351,12 @@ class TuiSession:
             (i for i, e in enumerate(events) if e.event_type == "turn_started"), default=None
         )
         if turn_start is not None:
-            import io
-
-            from rich.console import Console as RichConsole
-
-            capture = RichConsole(file=io.StringIO(), force_terminal=True, width=ui.console.width)
-            old_console = ui.console
-            ui.console = capture
-            try:
-                ui.render_turn_tools(events[turn_start:], verbose=self.state["verbose"])
-            finally:
-                ui.console = old_console
-            self.append_block(capture.file.getvalue())
+            self.append_block(_capture_turn_tools(events[turn_start:], verbose=self.state["verbose"]))
         response = response_holder.get("response", "")
         if response:
             self.state["saw_response"] = True
         self.traj.record("run_finished", {"response_chars": len(response)})
-        capture = ui.render_markdown_to_str(response)
-        self.append_block(capture)
+        self.append_block(ui.render_markdown_to_str(response))
         from op0.receipts import decide_closure
 
         status, reason = decide_closure(
@@ -371,7 +370,6 @@ class TuiSession:
             self.bridge.start()  # fresh socket first, then a fresh Pi process
             self.engine.start(self.bridge)
             self.append_block("[yellow](engine crashed; restarting)[/yellow]")
-        # approval IS the continue (bounded)
         retries = 0
         while self.registry.pending() and retries < 8:
             pending = self.registry.pending()
@@ -384,6 +382,8 @@ class TuiSession:
             self.mode = "waiting-approval"
             self._refresh()
             while self._approval["answer"] is None and self.mode == "waiting-approval":
+                self.spinner_index += 1
+                self._refresh()
                 time.sleep(0.1)
             answer = self._approval["answer"] or ""
             self._approval = None
@@ -420,7 +420,6 @@ class TuiSession:
                     self.append_block(f"[red]denied[/red] {denied.proposal_id}")
                 break
             else:
-                self.append_block("[dim]waiting for y/n/a — say continue to re-prompt[/dim]")
                 break
             retries += 1
             self._run_goal(self.state["goal"], first_turn=False)
@@ -456,3 +455,17 @@ class TuiSession:
         self.append_block("[dim]type a task · /help · /exit[/dim]")
         self.app.run()
         return 0
+
+
+def _capture_turn_tools(events, *, verbose: bool) -> str:
+    width = ui.console.width
+    buf = io.StringIO()
+    previous = ui.console
+    from rich.console import Console as RichConsole
+
+    ui.console = RichConsole(file=buf, force_terminal=True, width=width)
+    try:
+        ui.render_turn_tools(events, verbose=verbose)
+    finally:
+        ui.console = previous
+    return buf.getvalue()
