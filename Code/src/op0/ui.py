@@ -8,6 +8,7 @@ alter a recorded permission outcome: if rendering fails, the run continues.
 from __future__ import annotations
 
 import difflib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -59,9 +60,29 @@ def closure_line(status: str, reason: str) -> None:
 
 
 def markdown_response(text: str) -> None:
+    """Render the response with always-visible colors: prose as plain text
+    (terminal default color), fenced code highlighted. rich Markdown's theme
+    colors were nearly invisible on dark terminals."""
+    if not (text or "").strip():
+        console.print("[dim](no model response observed)[/dim]")
+        return
     console.print()
-    console.print(Markdown(text or "*(no model response observed)*"))
+    parts = re.split(r"```(\w*)\n?(.*?)```", text, flags=re.S)
+    for i, part in enumerate(parts):
+        if i % 3 == 1:
+            continue  # language tag
+        if i % 3 == 2:
+            console.print(Syntax(part, parts[i - 1] or "text", theme="ansi_dark", word_wrap=True))
+        elif part.strip():
+            console.print(_plain_md(part.strip()))
     console.print()
+
+
+def _plain_md(md: str) -> str:
+    """Strip markdown decoration so plain text stays readable everywhere."""
+    md = re.sub(r"^#{1,6}\s*", "", md, flags=re.M)
+    md = md.replace("**", "").replace("__", "")
+    return md
 
 
 def tool_status_line(tool: str, detail: str) -> str:
@@ -244,7 +265,6 @@ def render_turn_tools(events: list, *, verbose: bool = False) -> None:
                 if verbose and more > 0:
                     for extra in preview.splitlines()[1:6]:
                         console.print(f"      [dim]{extra[:110]}[/dim]")
-    console.print()
 
 
 def render_markdown_to_str(text: str) -> str:
