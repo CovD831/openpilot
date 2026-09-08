@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -105,6 +106,8 @@ class TuiSession:
         self._approval: dict | None = None
         self._deny_prompt = False  # after "No": invite typed feedback, cc-style
         self._thinking_shown: set[int] = set()  # event indexes already surfaced
+        self._shown_tool_lines: set[str] = set()  # streamed tool lines (dedupe)
+        self._render_cols = 0  # width the on-screen frame was drawn at
 
         self.input_buffer = Buffer(multiline=False, accept_handler=self._accept)
         self.input_buffer_control = None  # set once the layout is built
@@ -210,9 +213,18 @@ class TuiSession:
     # -- transcript projection ------------------------------------------
 
     def append_block(self, markup_text: str) -> None:
-        """Accept rich markup; render to ANSI and print into the terminal
-        scrollback (patch_stdout inserts it above the input bar, in order)."""
-        print(_rich_to_ansi(markup_text), flush=True)
+        """Accept rich markup; render to ANSI, print into the terminal
+        scrollback (patch_stdout inserts it above the input bar, in order),
+        and keep it for the resize full-repaint."""
+        self._emit_ansi(_rich_to_ansi(markup_text))
+
+    def _emit_ansi(self, ansi: str) -> None:
+        """One output path for every transcript line (markup-rendered or raw
+        ANSI): print now AND keep for resize replay."""
+        self.blocks.append(ansi)
+        if len(self.blocks) > _MAX_HISTORY_BLOCKS:
+            del self.blocks[: len(self.blocks) - _MAX_HISTORY_BLOCKS]
+        print(ansi, flush=True)
 
     def _get_status(self):
         if self.mode == "working":
@@ -347,16 +359,20 @@ class TuiSession:
         )
         self.append_block(ui.render_closure_to_str(status, reason))
 
-    def _stream_events(self, start_index: int, shown_calls: set[str]) -> None:
-        """Print tool calls the moment they happen (claude-code streaming)."""
+    def _stream_events(self, start_index: int, shown_calls: set[str] | None = None) -> None:
+        """Print tool calls the moment they happen (claude-code streaming).
+        shown_calls defaults to the instance set, shared with approval_gate so
+        the card can flush pending events first and stay the bottom-most
+        content on screen."""
+        shown = shown_calls if shown_calls is not None else self._shown_tool_lines
         events = self.traj.load_events()
         for event in events[start_index:]:
             if event.producer != "bridge":
                 continue
             payload = event.payload or {}
             call_id = str(payload.get("toolCallId") or "")
-            if event.event_type == "tool_call" and call_id not in shown_calls:
-                shown_calls.add(call_id)
+            if event.event_type == "tool_call" and call_id not in shown:
+                shown.add(call_id)
                 tool = str(payload.get("toolName") or "").replace("openpilot_", "").title()
                 args = dict(payload.get("args") or {})
                 if tool == "Bash":
@@ -367,15 +383,15 @@ class TuiSession:
                     detail = f"{args.get('pattern', '')!r}"
                 else:
                     detail = Path(str(args.get("path") or "")).name
-                print(f"  \033[32m●\033[0m \033[1m{tool}\033[0m \033[2m{detail}\033[0m", flush=True)
+                self._emit_ansi(f"  \033[32m●\033[0m \033[1m{tool}\033[0m \033[2m{detail}\033[0m")
             elif event.event_type == "tool_result" and call_id:
                 key = f"result:{call_id}"
-                if key not in shown_calls:
-                    shown_calls.add(key)
+                if key not in shown:
+                    shown.add(key)
                     preview = str(payload.get("preview") or "").splitlines()
                     first = preview[0][:90] if preview else ""
                     mark = "\033[2m⎿\033[0m" if payload.get("success") else "\033[31m⎿\033[0m"
-                    print(f"    {mark} \033[2m{first}\033[0m", flush=True)
+                    self._emit_ansi(f"    {mark} \033[2m{first}\033[0m")
 
     def _print_new_thinking(self, start_index: int) -> None:
         """Live thinking visibility (claude-code style, low-key): a dim ✻ line
@@ -392,7 +408,7 @@ class TuiSession:
                 stream_event = payload.get("assistantMessageEvent") or {}
                 if stream_event.get("type") == "thinking_start":
                     self._thinking_shown.add(index)
-                    print("  \033[2m✻ (thinking…)\033[0m", flush=True)
+                    self._emit_ansi("  \033[2m✻ (thinking…)\033[0m")
             elif event.event_type == "model_response":
                 message = payload.get("message") or {}
                 if message.get("role") != "assistant":
@@ -402,7 +418,7 @@ class TuiSession:
                         thought = str(item.get("thinking") or "").strip().replace("\n", " ")
                         if thought:
                             self._thinking_shown.add(index)
-                            print(f"  \033[2m✻ {thought[:100]}…\033[0m", flush=True)
+                            self._emit_ansi(f"  \033[2m✻ {thought[:100]}…\033[0m")
                         break
 
     def approval_gate(self, proposal, *, timeout: float | None = _GATE_TIMEOUT_SECONDS) -> str:
@@ -418,6 +434,11 @@ class TuiSession:
         done = threading.Event()
         self._approval = {"proposal": proposal, "answer": None, "selected": 0, "done": done}
         self.mode = "waiting-approval"
+        # flush what already landed (the in-flight tool call, any thinking)
+        # BEFORE the card — claude-code order: tool line, then question, and
+        # the card is the bottom-most content on screen
+        self._stream_events(0)
+        self._print_new_thinking(0)
         self.append_block(ui.render_proposal_to_str(proposal))
         self._refresh()
         done.wait(timeout)
@@ -476,6 +497,42 @@ class TuiSession:
 
     # -- plumbing ---------------------------------------------------------
 
+    def _install_resize_handler(self) -> None:
+        """Non-fullscreen prompt_toolkit cannot survive terminal reflow: every
+        render re-enables autowrap, so narrowing the window re-wraps the
+        previous frame's full-width divider; the renderer's cursor accounting
+        no longer matches the real screen and each repaint leaves an orphaned
+        frame. prompt_toolkit attaches its own WINCH handler via asyncio (a
+        plain signal.signal would be overwritten), so wrap Application's
+        _on_resize: claude-code behavior — clear the screen and replay the
+        transcript, then let prompt_toolkit paint a fresh frame."""
+        original = self.app._on_resize
+
+        def on_resize() -> None:
+            self._repaint_on_resize()
+            original()
+
+        self.app._on_resize = on_resize
+
+    def _repaint_on_resize(self) -> None:
+        try:
+            new_cols = os.get_terminal_size().columns
+        except OSError:
+            return
+        if new_cols == self._render_cols:
+            return
+        self._render_cols = new_cols
+        try:
+            self.app.renderer.reset()  # next paint is fresh, no diff cursor math
+        except Exception:  # noqa: BLE001
+            pass
+        # claude-code behavior: clear the screen and replay the transcript.
+        # Route through the patch_stdout queue (the same path every transcript
+        # line takes) — direct output writes from here lose the race with
+        # in-flight renders.
+        replay = "\x1b[2J\x1b[H" + "\n".join(self.blocks) if self.blocks else "\x1b[2J\x1b[H"
+        print(replay, flush=True)
+
     def _refresh(self) -> None:
         try:
             self.app.invalidate()
@@ -516,6 +573,12 @@ class TuiSession:
         self.append_block(f"[dim]◆ op0 v{self.version} — governed coding agent[/dim]")
         self.append_block(f"[dim]project: {self.project_root}[/dim]")
         self.append_block("[dim]type a task · /help · /exit[/dim]")
+        if os.isatty(1):
+            try:
+                self._render_cols = os.get_terminal_size().columns
+            except OSError:
+                pass
+            self._install_resize_handler()
         from prompt_toolkit.patch_stdout import patch_stdout
 
         # raw=True: print() carries real ANSI escape codes (tool colors);

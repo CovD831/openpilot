@@ -1,0 +1,2 @@
+{"event_type":"model_response","payload":{"message":{"role":"user","stopReason":"stop"}},"producer":"op0","call_id":"","idempotency_key":"run_6396fc8af5c942e29d9cabd665411262:1","timestamp":"2026-09-08T10:42:31.937392+00:00"}
+{"event_type":"model_response","payload":{"message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Connection error."}},"producer":"op0","call_id":"","idempotency_key":"run_6396fc8af5c942e29d9cabd665411262:2","timestamp":"2026-09-08T10:42:31.937696+00:00"}
