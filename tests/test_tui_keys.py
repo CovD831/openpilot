@@ -47,21 +47,39 @@ def test_approval_keys_live_on_focused_control(tmp_path: Path) -> None:
     assert control.buffer is tui.input_buffer
     keys = {tuple(b.keys or []) for b in control.key_bindings.bindings}
     assert ("y",) in keys and ("n",) in keys and ("a",) in keys
-    assert ("up",) in keys and ("down",) in keys and (Keys.ControlM,) in keys
+    assert ("1",) in keys and ("2",) in keys and ("3",) in keys
+    assert (Keys.Escape,) in keys
+    # no reserved card rows: the layout is the input bar only (constant height)
+    assert tui.app.layout.container.children.__len__() < 10
 
 
 def test_y_binding_routes_answer(tmp_path: Path) -> None:
     tui, registry = _make(tmp_path)
     registry.propose("demo", str(tmp_path / "f.txt"), kind="write")
-    tui._approval = {"proposal": registry.pending()[0], "pending_count": 1, "selected": 0, "answer": None}
+    tui._approval = {"proposal": registry.pending()[0], "answer": None}
     tui.mode = "waiting-approval"
 
     y_binding = next(b for b in tui.input_buffer_control.key_bindings.bindings if list(b.keys or []) == ["y"])
     y_binding.call(type("E", (), {"app": tui.app})())
 
     assert tui._approval["answer"] == "y"
-    tui._approval = None  # what _post_turn does with the answer
-    assert tui._get_approval_card() == ""
+
+
+def test_proposal_card_renders_in_flow(tmp_path: Path) -> None:
+    """The cc-shaped card: divider + label + action + question + numbered
+    options, as transcript text (no bordered panel, no live layout widget)."""
+    import re
+
+    from op0.ui import render_proposal_to_str
+
+    registry = AdmissionRegistry(str(tmp_path))
+    registry.propose_command("demo goal", "ls -la")
+    rendered = render_proposal_to_str(registry.pending()[0])
+    clean = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", rendered)
+    assert "Do you want to proceed?" in clean
+    assert "❯ 1. Yes" in clean and "2. Yes to all" in clean and "3. No" in clean
+    assert "$ ls -la" in clean
+    assert "╭" not in clean and "╰" not in clean  # no border box
 
 
 def test_read_paging_and_proposal_dedupe(tmp_path: Path) -> None:

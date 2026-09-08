@@ -46,12 +46,18 @@ class Session:
         if not self.path.exists():
             return []
         events: list[EventRecord] = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
+        lines = self.path.read_text(encoding="utf-8").splitlines()
+        for position, line in enumerate(lines):
             if not line.strip():
                 continue
             import json
 
-            raw = json.loads(line)
+            try:
+                raw = json.loads(line)
+            except json.JSONDecodeError:
+                if position != len(lines) - 1:
+                    raise  # only torn tails are legal: a concurrent append owns the last line
+                continue
             events.append(
                 EventRecord(
                     event_type=str(raw.get("event_type", "")),
@@ -66,11 +72,18 @@ class Session:
 
     def last_model_response(self) -> str:
         from op0.response import assistant_text_from_payload
-
         for event in reversed(self.load_events()):
             if event.event_type != "model_response":
                 continue
             text = assistant_text_from_payload(event.payload)
             if text:
                 return text
+        return ""
+
+    def last_model_error(self) -> str:
+        """Provider error from the latest failed model call; callers guard on an empty last_model_response."""
+        from op0.response import error_message_from_payload
+        for event in reversed(self.load_events()):
+            if event.event_type == "model_response" and (error := error_message_from_payload(event.payload)):
+                return error
         return ""

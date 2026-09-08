@@ -2,15 +2,17 @@
 
 Layout mirrors the claude-code shape (studied from the CCB source):
   - top:   scrolling transcript — a read-only projection of the trajectory
-           (tool calls folded claude-code style, responses as markdown text)
-  - middle: a live status line, and a live approval card when the model
-            requests a side effect
-  - bottom: a fixed input bar, always visible.
+           (tool calls folded claude-code style, responses as markdown text);
+           approval questions render inline here, in the flow
+  - bottom: a fixed input bar, always visible, constant height.
 
 The UI owns no facts: everything rendered comes from the session, registry,
 and receipt store; input is the only thing the UI produces. Approval keys
-(y/n/a, 1/2/3, arrows, enter, esc) live on the focused BufferControl so
-they beat character insertion while the card is up.
+(y/n/a, 1/2/3, esc) live on the focused BufferControl so they beat character
+insertion while an approval is pending. The layout reserves no rows for a
+card: dynamic heights leave redraw residue outside full-screen mode, so the
+question goes to the transcript instead (prompt_toolkit floats cannot escape
+the app area in non-fullscreen rendering — measured, not assumed).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from prompt_toolkit.layout.containers import Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.styles import Style as PTStyle
+from rich.markup import escape
 
 from op0 import ui
 from op0.admission import AdmissionRegistry
@@ -39,21 +42,6 @@ from op0.session import Session
 
 _MAX_HISTORY_BLOCKS = 400
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-
-_APPROVAL_OPTIONS = [
-    ("Yes", "approve and continue"),
-    ("Yes to all", "approve every pending proposal"),
-    ("No", "deny — tell the model what to do instead"),
-]
-
-_NAME_TO_ANSWER = {"Yes": "y", "Yes to all": "a", "No": "n"}
-
-
-def _diff_stat(diff_preview: str) -> str:
-    lines = diff_preview.splitlines()
-    added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
-    removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
-    return f"+{added} −{removed} lines"
 
 
 def _rich_to_ansi(markup: str) -> str:
@@ -111,14 +99,17 @@ class TuiSession:
         self.status_text = ""
         self.spinner_index = 0
         self.queue: list[str] = []
-        self.approval_hint = ""
         self._approval: dict | None = None
+        self._deny_prompt = False  # after "No": invite typed feedback, cc-style
+        self._thinking_shown: set[int] = set()  # event indexes already surfaced
 
         self.input_buffer = Buffer(multiline=False, accept_handler=self._accept)
         self.input_buffer_control = None  # set once the layout is built
 
         # -- approval bindings live on the focused control: they beat the
         #    buffer's character insertion, so 'y' approves instead of typing.
+        #    The card itself is printed into the transcript (claude-code
+        #    shape: question in the flow, no reserved rows in the layout).
         approving = Condition(lambda: self.mode == "waiting-approval")
         approval_kb = KeyBindings()
 
@@ -126,37 +117,20 @@ class TuiSession:
             def handler(event) -> None:
                 if self._approval is not None and self._approval.get("answer") is None:
                     self._approval["answer"] = answer
+                    done = self._approval.get("done")
+                    if done is not None:
+                        done.set()  # wakes a tool-call-time approval gate, if any
                     self.input_buffer.reset()
                     self._refresh()
             return handler
 
-        def _move(delta: int):
-            def handler(event) -> None:
-                if self._approval is not None:
-                    count = len(_APPROVAL_OPTIONS)
-                    self._approval["selected"] = (self._approval["selected"] + delta) % count
-                    self._refresh()
-            return handler
-
-        approval_kb.add("up", filter=approving)(_move(-1))
-        approval_kb.add("down", filter=approving)(_move(1))
-        approval_kb.add("enter", filter=approving)(
-            lambda event: _submit(_NAME_TO_ANSWER[_APPROVAL_OPTIONS[self._approval["selected"]][0]])(event)
-        )
         approval_kb.add("escape", filter=approving)(_submit("n"))
-        for key, answer in (("y", "y"), ("n", "n"), ("a", "a")):
-            approval_kb.add(key, filter=approving)(_submit(answer))
-        for key, answer in (("1", "y"), ("2", "a"), ("3", "n")):
+        for key, answer in (("y", "y"), ("n", "n"), ("a", "a"), ("1", "y"), ("2", "a"), ("3", "n")):
             approval_kb.add(key, filter=approving)(_submit(answer))
 
         self._status_window = Window(
             content=FormattedTextControl(self._get_status, focusable=False),
             height=1,
-        )
-        self._approval_window = Window(
-            content=FormattedTextControl(self._get_approval_card, focusable=False),
-            height=10,  # fixed: dynamic heights leave redraw residue outside full-screen
-            style="class:approval",
         )
         self._hint_window = Window(
             content=FormattedTextControl("  ? shortcuts · /help · /exit"),
@@ -164,35 +138,22 @@ class TuiSession:
             height=1,
         )
 
-        def edge(left: str, right: str) -> Window:
-            return VSplit(
-                [
-                    Window(width=1, content=FormattedTextControl(left), style="class:border", dont_extend_height=True),
-                    Window(char="─", style="class:border-dim"),
-                    Window(width=1, content=FormattedTextControl(right), style="class:border", dont_extend_height=True),
-                ],
-                height=1,
-            )
-
+        # claude-code input: a thin divider rule above a "❯ " prompt — no
+        # bordered box (side borders wrap-misalign exactly like a panel).
         layout = Layout(
             HSplit(
                 [
-                    Window(height=1, char=" "),
-                    self._approval_window,
-                    edge("╭", "╮"),
+                    Window(height=1, char="─", style="class:border-dim"),
                     VSplit(
                         [
-                            Window(width=1, char="│", style="class:border"),
-                            Window(width=2, content=FormattedTextControl("> "), dont_extend_height=True),
+                            Window(width=2, content=FormattedTextControl([("class:prompt", "❯ ")]), dont_extend_height=True),
                             Window(
                                 content=BufferControl(buffer=self.input_buffer, key_bindings=approval_kb),
                                 dont_extend_height=True,
                             ),
-                            Window(width=1, char="│", style="class:border"),
                         ],
                         height=1,
                     ),
-                    edge("╰", "╯"),
                     self._status_window,
                     self._hint_window,
                 ]
@@ -219,12 +180,7 @@ class TuiSession:
             input=input,
             output=output,
         )
-        self.app.key_bindings.bindings.extend(
-            [
-                b
-                for b in approval_kb.bindings
-            ]
-        )
+        self.app.key_bindings.bindings.extend(approval_kb.bindings)
         kb = KeyBindings()
         kb.add("c-c")(lambda event: self._exit())
         kb.add("c-q")(lambda event: self._exit())
@@ -246,8 +202,10 @@ class TuiSession:
             if self.queue:
                 text += f"  [dim]{len(self.queue)} queued[/dim]"
             return ANSI(_rich_to_ansi(text))
-        if self.approval_hint:
-            return ANSI(_rich_to_ansi(f"[dim]{self.approval_hint}[/dim]"))
+        if self.mode == "waiting-approval":
+            return ANSI(_rich_to_ansi("[yellow]approval pending — y / a / n (or 1/2/3)[/yellow]"))
+        if self._deny_prompt:
+            return ANSI(_rich_to_ansi("[yellow]tell the model what to do differently (type below)[/yellow]"))
         mode = self.state.get("approval_mode", "ask")
         mode_text = (
             "[yellow]auto-approve on[/yellow] (shift+tab to switch)"
@@ -255,33 +213,6 @@ class TuiSession:
             else "[dim]ask mode · shift+tab to auto-approve[/dim]"
         )
         return ANSI(_rich_to_ansi(f"[dim]type a task · /help · /exit · [/dim]{mode_text}"))
-
-    def _get_approval_card(self):
-        """The live approval card (claude-code shape): summary + selectable options."""
-        approval = self._approval
-        if not approval:
-            return ""
-        proposal = approval["proposal"]
-        grant = proposal.grant
-        lines: list[str] = []
-        label = {"patch": "Patch", "write": "Write", "bash": "Bash"}.get(grant.kind, grant.kind.title())
-        lines.append(f"[bold]● {label} — approval required[/bold]")
-        if grant.command:
-            lines.append(f"[cyan]$ {grant.command}[/cyan]")
-        for path in grant.write_paths:
-            lines.append(f"[cyan]{path}[/cyan]")
-        if grant.diff_preview.strip():
-            lines.append(f"[dim]changes: {_diff_stat(grant.diff_preview)} (verbose expands)[/dim]")
-        lines.append("")
-        for index, (name, description) in enumerate(_APPROVAL_OPTIONS):
-            chosen = index == approval["selected"]
-            marker = "❯" if chosen else " "
-            style = "bold" if chosen else "dim"
-            lines.append(f"{marker} {index + 1}. {name}  [dim]— {description}[/dim]")
-        lines.append("[dim]↑↓ move · enter confirm · y/n/a keys[/dim]")
-        while len(lines) < 9:  # pad so the fixed-height window never shows residue
-            lines.append("")
-        return ANSI(_rich_to_ansi("\n".join(lines[:9])))
 
     # -- input ------------------------------------------------------------
 
@@ -307,9 +238,15 @@ class TuiSession:
         if self.registry.pending() and self.mode == "waiting-approval":
             if self._approval is not None and self._approval.get("answer") is None:
                 answer = text.strip().lower()
-                self._approval["answer"] = {"y": "y", "a": "a", "n": "n"}.get(answer, "n")
+                mapped = {"y": "y", "yes": "y", "1": "y", "a": "a", "all": "a", "2": "a",
+                          "n": "n", "no": "n", "3": "n"}.get(answer)
+                if mapped:
+                    self._approval["answer"] = mapped
+                else:
+                    self.append_block("[dim]approval pending — answer y / a / n (or 1/2/3)[/dim]")
             return
-        self.append_block(f"[bold]> {text}[/bold]")
+        self.append_block(f"[bold on #262626] ❯ {escape(text)} [/]")
+        self._deny_prompt = False
         self.state["goal"] = text
         self.traj.record("task_received", {"goal": text})
         self._crash_retries = 0
@@ -340,7 +277,7 @@ class TuiSession:
 
     def _run_goal(self, goal: str, *, first_turn: bool) -> None:
         self.mode = "working"
-        self.status_text = "thinking…"
+        started = time.monotonic()
         self._refresh()
         response_holder: dict[str, str] = {}
 
@@ -355,20 +292,18 @@ class TuiSession:
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
         shown_calls: set[str] = set()
-        shown_thinking = 0
         while thread.is_alive():
             self.spinner_index += 1
+            self.status_text = f"✻ thinking… {int(time.monotonic() - started)}s"
             self._stream_events(events_at_start, shown_calls)
-            thinking_now = self._count_thinking(events_at_start)
-            if thinking_now > shown_thinking:
-                shown_thinking = thinking_now
+            self._print_new_thinking(events_at_start)
             self._refresh()
             time.sleep(0.12)
         thread.join()
-        self._stream_thinking_summary(events_at_start)
+        self._print_new_thinking(events_at_start)
 
         if response_holder.get("error"):
-            self.append_block(f"[red]turn error:[/red] {response_holder['error']}")
+            self.append_block(f"[red]turn error:[/red] {escape(response_holder['error'])}")
         if self.engine.state.value == "crashed":
             # never claim closure for a turn the engine did not finish
             self.traj.record("run_finished", {"response_chars": 0, "crashed": True})
@@ -378,7 +313,8 @@ class TuiSession:
         if response:
             self.state["saw_response"] = True
         self.traj.record("run_finished", {"response_chars": len(response)})
-        self.append_block(ui.render_markdown_to_str(response))
+        error = "" if response else self.traj.last_model_error()
+        self.append_block(ui.model_error_markup(error) if error else ui.render_markdown_to_str(response))
         from op0.receipts import decide_closure
 
         status, reason = decide_closure(
@@ -417,46 +353,61 @@ class TuiSession:
                     mark = "\033[2m⎿\033[0m" if payload.get("success") else "\033[31m⎿\033[0m"
                     print(f"    {mark} \033[2m{first}\033[0m", flush=True)
 
-    def _count_thinking(self, start_index: int) -> int:
-        count = 0
-        for event in self.traj.load_events()[start_index:]:
-            if event.event_type != "model_response":
+    def _print_new_thinking(self, start_index: int) -> None:
+        """Live thinking visibility (claude-code style, low-key): a dim ✻ line
+        the moment a thinking block STARTS (deltas stream as model_response_delta
+        events) and one with its snippet when the completed message lands. Long
+        reasoning must never read as a frozen spinner."""
+        events = self.traj.load_events()
+        for index in range(start_index, len(events)):
+            if index in self._thinking_shown:
                 continue
-            message = (event.payload or {}).get("message") or {}
-            if message.get("role") != "assistant":
-                continue
-            count += sum(
-                1
-                for item in message.get("content") or []
-                if isinstance(item, dict) and item.get("type") == "thinking"
-            )
-        return count
+            event = events[index]
+            payload = event.payload or {}
+            if event.event_type == "model_response_delta":
+                stream_event = payload.get("assistantMessageEvent") or {}
+                if stream_event.get("type") == "thinking_start":
+                    self._thinking_shown.add(index)
+                    print("  \033[2m✻ (thinking…)\033[0m", flush=True)
+            elif event.event_type == "model_response":
+                message = payload.get("message") or {}
+                if message.get("role") != "assistant":
+                    continue
+                for item in message.get("content") or []:
+                    if isinstance(item, dict) and item.get("type") == "thinking":
+                        thought = str(item.get("thinking") or "").strip().replace("\n", " ")
+                        if thought:
+                            self._thinking_shown.add(index)
+                            print(f"  \033[2m✻ {thought[:100]}…\033[0m", flush=True)
+                        break
 
-    def _stream_thinking_summary(self, start_index: int) -> None:
-        """One dim line per thinking block, claude-code style (low-key)."""
-        for event in self.traj.load_events()[start_index:]:
-            if event.event_type != "model_response":
-                continue
-            message = (event.payload or {}).get("message") or {}
-            if message.get("role") != "assistant":
-                continue
-            for item in message.get("content") or []:
-                if isinstance(item, dict) and item.get("type") == "thinking":
-                    thought = str(item.get("thinking") or "").strip().replace("\n", " ")
-                    if thought:
-                        print(f"  \033[2m✻ {thought[:100]}…\033[0m", flush=True)
-
+    def approval_gate(self, proposal) -> bool:
+        """Called from the bridge tool thread when a side effect needs a
+        decision: surface the card in the flow NOW and block the tool call
+        until the human answers (claude-code semantics — the agent pauses at
+        the tool call instead of flailing on refusals). True = approved."""
+        done = threading.Event()
+        self._approval = {"proposal": proposal, "answer": None, "done": done}
+        self.mode = "waiting-approval"
+        self.append_block(ui.render_proposal_to_str(proposal))
+        self._refresh()
+        done.wait()
+        answer = self._approval["answer"] if self._approval else ""
+        self._approval = None
+        self.mode = "working"  # the turn is still running; the spinner resumes
+        self._refresh()
+        return answer in ("y", "a")
 
     def _post_turn(self) -> None:
         retries = 0
         while self.registry.pending() and retries < 8:
             pending = self.registry.pending()
-            self._approval = {
-                "proposal": pending[0],
-                "pending_count": len(pending),
-                "selected": 0,
-                "answer": None,
-            }
+            # claude-code shape: the question lives in the transcript flow,
+            # the bottom bar stays constant-height (no reserved card rows).
+            self.append_block(ui.render_proposal_to_str(pending[0]))
+            if len(pending) > 1:
+                self.append_block(f"[dim]{len(pending)} proposals pending — '2' approves all[/dim]")
+            self._approval = {"proposal": pending[0], "answer": None, "done": threading.Event()}
             self.mode = "waiting-approval"
             self._refresh()
             while self._approval["answer"] is None and self.mode == "waiting-approval":
@@ -477,7 +428,7 @@ class TuiSession:
                     )
                     self.append_block(f"[green]approved[/green] {consent.consent_id}")
                 except Exception as exc:  # noqa: BLE001
-                    self.append_block(f"[red]approval failed:[/red] {exc}")
+                    self.append_block(f"[red]approval failed:[/red] {escape(exc)}")
                     break
             elif answer in ("a", "all"):
                 try:
@@ -489,20 +440,20 @@ class TuiSession:
                     )
                     self.append_block(f"[green]approved {len(ids)} proposal(s)[/green]")
                 except Exception as exc:  # noqa: BLE001
-                    self.append_block(f"[red]approval failed:[/red] {exc}")
+                    self.append_block(f"[red]approval failed:[/red] {escape(exc)}")
                     break
             elif answer in ("n", "no"):
                 pending = self.registry.pending()
                 if pending:
                     denied = self.registry.deny(pending[0].proposal_id)
                     self.append_block(f"[red]denied[/red] {denied.proposal_id}")
+                self._deny_prompt = True  # option 3: invite typed feedback
                 break
             else:
                 break
             retries += 1
             self._run_goal(self.state["goal"], first_turn=False)
         self.mode = "idle"
-        self.approval_hint = ""
         self._drain_queue()
 
     def _drain_queue(self) -> None:
@@ -539,6 +490,8 @@ class TuiSession:
 
     def _exit(self) -> None:
         self.mode = "exiting"
+        if self._approval is not None and self._approval.get("done") is not None:
+            self._approval["done"].set()  # unblock a tool-call-time approval gate
         try:
             self.engine.stop()
             self.bridge.stop()

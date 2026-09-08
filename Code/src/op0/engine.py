@@ -15,6 +15,7 @@ from typing import Any
 
 from op0.bridge import ReadOnlyToolBridge
 from op0.contracts import TaskSpec
+from op0.response import error_message_from_payload
 from op0.session import Session
 
 _MAX_RPC_RECORD_BYTES = 1_000_000
@@ -123,13 +124,12 @@ class Engine:
         _stop_process(self._process)
         self._process = None
 
-    def ask(self, prompt: str, *, first_turn: bool = False) -> str:
+    def ask(self, prompt: str, *, first_turn: bool = False, _retry: bool = True) -> str:
         """Run one conversation turn against the live process."""
         if self.state is not EngineState.RUNNING or self._process is None:
             raise RuntimeError("engine is not running")
         self._turns += 1
         turn_id = f"turn-{self._turns}"
-        deadline = time.monotonic() + max(0.1, self.config.timeout_seconds)
         self._buffer.clear()
         self.session.record("turn_started", {"prompt": prompt, "turn_id": turn_id}, producer="pi")
         try:
@@ -141,24 +141,36 @@ class Engine:
             )
             accepted = False
             ended = False
+            error = ""
+            # idle-based timeout, not a wall-clock turn cap: a blocking
+            # tool-call approval gate produces no RPC records by design, and
+            # a legitimately long turn keeps emitting deltas.
+            last_activity = time.monotonic()
             while not ended:
+                deadline = last_activity + max(0.1, self.config.timeout_seconds)
                 record = self._read_record(self._process, deadline)
                 if record is None:
                     if self._process.poll() is not None:
                         raise EOFError("Pi sidecar exited before agent_end")
-                    raise TimeoutError("Pi sidecar response timed out")
-                if record.get("type") == "response" and record.get("id") == request_id:
+                    raise TimeoutError("Pi sidecar idle timeout — no RPC activity")
+                last_activity = time.monotonic()
+                record_type = str(record.get("type") or "")
+                if record_type == "response" and record.get("id") == request_id:
                     if not bool(record.get("success")):
                         raise RuntimeError("Pi rejected the prompt")
                     accepted = True
                     self.session.record("model_request", {"accepted": True}, producer="pi")
                     continue
-                mapped = _map_event_type(str(record.get("type") or ""))
+                mapped = _map_event_type(record_type)
                 if mapped:
                     self.session.record(mapped, record, producer="pi")
-                ended = str(record.get("type") or "") == "agent_end"
+                if record_type == "message_end":
+                    error = error_message_from_payload(record) or error
+                ended = record_type == "agent_end"
             if not accepted:
                 raise RuntimeError("Pi completed without accepting the prompt")
+            if error and _retry:
+                return self.ask(prompt, first_turn=first_turn, _retry=False)
         except (EOFError, TimeoutError, RuntimeError, OSError, ValueError) as exc:
             self.state = EngineState.CRASHED
             self.session.record(
@@ -250,12 +262,13 @@ def compose_turn_message(prompt: str) -> str:
         "(search file contents), openpilot_patch (replace lines of an existing "
         "file), openpilot_write (create or overwrite a file), openpilot_bash "
         "(run one shell command in the project root). Reads and search run "
-        "freely; every patch, write, or bash call is refused once until the "
-        "human approves it. When a call is refused for approval, briefly tell "
-        "the user which approval you need and stop — do not try to work around "
-        "the gateway. After the human approves and asks you to continue, retry "
-        "the exact same call. Use project-relative paths. This contract holds "
-        "for every later turn in this conversation.\n\nUser task:\n" + prompt
+        "freely. A patch, write, or bash call may pause until the human "
+        "approves it: when approved, the same call executes and returns its "
+        "result normally; when denied you will see a denial — do not retry "
+        "the same call, briefly acknowledge the denial and ask the human what "
+        "to do differently, then stop that line of work. Use project-relative "
+        "paths. This contract holds for every later turn in this "
+        "conversation.\n\nUser task:\n" + prompt
     )
 
 

@@ -64,6 +64,14 @@ def assistant_text_from_payload(payload: Any) -> str:
     return "\n".join(parts).strip()
 
 
+def error_message_from_payload(payload: Any) -> str:
+    """Provider error from a Pi message_end record; empty unless an error-stopped assistant message."""
+    message = payload.get("message") if isinstance(payload, dict) else None
+    if not isinstance(message, dict) or message.get("role") != "assistant" or str(message.get("stopReason") or "") != "error":
+        return ""
+    return str(message.get("errorMessage") or "").strip()
+
+
 def sanitize_terminal_text(value: str) -> str:
     """Strip ANSI escapes and bidi/invisible characters; bound the length."""
     without_ansi = _ANSI_ESCAPE.sub("", str(value))

@@ -22,6 +22,7 @@ from op0.admission import AdmissionRegistry, Proposal
 from op0.bridge import ReadOnlyToolBridge
 from op0.contracts import TaskSpec
 from op0.engine import Engine, EngineConfig
+from rich.markup import escape
 from op0.receipts import ReceiptStore, decide_closure, file_hash, record_validation
 from op0.recovery import reconcile, resume_plan
 from op0.session import Session
@@ -70,7 +71,9 @@ def _apply_patch_receipt(store, session, registry, path, hash_before, hash_after
         )
 
 
-def _make_bridge(session, registry, store, project_root: str, *, goal_state: dict) -> ReadOnlyToolBridge:
+def _make_bridge(session, registry, store, project_root: str, *, goal_state: dict, gate_holder: dict | None = None) -> ReadOnlyToolBridge:
+    gate = gate_holder if gate_holder is not None else {"fn": None}
+
     def _auto_consent(proposal):
         """Auto mode: approved the moment it exists (still recorded —
         consent_bound carries auto: true)."""
@@ -86,6 +89,31 @@ def _make_bridge(session, registry, store, project_root: str, *, goal_state: dic
             producer="admission",
         )
         return consent
+
+    def _gate_consent(proposal):
+        """Tool-call-time approval (claude-code semantics): block the tool
+        call until the human answers the card. Approved -> consent now and
+        the same call executes; denied -> refusal telling the model to adapt
+        instead of retrying."""
+        approved = bool(gate["fn"] and gate["fn"](proposal))
+        if approved:
+            consent = registry.approve(proposal.proposal_id, session.run_id)
+            session.record(
+                "consent_bound",
+                {"consent_id": consent.consent_id, "proposal_id": consent.proposal_id, "run_id": consent.run_id},
+                producer="admission",
+            )
+            return consent
+        registry.deny(proposal.proposal_id)
+        session.record(
+            "proposal_denied",
+            {"proposal_id": proposal.proposal_id, "gate": True},
+            producer="admission",
+        )
+        raise PermissionError(
+            "denied by the human — do not retry the same call; briefly "
+            "acknowledge the denial and ask what to do differently"
+        )
 
     def authorize(raw_path: str, args: dict):
         canonical = str(Path(raw_path).expanduser().resolve(strict=False))
@@ -115,6 +143,8 @@ def _make_bridge(session, registry, store, project_root: str, *, goal_state: dic
             )
             if goal_state.get("approval_mode") == "auto":
                 return _auto_consent(proposal)
+            if gate["fn"] is not None:
+                return _gate_consent(proposal)
             raise
 
     def authorize_cmd(command: str, args: dict):
@@ -135,6 +165,8 @@ def _make_bridge(session, registry, store, project_root: str, *, goal_state: dic
             )
             if goal_state.get("approval_mode") == "auto":
                 return _auto_consent(proposal)
+            if gate["fn"] is not None:
+                return _gate_consent(proposal)
             raise
 
     def on_patch_applied(path: str, hash_before: str, hash_after: str, consent) -> None:
@@ -292,7 +324,10 @@ def run_once_task(spec: TaskSpec) -> str:
     bridge.start()
     engine = Engine(session, _engine_config(spec))
     try:
-        return engine.run_once(spec, bridge=bridge)
+        response = engine.run_once(spec, bridge=bridge)
+        if not response:
+            ui.console.print(ui.model_error_markup(session.last_model_error()))
+        return response
     finally:
         if bridge is not None:
             bridge.stop()
@@ -349,7 +384,8 @@ def _run_repl(project_root: Path) -> int:
     registry = AdmissionRegistry(str(project_root))
     store = ReceiptStore(project_root)
     state = {"goal": "", "saw_response": False, "verbose": False, "approval_mode": "ask"}
-    bridge = _make_bridge(traj, registry, store, str(project_root), goal_state=state)
+    gate = {"fn": None}
+    bridge = _make_bridge(traj, registry, store, str(project_root), goal_state=state, gate_holder=gate)
     engine = Engine(traj, _engine_config(TaskSpec(goal="", project_root=str(project_root))))
 
     def handle_command(text: str) -> None:
@@ -400,14 +436,14 @@ def _run_repl(project_root: Path) -> int:
                     )
                     tui.append_block(f"[green]approved[/green] {consent.consent_id}")
             except Exception as exc:  # noqa: BLE001
-                tui.append_block(f"[red]approve failed:[/red] {exc}")
+                tui.append_block(f"[red]approve failed:[/red] {escape(exc)}")
         elif cmd == "/deny" and rest:
             try:
                 denied = registry.deny(rest)
                 traj.record("proposal_denied", {"proposal_id": denied.proposal_id}, producer="admission")
                 tui.append_block(f"[red]denied[/red] {rest}")
             except Exception as exc:  # noqa: BLE001
-                tui.append_block(f"[red]deny failed:[/red] {exc}")
+                tui.append_block(f"[red]deny failed:[/red] {escape(exc)}")
         elif cmd == "/validate" and rest:
             pending = store.pending_for_run(traj.run_id)
             if not pending:
@@ -459,6 +495,7 @@ def _run_repl(project_root: Path) -> int:
         on_command=handle_command,
         state=state,
     )
+    gate["fn"] = tui.approval_gate  # tool-call-time approvals (cc semantics)
     report = _recovery_report_to_str(store, None)
     if report:
         tui.append_block(report)
@@ -483,7 +520,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.once:
         response = run_once_task(TaskSpec(goal=args.once, project_root=str(project_root)))
-        ui.markdown_response(response)
+        if response:
+            ui.markdown_response(response)
         return 0 if response else 1
     return _run_repl(project_root)
 

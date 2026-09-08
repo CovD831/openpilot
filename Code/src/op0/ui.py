@@ -15,7 +15,7 @@ from typing import Any
 
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.panel import Panel
+from rich.markup import escape
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
@@ -79,8 +79,16 @@ def markdown_response(text: str) -> None:
         if i % 3 == 2:
             console.print(Syntax(part, parts[i - 1] or "text", theme="ansi_dark", word_wrap=True))
         elif part.strip():
-            console.print(_plain_md(part.strip()))
+            # model prose is data, not markup: print literally so brackets in
+            # the answer can neither crash nor be eaten as rich tags
+            console.print(_plain_md(part.strip()), markup=False, highlight=False)
     console.print()
+
+
+def model_error_markup(error: str) -> str:
+    """A failed model call must read differently from a silent empty response."""
+    message = escape((error or "").strip() or "model call failed without an error message")
+    return f"[red]model error:[/red] {message} [dim]— no model response; closure stays evidence-based[/dim]"
 
 
 def _plain_md(md: str) -> str:
@@ -102,37 +110,38 @@ def _diff_block(diff_text: str) -> Syntax:
 
 
 def proposal_panel(proposal, *, verbose: bool = False, console=None) -> None:
-    """Render one pending proposal with its change preview."""
+    """One pending proposal, claude-code shape: divider rules and plain lines,
+    NOT a bordered panel — the TUI renderer disables terminal autowrap, so any
+    bordered line that runs even one cell wide wraps silently and every later
+    row misaligns (the "card overlays the transcript" artifact)."""
     console = console or console_default()
     grant = proposal.grant
     label = _KIND_LABELS.get(grant.kind, grant.kind.upper())
-    body_lines: list[str] = [f"[bold]{grant.goal}[/bold]"]
+
+    def out(markup: str) -> None:
+        console.print(markup, highlight=False)  # rich's number highlight splits "1. Yes"
+
+    rule = "─" * max(20, console.width - 2)
+    out(f"[dim]{rule}[/dim]")
+    out(f"[bold]{label}[/bold][dim] — approval required · {proposal.proposal_id}[/dim]")
     if grant.command:
-        body_lines.append(f"[cyan]$ {grant.command}[/cyan]")
+        out(f"[cyan]$ {escape(grant.command)}[/cyan]")
     for path in grant.write_paths:
-        body_lines.append(f"[cyan]{path}[/cyan]")
-    body = "\n".join(body_lines)
-    console.print(
-        Panel(
-            body,
-            title=f"[yellow]{label} — approval required[/yellow]",
-            subtitle=f"[dim]{proposal.proposal_id} · task {grant.task_id}[/dim]",
-            border_style="yellow",
-        )
-    )
+        out(f"[cyan]{escape(path)}[/cyan]")
     if grant.diff_preview.strip():
         lines = grant.diff_preview.splitlines()
         added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
         removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
-        if verbose:
-            console.print(_diff_block(grant.diff_preview))
-        else:
-            console.print(
-                f"  [dim]changes: +{added} −{removed} lines (verbose to expand)[/dim]"
-            )
-    console.print(
-        f"  [dim]y = approve · n = deny · a = approve all pending · or /validate later[/dim]\n"
-    )
+        out(f"[dim]changes: +{added} −{removed} lines ('/verbose' to expand)[/dim]")
+    out("")
+    out("Do you want to proceed?")
+    out("[bold]❯ 1. Yes[/bold]")
+    out("  2. Yes to all — approve every pending proposal")
+    out("  3. No — tell the model what to do instead")
+    if verbose and grant.diff_preview.strip():
+        console.print(_diff_block(grant.diff_preview))
+    out("[dim]single key y / a / n (or 1/2/3) · esc = No[/dim]")
+    out(f"[dim]{rule}[/dim]\n")
 
 
 def recovery_report(reconciled: list, status: str, actions: list[str], console=None) -> None:
