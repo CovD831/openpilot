@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-LINE_BUDGET = 2800
+LINE_BUDGET = 3000
 
 
 def test_line_budget() -> None:

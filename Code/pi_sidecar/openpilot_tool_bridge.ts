@@ -9,7 +9,10 @@ type BridgeResponse = {
 };
 
 const MAX_RESPONSE_BYTES = 65_536;
-const SOCKET_TIMEOUT_MS = 5_000;
+// Must exceed the longest legitimate tool wait — bash runs up to 60s inside
+// the gateway, and an approval gate holds the call until the human answers
+// (the old 5s here is what made every tool "time out" while a card was up).
+const SOCKET_TIMEOUT_MS = Number(process.env.OPENPILOT_TOOL_TIMEOUT_MS ?? 120_000);
 
 function invokeGateway(payload: Record<string, unknown>, signal?: AbortSignal): Promise<BridgeResponse> {
   const socketPath = process.env.OPENPILOT_PI_TOOL_SOCKET;

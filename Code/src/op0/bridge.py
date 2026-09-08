@@ -113,17 +113,25 @@ class ReadOnlyToolBridge:
                 continue
             except OSError:
                 return
-            with connection:
-                connection.settimeout(_CONNECTION_TIMEOUT_SECONDS)
+            # One thread per connection: an approval gate may hold this tool
+            # call for a long time, and that must never stall other calls
+            # (a blocked _serve here deadlocked the whole gateway once).
+            threading.Thread(target=self._serve_connection, args=(connection,), daemon=True).start()
+
+    def _serve_connection(self, connection: socket.socket) -> None:
+        with connection:
+            connection.settimeout(_CONNECTION_TIMEOUT_SECONDS)
+            try:
                 request = self._read_request(connection)
                 response = self._handle(request)
-                try:
-                    connection.sendall(
-                        json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-                        + b"\n"
-                    )
-                except OSError:
-                    continue
+            except (EOFError, ValueError, OSError):
+                return
+            try:
+                connection.sendall(
+                    json.dumps(response, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+                )
+            except OSError:
+                pass
 
     @staticmethod
     def _read_request(connection: socket.socket) -> dict[str, Any]:

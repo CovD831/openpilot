@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6cfc1a319e83",
+  "run_id": "run_l3",
+  "consent_id": "c",
+  "proposal_id": "p",
+  "admission_id": "a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-08T10:00:58.508119+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "echo hi",
+  "exit_code": 0,
+  "output_tail": "hi"
+}

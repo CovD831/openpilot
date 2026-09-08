@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_719466410af1",
+  "run_id": "run_703f3c20ee8a4f3580b7d187df884a61",
+  "consent_id": "con_37c313a6cf5c",
+  "proposal_id": "prop_0bd97e0a5219",
+  "admission_id": "adm_4e12fd1a92e5",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-08T10:00:54.407558+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "echo gated",
+  "exit_code": 0,
+  "output_tail": "gated"
+}

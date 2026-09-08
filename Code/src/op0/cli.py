@@ -92,11 +92,12 @@ def _make_bridge(session, registry, store, project_root: str, *, goal_state: dic
 
     def _gate_consent(proposal):
         """Tool-call-time approval (claude-code semantics): block the tool
-        call until the human answers the card. Approved -> consent now and
-        the same call executes; denied -> refusal telling the model to adapt
-        instead of retrying."""
-        approved = bool(gate["fn"] and gate["fn"](proposal))
-        if approved:
+        call until the human answers the card. "y"/"a" -> consent now and the
+        same call executes; "n" -> refusal telling the model to adapt instead
+        of retrying; "" (timeout) -> the proposal stays pending and the model
+        is told to stop this turn, never denied behind the human's back."""
+        answer = gate["fn"](proposal) if gate["fn"] else ""
+        if answer in ("y", "a"):
             consent = registry.approve(proposal.proposal_id, session.run_id)
             session.record(
                 "consent_bound",
@@ -104,6 +105,14 @@ def _make_bridge(session, registry, store, project_root: str, *, goal_state: dic
                 producer="admission",
             )
             return consent
+        if answer == "":
+            session.record(
+                "approval_timeout", {"proposal_id": proposal.proposal_id}, producer="admission"
+            )
+            raise PermissionError(
+                "approval is still pending — the human has not answered the card; "
+                "stop this turn and wait for their decision"
+            )
         registry.deny(proposal.proposal_id)
         session.record(
             "proposal_denied",

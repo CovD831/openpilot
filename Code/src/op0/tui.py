@@ -42,6 +42,9 @@ from op0.session import Session
 
 _MAX_HISTORY_BLOCKS = 400
 _SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+# Tool-call-time gates must release before the sidecar's socket timeout
+# (OPENPILOT_TOOL_TIMEOUT_MS, default 120s) or Pi abandons the tool call.
+_GATE_TIMEOUT_SECONDS = 110.0
 
 
 def _rich_to_ansi(markup: str) -> str:
@@ -124,7 +127,23 @@ class TuiSession:
                     self._refresh()
             return handler
 
+        def _move(delta: int):
+            def handler(event) -> None:
+                if self._approval is not None:
+                    self._approval["selected"] = (self._approval.get("selected", 0) + delta) % 3
+                    self._refresh()
+            return handler
+
+        def _confirm_selected():
+            def handler(event) -> None:
+                selected = self._approval.get("selected", 0) if self._approval else 0
+                _submit(("y", "a", "n")[selected])(event)
+            return handler
+
         approval_kb.add("escape", filter=approving)(_submit("n"))
+        approval_kb.add("up", filter=approving)(_move(-1))
+        approval_kb.add("down", filter=approving)(_move(1))
+        approval_kb.add("enter", filter=approving)(_confirm_selected())
         for key, answer in (("y", "y"), ("n", "n"), ("a", "a"), ("1", "y"), ("2", "a"), ("3", "n")):
             approval_kb.add(key, filter=approving)(_submit(answer))
 
@@ -203,7 +222,12 @@ class TuiSession:
                 text += f"  [dim]{len(self.queue)} queued[/dim]"
             return ANSI(_rich_to_ansi(text))
         if self.mode == "waiting-approval":
-            return ANSI(_rich_to_ansi("[yellow]approval pending — y / a / n (or 1/2/3)[/yellow]"))
+            selected = (self._approval or {}).get("selected", 0)
+            labels = ("1. Yes", "2. Yes to all", "3. No")
+            return ANSI(
+                _rich_to_ansi(f"[yellow]approval pending — ❯ {labels[selected]}[/yellow]")
+                + _rich_to_ansi("[dim]  ↑↓+enter · y/a/n (or 1/2/3)[/dim]")
+            )
         if self._deny_prompt:
             return ANSI(_rich_to_ansi("[yellow]tell the model what to do differently (type below)[/yellow]"))
         mode = self.state.get("approval_mode", "ask")
@@ -381,44 +405,40 @@ class TuiSession:
                             print(f"  \033[2m✻ {thought[:100]}…\033[0m", flush=True)
                         break
 
-    def approval_gate(self, proposal) -> bool:
+    def approval_gate(self, proposal, *, timeout: float | None = _GATE_TIMEOUT_SECONDS) -> str:
         """Called from the bridge tool thread when a side effect needs a
         decision: surface the card in the flow NOW and block the tool call
         until the human answers (claude-code semantics — the agent pauses at
-        the tool call instead of flailing on refusals). True = approved."""
+        the tool call instead of flailing on refusals).
+
+        Returns "y" | "a" | "n", or "" on timeout (the proposal stays
+        pending; the caller must fail the call without denying it). The
+        timeout must stay under the sidecar's socket timeout, or Pi gives
+        up on the tool call while we still hold the gate."""
         done = threading.Event()
-        self._approval = {"proposal": proposal, "answer": None, "done": done}
+        self._approval = {"proposal": proposal, "answer": None, "selected": 0, "done": done}
         self.mode = "waiting-approval"
         self.append_block(ui.render_proposal_to_str(proposal))
         self._refresh()
-        done.wait()
-        answer = self._approval["answer"] if self._approval else ""
+        done.wait(timeout)
+        answer = (self._approval or {}).get("answer") or ""
         self._approval = None
-        self.mode = "working"  # the turn is still running; the spinner resumes
+        self.mode = "working"  # the turn is usually still running; spinner resumes
         self._refresh()
-        return answer in ("y", "a")
+        return answer
 
     def _post_turn(self) -> None:
-        retries = 0
-        while self.registry.pending() and retries < 8:
+        """Fallback for proposals still pending after a turn (gate timed out,
+        or recovered from a previous session). Same gate, no tool call to
+        release: wait unbounded, then approval re-runs the task."""
+        while True:
             pending = self.registry.pending()
-            # claude-code shape: the question lives in the transcript flow,
-            # the bottom bar stays constant-height (no reserved card rows).
-            self.append_block(ui.render_proposal_to_str(pending[0]))
-            if len(pending) > 1:
-                self.append_block(f"[dim]{len(pending)} proposals pending — '2' approves all[/dim]")
-            self._approval = {"proposal": pending[0], "answer": None, "done": threading.Event()}
-            self.mode = "waiting-approval"
-            self._refresh()
-            while self._approval["answer"] is None and self.mode == "waiting-approval":
-                self.spinner_index += 1
-                self._refresh()
-                time.sleep(0.1)
-            answer = self._approval["answer"] or ""
-            self._approval = None
+            if not pending:
+                break
+            answer = self.approval_gate(pending[0], timeout=None)
             self.mode = "idle"
-            if answer in ("y", "yes"):
-                try:
+            try:
+                if answer in ("y", "yes"):
                     pending = self.registry.pending()
                     consent = self.registry.approve(pending[0].proposal_id, self.traj.run_id)
                     self.traj.record(
@@ -427,11 +447,7 @@ class TuiSession:
                         producer="admission",
                     )
                     self.append_block(f"[green]approved[/green] {consent.consent_id}")
-                except Exception as exc:  # noqa: BLE001
-                    self.append_block(f"[red]approval failed:[/red] {escape(exc)}")
-                    break
-            elif answer in ("a", "all"):
-                try:
+                elif answer in ("a", "all"):
                     consent, ids = self.registry.approve_all(self.traj.run_id)
                     self.traj.record(
                         "consent_bound",
@@ -439,19 +455,16 @@ class TuiSession:
                         producer="admission",
                     )
                     self.append_block(f"[green]approved {len(ids)} proposal(s)[/green]")
-                except Exception as exc:  # noqa: BLE001
-                    self.append_block(f"[red]approval failed:[/red] {escape(exc)}")
-                    break
-            elif answer in ("n", "no"):
-                pending = self.registry.pending()
-                if pending:
-                    denied = self.registry.deny(pending[0].proposal_id)
+                elif answer in ("n", "no"):
+                    denied = self.registry.deny(self.registry.pending()[0].proposal_id)
                     self.append_block(f"[red]denied[/red] {denied.proposal_id}")
-                self._deny_prompt = True  # option 3: invite typed feedback
+                    self._deny_prompt = True  # option 3: invite typed feedback
+                    break
+                else:
+                    break
+            except Exception as exc:  # noqa: BLE001
+                self.append_block(f"[red]approval failed:[/red] {escape(exc)}")
                 break
-            else:
-                break
-            retries += 1
             self._run_goal(self.state["goal"], first_turn=False)
         self.mode = "idle"
         self._drain_queue()
