@@ -1,5 +1,5 @@
 {
-  "receipt_id": "rcp_883cbc995f28",
+  "receipt_id": "rcp_62116d7be521",
   "run_id": "run_l3",
   "consent_id": "c2",
   "proposal_id": "p2",
@@ -7,7 +7,7 @@
   "path": "/Users/abab/Developer/openpilot-l0/tmp/pytest/test_bash_receipt_and_director0",
   "hash_before": "x",
   "hash_after": "y",
-  "created_at": "2026-09-08T13:40:38.748873+00:00",
+  "created_at": "2026-09-08T14:16:50.128526+00:00",
   "validation_command": "",
   "validation_status": "pending",
   "validation_detail": "",

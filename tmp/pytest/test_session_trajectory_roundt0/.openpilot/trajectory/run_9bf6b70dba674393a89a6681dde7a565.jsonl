@@ -1,0 +1,3 @@
+{"event_type":"tool_call","payload":{"path":"answer.txt"},"producer":"bridge","call_id":"c1","idempotency_key":"run_9bf6b70dba674393a89a6681dde7a565:1","timestamp":"2026-09-08T14:16:49.577032+00:00"}
+{"event_type":"model_response","payload":{"message":{"role":"assistant","content":[{"type":"text","text":"555"}],"stopReason":"stop"}},"producer":"op0","call_id":"","idempotency_key":"run_9bf6b70dba674393a89a6681dde7a565:2","timestamp":"2026-09-08T14:16:49.577317+00:00"}
+{"event_type":"model_response","payload":{"message":{"role":"user","content":[{"type":"text","text":"user prompt"}],"stopReason":"stop"}},"producer":"op0","call_id":"","idempotency_key":"run_9bf6b70dba674393a89a6681dde7a565:3","timestamp":"2026-09-08T14:16:49.577410+00:00"}
