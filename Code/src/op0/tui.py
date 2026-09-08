@@ -31,7 +31,7 @@ from prompt_toolkit.filters import Condition
 from prompt_toolkit.formatted_text import ANSI
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit
-from prompt_toolkit.layout.containers import Window
+from prompt_toolkit.layout.containers import ConditionalContainer, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.styles import Style as PTStyle
@@ -109,9 +109,8 @@ class TuiSession:
         self._thinking_shown: set[int] = set()  # event indexes already surfaced
         self._shown_tool_lines: set[str] = set()  # streamed tool lines (dedupe)
         self._render_cols = 0  # width the on-screen frame was drawn at
+        self._card_state: dict | None = None  # {"proposal", "selected"} while the live card is open
         self._emit_count = 0  # transcript lines emitted (in-place redraw guard)
-        self._card_emit_count = 0  # emit count when the live card was printed
-        self._card_lines: int = 0  # rows the live card occupies
         self._thinking_live = False  # last transcript line is the live thinking line
         self._thinking_emit_count = 0
         self._thinking_buf: list[str] = []  # current thinking block's delta text
@@ -142,8 +141,12 @@ class TuiSession:
         def _move(delta: int):
             def handler(event) -> None:
                 if self._approval is not None:
-                    self._approval["selected"] = (self._approval.get("selected", 0) + delta) % 3
-                    self._redraw_card()
+                    selected = (self._approval.get("selected", 0) + delta) % 3
+                    self._approval["selected"] = selected
+                    if self._card_state is not None:
+                        self._card_state["selected"] = selected
+                    # the card is a live layout window: a refresh re-renders it
+                    # with the ❯ moved — no cursor math, no duplicate prints
                     self._refresh()
             return handler
 
@@ -169,12 +172,21 @@ class TuiSession:
             style="class:hint",
             height=1,
         )
+        # live approval card: a layout window above the divider (claude-code
+        # shape), rendered from _card_state. Selection changes are pure
+        # re-renders; opening grows the frame (safe), closing shrinks it and
+        # is followed by a forced clear+replay to avoid redraw residue.
+        self._card_window = Window(
+            content=FormattedTextControl(self._get_card_text),
+            style="class:approval",
+        )
 
         # claude-code input: a thin divider rule above a "❯ " prompt — no
         # bordered box (side borders wrap-misalign exactly like a panel).
         layout = Layout(
             HSplit(
                 [
+                    ConditionalContainer(self._card_window, filter=Condition(lambda: self._card_state is not None)),
                     Window(height=1, char="─", style="class:border-dim"),
                     VSplit(
                         [
@@ -500,32 +512,32 @@ class TuiSession:
         else:
             self._emit_thinking_line(tail)
 
-    def _redraw_card(self) -> None:
-        """Move the ❯ marker on the card itself, in place. Called from key
-        handlers — those run on the event loop thread, so no render can
-        interleave with the cursor dance."""
-        approval = self._approval
-        if approval is None or self._card_lines == 0:
-            return
-        lines = ui.render_proposal_to_str(approval["proposal"], selected=approval["selected"]).splitlines()
-        self._rewrite_above(lines, self._card_lines, self._card_emit_count)
-        self._card_lines = len(lines)
-        self._card_emit_count = self._emit_count
+    def _get_card_text(self):
+        """The live approval card (claude-code shape), rendered from
+        _card_state — a layout window, so selection changes are pure
+        re-renders: the ❯ moves with an invalidate, never cursor math."""
+        state = self._card_state
+        if state is None:
+            return ""
+        return ANSI(ui.render_proposal_to_str(state["proposal"], selected=state["selected"]))
 
     def _settle_card(self, answer: str) -> None:
-        """Collapse the answered card into its outcome (claude-code shape)."""
+        """Answer given: close the live card and put a one-line outcome into
+        the transcript. Shrinking the frame leaves redraw residue, so follow
+        with a forced clear+replay (the settled line is in blocks)."""
         approval = self._approval
-        if approval is None:
-            return
-        lines = ui.render_proposal_to_str(approval["proposal"], answered=answer).splitlines()
-        self._rewrite_above(lines, self._card_lines, self._card_emit_count)
-        self._card_lines = 0
+        proposal = approval["proposal"] if approval else None
+        self._card_state = None
+        if proposal is not None:
+            self._emit_ansi(_rich_to_ansi(ui.render_settled_line(proposal, answer)))
+        self._repaint_on_resize(force=True)
+        self._refresh()
 
     def approval_gate(self, proposal, *, timeout: float | None = _GATE_TIMEOUT_SECONDS) -> str:
         """Called from the bridge tool thread when a side effect needs a
-        decision: surface the card in the flow NOW and block the tool call
-        until the human answers (claude-code semantics — the agent pauses at
-        the tool call instead of flailing on refusals).
+        decision: open the live card NOW and block the tool call until the
+        human answers (claude-code semantics — the agent pauses at the tool
+        call instead of flailing on refusals).
 
         Returns "y" | "a" | "n", or "" on timeout (the proposal stays
         pending; the caller must fail the call without denying it). The
@@ -534,21 +546,26 @@ class TuiSession:
         done = threading.Event()
         self._approval = {"proposal": proposal, "answer": None, "selected": 0, "done": done}
         # flush what already landed (the in-flight tool call, any thinking)
-        # BEFORE the card — claude-code order: tool line, then question, and
-        # the card is the bottom-most content on screen
+        # BEFORE opening the card — claude-code order: tool line, then question
         self._stream_events(0)
         self._print_new_thinking(0)
-        card_text = ui.render_proposal_to_str(proposal, selected=0)
-        self._emit_ansi(card_text)
-        self._card_lines = len(card_text.splitlines())
-        self._card_emit_count = self._emit_count
-        # mode LAST: "approval pending" in the status line means the card is
-        # on screen (single keys and the redraw bookkeeping rely on it)
+        self._card_state = {"proposal": proposal, "selected": 0}
         self.mode = "waiting-approval"
         self._refresh()
-        done.wait(timeout)
+        # invalidate() called from inside a key handler does NOT schedule a
+        # render (measured), so arrow-key selection only repaints if something
+        # else invalidates — drive it here while the gate blocks.
+        deadline = time.monotonic() + timeout if timeout is not None else None
+        while not done.wait(0.15):
+            if deadline is not None and time.monotonic() > deadline:
+                break
+            self.spinner_index += 1
+            self._refresh()
         answer = (self._approval or {}).get("answer") or ""
         self._approval = None
+        if self._card_state is not None:  # timeout: close without a settled line
+            self._card_state = None
+            self._repaint_on_resize(force=True)
         self.mode = "working"  # the turn is usually still running; spinner resumes
         self._refresh()
         return answer
@@ -619,12 +636,12 @@ class TuiSession:
 
         self.app._on_resize = on_resize
 
-    def _repaint_on_resize(self) -> None:
+    def _repaint_on_resize(self, force: bool = False) -> None:
         try:
             new_cols = os.get_terminal_size().columns
         except OSError:
             return
-        if new_cols == self._render_cols:
+        if not force and new_cols == self._render_cols:
             return
         self._render_cols = new_cols
         try:

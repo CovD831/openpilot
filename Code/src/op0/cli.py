@@ -337,7 +337,7 @@ def _run_repl(project_root: Path) -> int:
             if not pending:
                 tui.append_block("[dim](no pending proposals)[/dim]")
             for proposal in pending:
-                tui.append_block(ui.render_proposal_to_str(proposal))
+                tui._emit_ansi(ui.render_proposal_to_str(proposal))
         elif cmd == "/approve" and rest:
             sub = rest.split(maxsplit=1)
             target, command = sub[0], (sub[1].strip() if len(sub) > 1 else "")

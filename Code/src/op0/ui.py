@@ -32,9 +32,9 @@ _CLOSURE_STYLES = {
 }
 
 _KIND_LABELS = {
-    "patch": "PATCH lines",
-    "write": "WRITE file",
-    "bash": "RUN command",
+    "patch": "Edit file",
+    "write": "Write file",
+    "bash": "Bash command",
 }
 
 
@@ -103,64 +103,6 @@ def tool_status_line(tool: str, detail: str) -> str:
     """Plain status text used by the live spinner; derived from the tool call."""
     detail = detail.replace("\n", " ")[:80]
     return f"[dim]→ {tool}[/dim] {detail}"
-
-
-def _diff_block(diff_text: str) -> Syntax:
-    return Syntax(diff_text, "diff", theme="ansi_dark", word_wrap=True)
-
-
-def proposal_panel(proposal, *, verbose: bool = False, console=None, selected: int | None = None,
-                   answered: str = "") -> None:
-    """One pending proposal, claude-code shape: divider rules and plain lines,
-    NOT a bordered panel — the TUI renderer disables terminal autowrap, so any
-    bordered line that runs even one cell wide wraps silently and every later
-    row misaligns (the "card overlays the transcript" artifact).
-
-    selected: live-selection mode — the numbered option with this index gets
-    the ❯ marker (the TUI re-renders the card in place on ↑↓).
-    answered: settled mode — options collapse into the chosen outcome."""
-    console = console or console_default()
-    grant = proposal.grant
-    label = _KIND_LABELS.get(grant.kind, grant.kind.upper())
-
-    def out(markup: str) -> None:
-        console.print(markup, highlight=False)  # rich's number highlight splits "1. Yes"
-
-    def clipped(text: str) -> str:
-        """Hard width clip at markup level — one wrapped row would break the
-        TUI's in-place card redraw cursor math."""
-        return text[: max(20, console.width - 8)]
-
-    rule = "─" * max(20, console.width - 2)
-    out(f"[dim]{rule}[/dim]")
-    out(f"[bold]{label}[/bold][dim] — approval required · {proposal.proposal_id}[/dim]")
-    if grant.command:
-        out(f"[cyan]$ {escape(clipped(grant.command))}[/cyan]")
-    for path in grant.write_paths:
-        out(f"[cyan]{escape(clipped(path))}[/cyan]")
-    if grant.diff_preview.strip():
-        lines = grant.diff_preview.splitlines()
-        added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
-        removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
-        out(f"[dim]changes: +{added} −{removed} lines ('/verbose' to expand)[/dim]")
-    out("")
-    if answered:
-        verdict = {"y": "[green]→ Yes — approved[/green]",
-                   "a": "[green]→ Yes to all — approved[/green]",
-                   "n": "[red]→ No — denied, tell the model what to do instead[/red]"}.get(answered, answered)
-        out(verdict)
-    else:
-        out("Do you want to proceed?")
-        for index, (marker_line, rest) in enumerate((
-            ("❯ [bold]1. Yes[/bold]", "[bold]1. Yes[/bold]"),
-            ("❯ 2. Yes to all — approve every pending proposal", "  2. Yes to all — approve every pending proposal"),
-            ("❯ 3. No — tell the model what to do instead", "  3. No — tell the model what to do instead"),
-        )):
-            out(marker_line if selected == index else rest)
-        out("[dim]↑↓ move · enter confirm · y/a/n (or 1/2/3) · esc = No[/dim]")
-    if verbose and grant.diff_preview.strip():
-        console.print(_diff_block(grant.diff_preview))
-    out(f"[dim]{rule}[/dim]\n")
 
 
 def recovery_report(reconciled: list, status: str, actions: list[str], console=None) -> None:
@@ -335,13 +277,73 @@ def render_closure_to_str(status: str, reason: str) -> str:
     return capture.file.getvalue()
 
 
+def render_settled_line(proposal, answered: str) -> str:
+    """One-line outcome that stays in the transcript after the live card
+    closes (claude-code settles the dialog into the tool-use line)."""
+    grant = proposal.grant
+    action = grant.command or (", ".join(grant.write_paths) if grant.write_paths else grant.goal)
+    if answered in ("y", "a"):
+        return f"[green]✓[/green] approved · {escape(action)}"
+    return f"[red]✗ denied[/red] · {escape(action)}"
+
+
 def render_proposal_to_str(proposal, *, verbose: bool = False, selected: int | None = None,
                            answered: str = "") -> str:
-    """Proposal panel rendered to an ANSI string (projection)."""
+    """Live approval card, claude-code shape — reconstructed from the
+    decompiled PermissionDialog/PermissionPrompt/ListItem source
+    (777genius/claude-code-source-code-full):
+
+    - a top-only rounded border (no side/bottom borders, they misalign)
+    - bold tool title, dim command, dim question
+    - pointer options WITHOUT numbers (❯ = focused, blank = not)
+    - dim footer, no closing rule
+
+    selected: which option carries the ❯ (live selection). answered: settled
+    mode — options collapse into the chosen outcome. Returns RENDERED ANSI
+    (the TUI card window and /proposals print it as-is)."""
     from rich.console import Console as RichConsole
 
-    capture = RichConsole(
-        file=io.StringIO(), force_terminal=True, color_system="truecolor", width=console.width
+    grant = proposal.grant
+    label = _KIND_LABELS.get(grant.kind, grant.kind.upper())
+    width = console.width
+    rule = "╭" + "─" * max(18, width - 2) + "╮"
+
+    def opt_row(index: int, text: str) -> str:
+        pointer = "[bold cyan]❯[/bold cyan]" if selected == index else " "
+        return f"{pointer} {text}"
+
+    if answered:
+        verdict = {"y": "[green]✓ Yes — approved[/green]",
+                   "a": "[green]✓ Yes to all — approved[/green]",
+                   "n": "[red]✗ No — denied, tell the model what to do differently[/red]"}.get(answered, answered)
+        options_block = f"   {verdict}"
+    else:
+        options_block = "\n".join([
+            "   [dim]Do you want to proceed?[/dim]",
+            "   " + opt_row(0, "[bold]Yes[/bold]"),
+            "   " + opt_row(1, "Yes to all — approve every pending proposal"),
+            "   " + opt_row(2, "No — tell the model what to do differently [dim](esc)[/dim]"),
+            "   [dim]Esc to cancel · y/a/n (or 1/2/3)[/dim]",
+        ])
+    body: list[str] = []
+    if grant.command:
+        body.append(f"[dim]   $ {escape(grant.command)}[/dim]")
+    for path in grant.write_paths:
+        body.append(f"[dim]   {escape(path)}[/dim]")
+    if grant.diff_preview.strip():
+        lines = grant.diff_preview.splitlines()
+        added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
+        removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
+        body.append(f"[dim]   changes: +{added} −{removed} lines ('/verbose' to expand)[/dim]")
+    body_text = ("\n".join(body) + "\n") if body else ""
+    markup = (
+        f"[dim]{rule}[/dim]\n"
+        f"[bold]{label}[/bold][dim] · {proposal.proposal_id}[/dim]\n"
+        f"{body_text}"
+        f"{options_block}\n"
     )
-    proposal_panel(proposal, verbose=verbose, console=capture, selected=selected, answered=answered)
-    return capture.file.getvalue()
+    capture = RichConsole(
+        file=io.StringIO(), force_terminal=True, color_system="truecolor", width=width
+    )
+    capture.print(markup, highlight=False)
+    return capture.file.getvalue().rstrip("\n")

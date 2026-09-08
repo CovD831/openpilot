@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "ok": false,
+  "command": "visual-check",
+  "evidenceKind": "automated-browser",
+  "status": "fail",
+  "visualReview": "pending",
+  "artifact": {
+    "path": "/Users/abab/Developer/openpilot-l0/tmp/op0-architecture.html",
+    "sha256": "074d81dc7f9b7d3d5eb33476ba1d447280ea4e814cd58c38f7548e74d2867b55",
+    "bytes": 722362
+  },
+  "state": {
+    "detail": "read",
+    "motion": "still"
+  },
+  "chrome": {
+    "status": "available",
+    "executable": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  },
+  "diagnostics": [
+    {
+      "code": "viewer/visual-check-runtime",
+      "severity": "error",
+      "message": "visual-check could not complete its Chrome inspection.",
+      "subject": {
+        "artifact": "/Users/abab/Developer/openpilot-l0/tmp/op0-architecture.html"
+      },
+      "evidence": {
+        "reason": "Chrome DevTools process exit failed: Chrome closed with signal SIGTRAP\nChrome process: signal SIGTRAP.\nChrome stderr:\nsandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.sandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.Failed to initialize sandbox.Failed to initialize sandbox.Failed to initialize sandbox.Failed to initialize sandbox.Trying to load the allocator multiple times. This is *not* supported.\nFailed to initialize sandbox.Failed to initialize sandbox.[16513:1759360:0908/194815.956687:ERROR:content/browser/network_service_instance_impl.cc:650] Network service crashed or was terminated, restarting service.\n[16513:1759360:0908/194815.960210:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=6\nsandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.sandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.Failed to initialize sandbox.[16513:1759360:0908/194816.020461:ERROR:content/browser/network_service_instance_impl.cc:650] Network service crashed or was terminated, restarting service.\nFailed to initialize sandbox.[16513:1759360:0908/194816.030375:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=6\nsandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.sandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.Failed to initialize sandbox.[16513:1759360:0908/194816.058061:ERROR:content/browser/network_service_instance_impl.cc:650] Network service crashed or was terminated, restarting service.\nsandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.[16513:1759360:0908/194816.067157:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=6\n[16513:1759360:0908/194816.067173:FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:417] GPU process isn't usable. Goodbye."
+      },
+      "supportedFixes": [
+        "resolve the reported Chrome inspection error, then rerun visual-check"
+      ]
+    }
+  ],
+  "containment": {
+    "status": "fail",
+    "viewports": []
+  },
+  "readability": {
+    "status": "fail",
+    "minimumProjectedNodeTextPx": 6,
+    "viewports": []
+  },
+  "viewerChrome": {
+    "status": "fail",
+    "viewports": []
+  },
+  "captures": {
+    "status": "fail",
+    "screenshots": [],
+    "contactSheet": null
+  },
+  "sidecars": {
+    "receipt": "op0-architecture.visual-check.json",
+    "contactSheet": "op0-architecture.visual-check.html"
+  },
+  "error": "Chrome DevTools process exit failed: Chrome closed with signal SIGTRAP\nChrome process: signal SIGTRAP.\nChrome stderr:\nsandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.sandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.Failed to initialize sandbox.Failed to initialize sandbox.Failed to initialize sandbox.Failed to initialize sandbox.Trying to load the allocator multiple times. This is *not* supported.\nFailed to initialize sandbox.Failed to initialize sandbox.[16513:1759360:0908/194815.956687:ERROR:content/browser/network_service_instance_impl.cc:650] Network service crashed or was terminated, restarting service.\n[16513:1759360:0908/194815.960210:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=6\nsandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.sandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.Failed to initialize sandbox.[16513:1759360:0908/194816.020461:ERROR:content/browser/network_service_instance_impl.cc:650] Network service crashed or was terminated, restarting service.\nFailed to initialize sandbox.[16513:1759360:0908/194816.030375:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=6\nsandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.sandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.Failed to initialize sandbox.[16513:1759360:0908/194816.058061:ERROR:content/browser/network_service_instance_impl.cc:650] Network service crashed or was terminated, restarting service.\nsandbox initialization failed: Operation not permitted\nFailed to initialize sandbox.[16513:1759360:0908/194816.067157:ERROR:content/browser/gpu/gpu_process_host.cc:1035] GPU process exited unexpectedly: exit_code=6\n[16513:1759360:0908/194816.067173:FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:417] GPU process isn't usable. Goodbye."
+}
