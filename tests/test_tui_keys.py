@@ -67,19 +67,31 @@ def test_y_binding_routes_answer(tmp_path: Path) -> None:
 
 def test_proposal_card_renders_in_flow(tmp_path: Path) -> None:
     """The cc-shaped card: divider + label + action + question + numbered
-    options, as transcript text (no bordered panel, no live layout widget)."""
+    options, as transcript text (no bordered panel, no live layout widget).
+    selected moves the ❯ marker; answered collapses into the outcome."""
     import re
 
     from op0.ui import render_proposal_to_str
 
     registry = AdmissionRegistry(str(tmp_path))
     registry.propose_command("demo goal", "ls -la")
-    rendered = render_proposal_to_str(registry.pending()[0])
-    clean = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", rendered)
+    clean = re.sub(
+        r"\x1b\[[0-9;?]*[a-zA-Z]", "", render_proposal_to_str(registry.pending()[0], selected=0)
+    )
     assert "Do you want to proceed?" in clean
     assert "❯ 1. Yes" in clean and "2. Yes to all" in clean and "3. No" in clean
     assert "$ ls -la" in clean
     assert "╭" not in clean and "╰" not in clean  # no border box
+
+    moved = re.sub(
+        r"\x1b\[[0-9;?]*[a-zA-Z]", "", render_proposal_to_str(registry.pending()[0], selected=2)
+    )
+    assert "❯ 3. No" in moved and "❯ 1. Yes" not in moved
+
+    settled = re.sub(
+        r"\x1b\[[0-9;?]*[a-zA-Z]", "", render_proposal_to_str(registry.pending()[0], answered="y")
+    )
+    assert "→ Yes — approved" in settled and "Do you want to proceed?" not in settled
 
 
 def test_read_paging_and_proposal_dedupe(tmp_path: Path) -> None:

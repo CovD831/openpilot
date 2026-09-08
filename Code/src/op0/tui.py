@@ -20,6 +20,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -108,6 +109,13 @@ class TuiSession:
         self._thinking_shown: set[int] = set()  # event indexes already surfaced
         self._shown_tool_lines: set[str] = set()  # streamed tool lines (dedupe)
         self._render_cols = 0  # width the on-screen frame was drawn at
+        self._emit_count = 0  # transcript lines emitted (in-place redraw guard)
+        self._card_emit_count = 0  # emit count when the live card was printed
+        self._card_lines: int = 0  # rows the live card occupies
+        self._thinking_live = False  # last transcript line is the live thinking line
+        self._thinking_emit_count = 0
+        self._thinking_buf: list[str] = []  # current thinking block's delta text
+        self._thinking_last = 0.0  # last in-place thinking update
 
         self.input_buffer = Buffer(multiline=False, accept_handler=self._accept)
         self.input_buffer_control = None  # set once the layout is built
@@ -123,6 +131,7 @@ class TuiSession:
             def handler(event) -> None:
                 if self._approval is not None and self._approval.get("answer") is None:
                     self._approval["answer"] = answer
+                    self._settle_card(answer)
                     done = self._approval.get("done")
                     if done is not None:
                         done.set()  # wakes a tool-call-time approval gate, if any
@@ -134,6 +143,7 @@ class TuiSession:
             def handler(event) -> None:
                 if self._approval is not None:
                     self._approval["selected"] = (self._approval.get("selected", 0) + delta) % 3
+                    self._redraw_card()
                     self._refresh()
             return handler
 
@@ -220,11 +230,44 @@ class TuiSession:
 
     def _emit_ansi(self, ansi: str) -> None:
         """One output path for every transcript line (markup-rendered or raw
-        ANSI): print now AND keep for resize replay."""
+        ANSI): print now AND keep for resize replay. Any emission invalidates
+        in-place redraw bookkeeping (the live thinking line and the card are
+        only rewritable while they are the last rows on screen)."""
+        self._thinking_live = False
+        self._emit_count += 1
         self.blocks.append(ansi)
         if len(self.blocks) > _MAX_HISTORY_BLOCKS:
             del self.blocks[: len(self.blocks) - _MAX_HISTORY_BLOCKS]
         print(ansi, flush=True)
+
+    def _rewrite_above(self, lines: list[str], prev_count: int, expect_emit_count: int) -> None:
+        """Rewrite `prev_count` transcript rows directly above the input frame
+        in place (ANSI cursor dance). MUST run on the prompt_toolkit event
+        loop thread — renders are loop callbacks and cannot interleave. The
+        real cursor is returned to exactly where the renderer accounts it,
+        because prompt_toolkit repositions by relative diff only: a desynced
+        cursor corrupts every later frame. Aborts when anything printed since
+        the block was drawn (the rows moved up)."""
+        if self._emit_count != expect_emit_count:
+            return
+        try:
+            col = 2 + self.input_buffer.cursor_position
+        except Exception:  # noqa: BLE001
+            col = 2
+        seq = [f"\x1b[{prev_count + 1}A"]
+        for i in range(prev_count):
+            seq.append(f"\r\x1b[2K{lines[i] if i < len(lines) else ''}\x1b[1B")
+        seq.append(f"\x1b[1B\r\x1b[{col}C")
+        # Raw output channel, NOT sys.stdout: the StdoutProxy buffers
+        # newline-less writes and flushes them through run_in_terminal, whose
+        # repaint races the cursor dance (bytes intermittently lost under
+        # load). output.write_raw is the same channel renders use.
+        try:
+            self.app.output.write_raw("".join(seq))
+            self.app.output.flush()
+        except Exception:  # noqa: BLE001
+            return
+        self._refresh()
 
     def _get_status(self):
         if self.mode == "working":
@@ -394,10 +437,10 @@ class TuiSession:
                     self._emit_ansi(f"    {mark} \033[2m{first}\033[0m")
 
     def _print_new_thinking(self, start_index: int) -> None:
-        """Live thinking visibility (claude-code style, low-key): a dim ✻ line
-        the moment a thinking block STARTS (deltas stream as model_response_delta
-        events) and one with its snippet when the completed message lands. Long
-        reasoning must never read as a frozen spinner."""
+        """Live thinking (claude-code style): the block's text streams INTO one
+        dim ✻ line, updated in place above the input bar (deltas arrive as
+        model_response_delta events). Long reasoning must never read as a
+        frozen spinner."""
         events = self.traj.load_events()
         for index in range(start_index, len(events)):
             if index in self._thinking_shown:
@@ -406,20 +449,77 @@ class TuiSession:
             payload = event.payload or {}
             if event.event_type == "model_response_delta":
                 stream_event = payload.get("assistantMessageEvent") or {}
-                if stream_event.get("type") == "thinking_start":
-                    self._thinking_shown.add(index)
-                    self._emit_ansi("  \033[2m✻ (thinking…)\033[0m")
+                kind = stream_event.get("type")
+                # mark EVERY delta-stream index shown: the poll rescans the
+                # trajectory every 100ms and unmarked deltas would be
+                # re-appended to the buffer (and re-emit lines) forever
+                self._thinking_shown.add(index)
+                if kind == "thinking_start":
+                    self._thinking_buf = []
+                    self._emit_thinking_line("…")
+                elif kind == "thinking_delta":
+                    self._thinking_buf.append(str(stream_event.get("delta") or ""))
+                    self._update_thinking_line()
+                elif kind == "thinking_end":
+                    self._thinking_live = False
             elif event.event_type == "model_response":
+                # non-streaming fallback: the block's text only exists whole
                 message = payload.get("message") or {}
                 if message.get("role") != "assistant":
                     continue
                 for item in message.get("content") or []:
                     if isinstance(item, dict) and item.get("type") == "thinking":
                         thought = str(item.get("thinking") or "").strip().replace("\n", " ")
-                        if thought:
+                        if thought and not self._thinking_buf:
                             self._thinking_shown.add(index)
-                            self._emit_ansi(f"  \033[2m✻ {thought[:100]}…\033[0m")
+                            self._emit_ansi(f"  \033[2m✻ {thought[:96]}\033[0m")
                         break
+
+    def _emit_thinking_line(self, tail: str) -> None:
+        self._emit_ansi(f"  \033[2m✻ {tail}\033[0m")
+        self._thinking_live = True
+        self._thinking_emit_count = self._emit_count
+
+    def _update_thinking_line(self) -> None:
+        now = time.monotonic()
+        if now - self._thinking_last < 0.25:
+            return
+        self._thinking_last = now
+        tail = "".join(self._thinking_buf).replace("\n", " ").strip()[-96:]
+        if not tail:
+            return
+        if self._thinking_live:
+            # schedule on the event loop: the cursor dance must not interleave
+            # with a render (the spinner repaints ~8x/s while a turn runs)
+            try:
+                self.app.loop.call_soon_threadsafe(
+                    self._rewrite_above, [f"  \033[2m✻ {tail}\033[0m"], 1, self._thinking_emit_count
+                )
+            except Exception:  # noqa: BLE001
+                self._emit_thinking_line(tail)
+        else:
+            self._emit_thinking_line(tail)
+
+    def _redraw_card(self) -> None:
+        """Move the ❯ marker on the card itself, in place. Called from key
+        handlers — those run on the event loop thread, so no render can
+        interleave with the cursor dance."""
+        approval = self._approval
+        if approval is None or self._card_lines == 0:
+            return
+        lines = ui.render_proposal_to_str(approval["proposal"], selected=approval["selected"]).splitlines()
+        self._rewrite_above(lines, self._card_lines, self._card_emit_count)
+        self._card_lines = len(lines)
+        self._card_emit_count = self._emit_count
+
+    def _settle_card(self, answer: str) -> None:
+        """Collapse the answered card into its outcome (claude-code shape)."""
+        approval = self._approval
+        if approval is None:
+            return
+        lines = ui.render_proposal_to_str(approval["proposal"], answered=answer).splitlines()
+        self._rewrite_above(lines, self._card_lines, self._card_emit_count)
+        self._card_lines = 0
 
     def approval_gate(self, proposal, *, timeout: float | None = _GATE_TIMEOUT_SECONDS) -> str:
         """Called from the bridge tool thread when a side effect needs a
@@ -433,13 +533,18 @@ class TuiSession:
         up on the tool call while we still hold the gate."""
         done = threading.Event()
         self._approval = {"proposal": proposal, "answer": None, "selected": 0, "done": done}
-        self.mode = "waiting-approval"
         # flush what already landed (the in-flight tool call, any thinking)
         # BEFORE the card — claude-code order: tool line, then question, and
         # the card is the bottom-most content on screen
         self._stream_events(0)
         self._print_new_thinking(0)
-        self.append_block(ui.render_proposal_to_str(proposal))
+        card_text = ui.render_proposal_to_str(proposal, selected=0)
+        self._emit_ansi(card_text)
+        self._card_lines = len(card_text.splitlines())
+        self._card_emit_count = self._emit_count
+        # mode LAST: "approval pending" in the status line means the card is
+        # on screen (single keys and the redraw bookkeeping rely on it)
+        self.mode = "waiting-approval"
         self._refresh()
         done.wait(timeout)
         answer = (self._approval or {}).get("answer") or ""

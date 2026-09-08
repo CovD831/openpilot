@@ -109,11 +109,16 @@ def _diff_block(diff_text: str) -> Syntax:
     return Syntax(diff_text, "diff", theme="ansi_dark", word_wrap=True)
 
 
-def proposal_panel(proposal, *, verbose: bool = False, console=None) -> None:
+def proposal_panel(proposal, *, verbose: bool = False, console=None, selected: int | None = None,
+                   answered: str = "") -> None:
     """One pending proposal, claude-code shape: divider rules and plain lines,
     NOT a bordered panel — the TUI renderer disables terminal autowrap, so any
     bordered line that runs even one cell wide wraps silently and every later
-    row misaligns (the "card overlays the transcript" artifact)."""
+    row misaligns (the "card overlays the transcript" artifact).
+
+    selected: live-selection mode — the numbered option with this index gets
+    the ❯ marker (the TUI re-renders the card in place on ↑↓).
+    answered: settled mode — options collapse into the chosen outcome."""
     console = console or console_default()
     grant = proposal.grant
     label = _KIND_LABELS.get(grant.kind, grant.kind.upper())
@@ -121,26 +126,40 @@ def proposal_panel(proposal, *, verbose: bool = False, console=None) -> None:
     def out(markup: str) -> None:
         console.print(markup, highlight=False)  # rich's number highlight splits "1. Yes"
 
+    def clipped(text: str) -> str:
+        """Hard width clip at markup level — one wrapped row would break the
+        TUI's in-place card redraw cursor math."""
+        return text[: max(20, console.width - 8)]
+
     rule = "─" * max(20, console.width - 2)
     out(f"[dim]{rule}[/dim]")
     out(f"[bold]{label}[/bold][dim] — approval required · {proposal.proposal_id}[/dim]")
     if grant.command:
-        out(f"[cyan]$ {escape(grant.command)}[/cyan]")
+        out(f"[cyan]$ {escape(clipped(grant.command))}[/cyan]")
     for path in grant.write_paths:
-        out(f"[cyan]{escape(path)}[/cyan]")
+        out(f"[cyan]{escape(clipped(path))}[/cyan]")
     if grant.diff_preview.strip():
         lines = grant.diff_preview.splitlines()
         added = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
         removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
         out(f"[dim]changes: +{added} −{removed} lines ('/verbose' to expand)[/dim]")
     out("")
-    out("Do you want to proceed?")
-    out("[bold]❯ 1. Yes[/bold]")
-    out("  2. Yes to all — approve every pending proposal")
-    out("  3. No — tell the model what to do instead")
+    if answered:
+        verdict = {"y": "[green]→ Yes — approved[/green]",
+                   "a": "[green]→ Yes to all — approved[/green]",
+                   "n": "[red]→ No — denied, tell the model what to do instead[/red]"}.get(answered, answered)
+        out(verdict)
+    else:
+        out("Do you want to proceed?")
+        for index, (marker_line, rest) in enumerate((
+            ("❯ [bold]1. Yes[/bold]", "[bold]1. Yes[/bold]"),
+            ("❯ 2. Yes to all — approve every pending proposal", "  2. Yes to all — approve every pending proposal"),
+            ("❯ 3. No — tell the model what to do instead", "  3. No — tell the model what to do instead"),
+        )):
+            out(marker_line if selected == index else rest)
+        out("[dim]↑↓ move · enter confirm · y/a/n (or 1/2/3) · esc = No[/dim]")
     if verbose and grant.diff_preview.strip():
         console.print(_diff_block(grant.diff_preview))
-    out("[dim]single key y / a / n (or 1/2/3) · esc = No[/dim]")
     out(f"[dim]{rule}[/dim]\n")
 
 
@@ -316,12 +335,13 @@ def render_closure_to_str(status: str, reason: str) -> str:
     return capture.file.getvalue()
 
 
-def render_proposal_to_str(proposal, *, verbose: bool = False) -> str:
+def render_proposal_to_str(proposal, *, verbose: bool = False, selected: int | None = None,
+                           answered: str = "") -> str:
     """Proposal panel rendered to an ANSI string (projection)."""
     from rich.console import Console as RichConsole
 
     capture = RichConsole(
         file=io.StringIO(), force_terminal=True, color_system="truecolor", width=console.width
     )
-    proposal_panel(proposal, verbose=verbose, console=capture)
+    proposal_panel(proposal, verbose=verbose, console=capture, selected=selected, answered=answered)
     return capture.file.getvalue()
