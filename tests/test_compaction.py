@@ -7,14 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from op0.bridge import ReadOnlyToolBridge
+from op0.bridge import ReadOnlyToolBridge, _compress_command_output
 from op0.compaction import (
+    build_handoff,
     build_projection,
     estimate_usage,
     fetch_observation,
     observation_tombstone,
     should_compact,
     store_observation,
+    write_handoff,
 )
 from op0.session import Session
 
@@ -166,18 +168,22 @@ def test_projection_masks_folded_and_keeps_recent(tmp_path: Path) -> None:
     assert again == projection
 
 
-def test_p3_folds_snip_midsize_results(tmp_path: Path) -> None:
+def test_folded_results_all_stored(tmp_path: Path) -> None:
+    """Folded zone is one line per turn; every folded result is stored whole
+    and indexed, so anything once seen stays retrievable after folding."""
     session = _session(tmp_path / "proj")
+    observations = tmp_path / "proj" / ".openpilot" / "observations"
     mid = "head line\n" + "filler\n" * 300 + "ERROR: the real verdict\n"  # ~2.2k
     _record_turn(session, 1, "task 1", "reply 1", result=mid)
     _record_turn(session, 2, "task 2", "reply 2")
     _record_turn(session, 3, "task 3", "reply 3")
-    projection = build_projection(session.load_events(), None)
+    projection = build_projection(session.load_events(), str(observations))
     assert projection is not None
-    assert "snipped" in projection          # P3 middle dropped
-    assert "ERROR: the real verdict" in projection  # tail kept (verdicts live at the end)
-    assert "head line" in projection        # head kept
-    assert projection.count("filler") < 120  # the 300-line middle is gone, head+tail remain
+    assert "### Turn 1: user: task 1 | assistant: reply 1 | 1 tool call(s)" in projection
+    assert "filler" not in projection  # folded results never replay inline
+    stored = observations / "11111111-0000-4000-8000-000000000001.txt"
+    assert "ERROR: the real verdict" in stored.read_text(encoding="utf-8")  # retrievable whole
+    assert "openpilot_obs(\"11111111-0000-4000-8000-000000000001\")" in projection
 
 
 def test_p4_duplicate_results_collapse(tmp_path: Path) -> None:
@@ -190,7 +196,7 @@ def test_p4_duplicate_results_collapse(tmp_path: Path) -> None:
     assert projection is not None
     # five identical results, three folded: the first is stored, the next two collapse
     assert "3 folded turns" in projection
-    assert projection.count("duplicate of an earlier result") == 2
+    assert "duplicate" not in projection  # no per-result marker lines in the folded zone
     assert len(list(observations.glob("*.txt"))) == 1
 
 
@@ -248,3 +254,90 @@ def test_tombstone_survives_missing_file(tmp_path: Path) -> None:
     text = observation_tombstone(meta)
     assert "openpilot_obs(" in text
     assert "no longer readable" in text
+
+
+def test_s1_repeat_read_intercepted(tmp_path: Path) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("hello\n" * 50, encoding="utf-8")
+    bridge = ReadOnlyToolBridge((str(tmp_path),), observations_dir=str(tmp_path / "obs"))
+    first = bridge._handle(
+        {"toolName": "openpilot_read", "toolCallId": "aaaaaaaa-0000-4000-8000-0000000000b1", "args": {"path": "note.txt"}}
+    )
+    assert "hello" in first["content"]
+    second = bridge._handle(
+        {"toolName": "openpilot_read", "toolCallId": "aaaaaaaa-0000-4000-8000-0000000000b2", "args": {"path": "note.txt"}}
+    )
+    assert "unchanged repeat-read skipped" in second["content"]
+    assert "hello" not in second["content"]
+    assert "openpilot_obs(" in second["content"]  # the pointer to the earlier call
+    target.write_text("changed\nchanged2\nchanged3\n", encoding="utf-8")
+    third = bridge._handle(
+        {"toolName": "openpilot_read", "toolCallId": "aaaaaaaa-0000-4000-8000-0000000000b3", "args": {"path": "note.txt"}}
+    )
+    assert "changed2" in third["content"]  # sha differs -> served again
+    fourth = bridge._handle(
+        {"toolName": "openpilot_read", "toolCallId": "aaaaaaaa-0000-4000-8000-0000000000b4", "args": {"path": "note.txt", "offset": 2}}
+    )
+    assert "changed2" in fourth["content"]  # a different page is a different request
+
+
+def test_s2_test_output_compression() -> None:
+    output = "\n".join(f"tests/test_a.py::test_k{i} PASSED [ 50%]" for i in range(40))
+    output += "\n=============================== 40 passed in 0.31s ==============================="
+    compressed = _compress_command_output("python -m pytest -q", output)
+    assert compressed.count("PASSED") == 0  # per-test pass lines are noise
+    assert "40 passed in 0.31s" in compressed  # the summary survives
+    failing = "FAILED tests/test_a.py::test_k1 - assert 1 == 2\n" + output.replace(
+        "40 passed in 0.31s", "38 passed, 2 failed in 0.31s"
+    )
+    compressed = _compress_command_output("python -m pytest -q", failing)
+    assert "FAILED tests/test_a.py::test_k1" in compressed  # failures always kept
+    assert compressed.count("PASSED") == 0
+    assert _compress_command_output("ls -la", output) == output  # not a test command: untouched
+
+
+def test_s2_git_compression() -> None:
+    entries = []
+    for i in range(6):
+        entries.append(
+            f"commit {'0123456789abcdef' * 2}{i:02d}\nAuthor: boss\nDate:   Mon Sep 9 2026\n\n    fix thing {i}\n\n    long body of commit {i} that nobody re-reads\n"
+        )
+    log = "\n".join(entries)
+    compressed = _compress_command_output("git log -6", log)
+    assert compressed.count("long body") == 0
+    assert compressed.count("commit 0123456789ab") == 6  # one line per commit
+    assert "git show" in compressed
+    assert _compress_command_output("git diff HEAD", log) == log  # diffs always full
+    status = _compress_command_output(
+        "git status", "On branch main\nChanges not staged for commit:\n  (use \"git add\" to update)\n        modified: a.py\n"
+    )
+    assert "(use" not in status and "modified: a.py" in status
+
+
+def test_s3_projection_one_liners_and_task_header(tmp_path: Path) -> None:
+    session = _session(tmp_path / "proj")
+    long_prompt = "task 1 " + "constraint " * 100  # ~910 chars
+    long_reply = "reply 1 " + "words " * 100
+    _record_turn(session, 1, long_prompt, long_reply)
+    _record_turn(session, 2, "t2", "r2")
+    _record_turn(session, 3, "t3", "r3")
+    projection = build_projection(session.load_events(), None)
+    assert projection is not None
+    assert "Task: task 1 constraint" in projection  # original task kept near-verbatim
+    folded = next(ln for ln in projection.splitlines() if ln.startswith("### Turn 1:"))
+    assert len(folded) < 420  # one capped line, not a verbatim replay
+    assert folded.count("words") < 100  # assistant gist capped, not verbatim
+    assert "### Turn 3 (recent, verbatim)" in projection
+
+
+def test_s3_handoff_artifact(tmp_path: Path) -> None:
+    session = _session(tmp_path)
+    _record_turn(session, 1, "goal here", "done")
+    _record_turn(session, 2, "t2", "r2")
+    handoff = build_handoff(session.run_id, session.load_events(), [], status="success", reason="read-only run")
+    assert "closure: success" in handoff and "## Goal" in handoff
+    assert "goal here" in handoff  # full goal, not truncated
+    assert "### Turn 2: user: t2 | assistant: r2" in handoff
+    path = write_handoff(tmp_path, session.run_id, session.load_events(), [], status="success", reason="read-only run")
+    assert path.read_text(encoding="utf-8") == handoff
+    assert len(handoff.splitlines()) <= 200

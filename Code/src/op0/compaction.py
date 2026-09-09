@@ -3,9 +3,11 @@
 The ledger is the base table (append-only, never rewritten); the model
 context is a materialized view; this module owns the projection rules and
 the budget trigger. All transforms are deterministic and monotonic, so a
-folded conversation re-materializes identically after any crash. Oversized
-tool results live in .openpilot/observations/ (file system as overflow
-memory); the context only carries a retrieval pointer.
+folded conversation re-materializes identically after any crash. Tool
+results live in .openpilot/observations/ (file system as overflow memory);
+the context only carries a retrieval pointer. Policy mask-v2: the folded
+zone is one handoff line per turn, not a verbatim replay — the A/B runs
+showed projection replay bloat dominates fold cost.
 """
 
 from __future__ import annotations
@@ -19,16 +21,15 @@ from typing import Any
 from op0.response import assistant_text_from_payload
 
 _OBS_INLINE_BYTES = 8_192   # E1: results above this never reach Pi memory
-_OBS_MASK_BYTES = 4_096     # folded results above this gain a retrieval pointer
-_SNIP_INLINE_BYTES = 1_024  # folded results above this stay inline, snipped
-_SNIP_HEAD = 200
-_SNIP_TAIL = 400
-_REPLY_SNIP_CHARS = 2_048   # folded assistant replies above this get snipped
 _OBS_FETCH_BYTES = 65_536   # openpilot_obs retrieval bound (matches sidecar)
 _TRIGGER_RATIO = 0.70
 _RECENT_TURNS = 2
 _OBS_ID = re.compile(r"^[0-9a-f][0-9a-f-]{7,63}$")
 _TOMBSTONE_TAIL = 400
+_TURN_PROMPT_CHARS = 240    # folded one-liner: user intent cap
+_TURN_REPLY_CHARS = 120     # folded one-liner: assistant gist cap
+_TASK_CHARS = 600           # the original task stays near-verbatim
+_HANDOFF_MAX_LINES = 200
 
 
 def estimate_usage(events: list) -> int:
@@ -149,14 +150,6 @@ def _tool_result_text(payload: Any) -> str:
     return ""
 
 
-def _snip(text: str, head: int, tail: int) -> str:
-    """Tail-biased inline trim: errors and verdicts live at the end."""
-    total = len(text)
-    if total <= head + tail + 64:
-        return text
-    return text[:head] + f"\n[...snipped {total - head - tail} chars...]\n" + text[-tail:]
-
-
 def _clean_text(text: str) -> str:
     """P5 whitespace pass: trailing blanks off, blank-line runs collapsed."""
     return re.sub(r"\n{3,}", "\n\n", "\n".join(line.rstrip() for line in text.splitlines()))
@@ -187,44 +180,104 @@ def _turn_pairs(events: list) -> list[dict[str, Any]]:
     return turns
 
 
+def _turn_line(number: int, turn: dict[str, Any], *, prompt_cap: int, reply_cap: int) -> str:
+    """S3 handoff-style one line per turn: what was asked, what came back."""
+    user = " ".join(_clean_text(turn["prompt"]).split())[:prompt_cap]
+    line = f"### Turn {number}: user: {user}"
+    if reply_cap and turn["reply"]:
+        line += f" | assistant: {' '.join(_clean_text(turn['reply']).split())[:reply_cap]}"
+    if turn["results"]:
+        line += f" | {len(turn['results'])} tool call(s)"
+    return line
+
+
 def build_projection(events: list, observations_dir: str | None) -> str | None:
-    """Materialize the folded projection; None if nothing is foldable."""
+    """Materialize the folded projection; None if nothing is foldable.
+
+    Folded zone = one line per turn; every folded tool result is stored
+    outside the context and indexed for openpilot_obs retrieval, so anything
+    the model once saw stays retrievable after folding (S1's promise)."""
     turns = _turn_pairs(events)
     if len(turns) <= _RECENT_TURNS:
         return None
     recent_from = len(turns) - _RECENT_TURNS
-    blocks: list[str] = []
+    folded = [
+        _turn_line(n, turn, prompt_cap=_TURN_PROMPT_CHARS, reply_cap=_TURN_REPLY_CHARS)
+        for n, turn in enumerate(turns[:recent_from], 1)
+    ]
     seen: set[str] = set()
-    for number, turn in enumerate(turns, 1):
-        is_recent = number > recent_from
-        block = [f"### Turn {number}" + (" (recent, verbatim)" if is_recent else ""), f"user: {_clean_text(turn['prompt'])}"]
-        reply = turn["reply"]
-        if reply and not is_recent and len(reply) > _REPLY_SNIP_CHARS:
-            reply = _snip(reply, 300, 500)  # P3: keep the verdict, drop the middle
-        if reply:
-            block.append(f"assistant: {_clean_text(reply)}")
-        if not is_recent:
-            for call_id, text in turn["results"]:
-                text = _clean_text(text)
-                size = len(text.encode("utf-8", errors="replace"))
-                digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
-                if digest in seen:
-                    block.append(f"[duplicate of an earlier result · {size} chars]")  # P4
-                    continue
-                seen.add(digest)
-                if size >= _OBS_MASK_BYTES:
-                    # P1: retrieval pointer, indexed below
-                    store_observation(observations_dir, call_id, "folded", text, min_bytes=_OBS_MASK_BYTES)
-                elif size >= _SNIP_INLINE_BYTES:
-                    block.append(_snip(text, _SNIP_HEAD, _SNIP_TAIL))  # P3: head+tail inline
-                # else: too small to matter — rerunning is cheaper than a fetch
-        blocks.append("\n".join(block))
+    for turn in turns[:recent_from]:
+        for call_id, text in turn["results"]:
+            text = _clean_text(text)
+            digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+            if digest in seen:  # P4: identical content is stored once
+                continue
+            seen.add(digest)
+            store_observation(observations_dir, call_id, "folded", text, min_bytes=0)
+    recent = []
+    for offset, turn in enumerate(turns[recent_from:], recent_from + 1):
+        block = [f"### Turn {offset} (recent, verbatim)", f"user: {_clean_text(turn['prompt'])}"]
+        if turn["reply"]:
+            block.append(f"assistant: {_clean_text(turn['reply'])}")
+        recent.append("\n".join(block))
     parts = [
-        f"[op0 compact projection · {recent_from} folded turns · "
-        f"{_RECENT_TURNS} recent turns verbatim · policy mask-v1]",
-        "\n\n".join(blocks),
+        f"[op0 compact projection · {recent_from} folded turns (one line each) · "
+        f"{_RECENT_TURNS} recent turns verbatim · policy mask-v2]",
+        f"Task: {' '.join(_clean_text(turns[0]['prompt']).split())[:_TASK_CHARS]}",
+        "\n".join(folded),
+        "\n\n".join(recent),
     ]
     index = _observation_lines(observations_dir)
     if index:
-        parts.append("Masked observations (retrieve full text on demand):\n" + "\n".join(index))
+        parts.append("Stored observations (retrieve full text on demand):\n" + "\n".join(index))
     return "\n\n".join(parts)
+
+
+def build_handoff(run_id: str, events: list, receipts: list, *, status: str, reason: str) -> str:
+    """S3: rule-built session handoff (no LLM) — the artifact the community
+    writes by hand at session end: goal, side effects, where things stood,
+    one line per turn. Capped at _HANDOFF_MAX_LINES."""
+    turns = _turn_pairs(events)
+    lines = [f"# op0 handoff · {run_id} · closure: {status}", f"reason: {reason}", ""]
+    if turns:
+        lines += ["## Goal", "", _clean_text(turns[0]["prompt"])[:_TASK_CHARS], ""]
+    if receipts:
+        lines.append("## Side effects")
+        for receipt in receipts[-30:]:
+            if getattr(receipt, "kind", "") == "bash":
+                lines.append(f"- bash exit {receipt.exit_code} ({receipt.validation_status}): {receipt.command[:90]}")
+            else:
+                lines.append(f"- {getattr(receipt, 'kind', 'patch')} ({receipt.validation_status}): {receipt.path}")
+        lines.append("")
+    last_reply = next((turn["reply"] for turn in reversed(turns) if turn["reply"]), "")
+    if last_reply:
+        lines += ["## Where things stand", "", _clean_text(last_reply)[:_TASK_CHARS], ""]
+    if len(turns) > 1:
+        lines.append(f"## Turn log ({len(turns)} turns)")
+        lines.extend(
+            _turn_line(n, turn, prompt_cap=160, reply_cap=80) for n, turn in enumerate(turns, 1)
+        )
+    if len(lines) > _HANDOFF_MAX_LINES:
+        lines = lines[: _HANDOFF_MAX_LINES - 1] + [
+            f"[truncated; full history: .openpilot/trajectory/{run_id}.jsonl]"
+        ]
+    return "\n".join(lines)
+
+
+def write_handoff(
+    project_root: str | Path,
+    run_id: str,
+    events: list,
+    receipts: list,
+    *,
+    status: str,
+    reason: str,
+) -> Path:
+    """Persist the handoff artifact under .openpilot/handoff/<run_id>.md."""
+    directory = Path(project_root) / ".openpilot" / "handoff"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{run_id}.md"
+    path.write_text(
+        build_handoff(run_id, events, receipts, status=status, reason=reason), encoding="utf-8"
+    )
+    return path

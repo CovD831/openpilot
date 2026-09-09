@@ -39,6 +39,7 @@ from rich.markup import escape
 
 from op0 import ui
 from op0.admission import AdmissionRegistry
+from op0.compaction import write_handoff
 from op0.receipts import ReceiptStore
 from op0.session import Session
 
@@ -414,6 +415,18 @@ class TuiSession:
             saw_model_response=self.state["saw_response"],
         )
         self.append_block(ui.render_closure_to_str(status, reason))
+        # S3: rule-built handoff artifact for the next session; best-effort
+        try:
+            write_handoff(
+                self.traj.project_root,
+                self.traj.run_id,
+                self.traj.load_events(),
+                self.store.all(run_id=self.traj.run_id),
+                status=status,
+                reason=reason,
+            )
+        except OSError:
+            pass
 
     def _stream_events(self, start_index: int, shown_calls: set[str] | None = None) -> None:
         """Print tool calls the moment they happen (claude-code streaming).

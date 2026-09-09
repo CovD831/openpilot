@@ -152,6 +152,14 @@ export default function openpilotToolBridge(pi: ExtensionAPI) {
         { type: "tool_call", toolName: "openpilot_search", toolCallId, args: params },
         signal,
       );
+      if (!response.success) throw new Error(response.content);
+      return {
+        content: [{ type: "text", text: response.content }],
+        details: { gateway: "openpilot", success: response.success },
+      };
+    },
+  });
+
   pi.registerTool({
     name: "openpilot_obs",
     label: "OpenPilot Observation",

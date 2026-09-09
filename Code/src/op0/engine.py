@@ -159,7 +159,7 @@ class Engine:
         self.session.record(
             "compaction",
             {
-                "policy": "mask-v1",
+                "policy": "mask-v2",
                 "usage_estimate": usage,
                 "budget_tokens": self.config.context_budget_tokens,
             },
@@ -321,14 +321,16 @@ def compose_turn_message(prompt: str, context: str = "") -> str:
         "result normally; when denied you will see a denial — do not retry "
         "the same call, briefly acknowledge the denial and ask the human what "
         "to do differently, then stop that line of work. Use project-relative "
-        "paths. This contract holds for every later turn in this "
-        "conversation.\n\n"
+        "paths. Reply concisely and never re-quote file contents verbatim — "
+        "summarize or point at them instead. This contract holds for every "
+        "later turn in this conversation.\n\n"
     )
     if context:
         message += (
-            "Context from earlier turns in this conversation, verbatim user "
-            "intents and assistant replies. Oversized tool outputs were stored "
-            "outside the context and are retrievable by id with openpilot_obs."
+            "Context from earlier turns: one line per folded turn (user "
+            "intent, assistant gist, tool-call count); recent turns are "
+            "verbatim. Tool outputs from folded turns were stored outside "
+            "the context and are retrievable by id with openpilot_obs."
             "\n\n" + context + "\n\n"
         )
     return message + "User task:\n" + prompt

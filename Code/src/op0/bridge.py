@@ -9,6 +9,7 @@ model or in Pi.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -39,7 +40,45 @@ _ALLOWED_TOOLS = frozenset(
     }
 )
 
+_TEST_HINT_RE = re.compile(r"\b(pytest|unittest|go test|cargo test|npm test|yarn test|pnpm test|jest|vitest|make test)\b")
+_FAIL_LINE_RE = re.compile(r"FAILED\b|ERROR\b|error:|--- FAIL|✕|Failures?:|short test summary|assert", re.IGNORECASE)
+# Summary patterns stay case-sensitive: pytest verbose prints per-test
+# "PASSED" (noise, dropped) while real summaries are lowercase counts.
+_SUMMARY_LINE_RE = re.compile(r"^\s*=+.*=+\s*$|\d+ (passed|failed|passing|failing)|Tests?:|Test Suites?:|test result:|no tests")
 
+
+def _compress_command_output(command: str, output: str) -> str:
+    """S2 command-aware compression (rtk-style): test runs keep failures and
+    summary lines only; git log collapses to one line per commit; git status
+    drops its how-to hints. Failures and diffs always survive."""
+    if command.startswith("git "):
+        sub = command[4:].split()[0] if command[4:].split() else ""
+        if sub == "log" and output.count("\ncommit ") >= 5:
+            entries = []
+            for chunk in ("\ncommit " + output).split("\ncommit ")[1:]:
+                # the first chunk keeps the original leading "commit " prefix
+                parts = chunk.removeprefix("commit ").splitlines()
+                subject = next(
+                    (ln.strip() for ln in parts[1:] if ln.strip() and not ln.startswith(("Author", "Date", "Merge:"))),
+                    "",
+                )
+                entries.append(f"commit {parts[0][:12]} {subject}" if parts else "")
+            if entries:
+                return (
+                    f"[git log: {len(entries)} commits, bodies dropped — git show <hash> for detail]\n"
+                    + "\n".join(entries)
+                )
+        if sub == "status":
+            return "\n".join(ln for ln in output.splitlines() if not ln.lstrip().startswith("(use "))
+        return output
+    if not _TEST_HINT_RE.search(command):
+        return output
+    lines = output.splitlines()
+    kept = [ln for ln in lines if _FAIL_LINE_RE.search(ln) or _SUMMARY_LINE_RE.search(ln)]
+    kept_text = "\n".join(kept)
+    if not kept_text or len(kept_text) > len(output) * 0.7:
+        return output
+    return f"[test output: {len(lines) - len(kept)} of {len(lines)} lines dropped — failures and summaries kept]\n{kept_text}"
 
 
 def _bounded(text: str, limit: int) -> str:
@@ -92,6 +131,7 @@ class ReadOnlyToolBridge:
         self.on_request = on_request
         self.on_result = on_result
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
+        self._read_memory: dict[tuple[str, int, int], dict[str, str]] = {}  # S1
         self._server: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -173,6 +213,7 @@ class ReadOnlyToolBridge:
             else:
                 if tool == "openpilot_read":
                     content = self._read_scoped(str(args.get("path") or ""), args)
+                    content = self._note_unchanged_reread(call_id, args, content)
                 elif tool == "openpilot_patch":
                     content = self._apply_patch(args)
                 elif tool == "openpilot_write":
@@ -239,6 +280,31 @@ class ReadOnlyToolBridge:
         if end < total:
             numbered += f"\n[showing lines {start + 1}-{end} of {total}; pass offset={end + 1} for the next page]"
         return numbered
+
+    def _note_unchanged_reread(self, call_id: str, args: dict[str, Any], content: str) -> str:
+        """S1 repeat-read interception: a byte-identical re-read of the same
+        page returns a pointer instead of the content. The earlier result is
+        either still in recent context or retrievable via the earlier call's
+        observation after a fold."""
+        raw = str(args.get("path") or "")
+        path = Path(raw).expanduser()
+        if not path.is_absolute() and self.scoped_roots:
+            path = self.scoped_roots[0] / path
+        try:
+            resolved = str(path.resolve(strict=False))
+            digest = hashlib.sha256(Path(resolved).read_bytes()).hexdigest()
+        except OSError:
+            return content
+        key = (resolved, max(int(args.get("offset") or 1), 1), min(int(args.get("limit") or 400), 800))
+        prior = self._read_memory.get(key)
+        self._read_memory[key] = {"sha256": digest, "call_id": call_id}
+        if prior and prior["sha256"] == digest:
+            return (
+                f"[unchanged repeat-read skipped: byte-identical to call "
+                f"{prior['call_id'][:8]} — the earlier content is still valid; "
+                f"after a fold, retrieve it with openpilot_obs(\"{prior['call_id']}\")]"
+            )
+        return content
 
     def _in_scope(self, resolved: Path) -> bool:
         for root in self.scoped_roots:
@@ -341,7 +407,7 @@ class ReadOnlyToolBridge:
                     pass
             raise ValueError(f"command timed out after {_BASH_TIMEOUT_SECONDS}s") from exc
         output = (completed.stdout or "") + (("\n[stderr]\n" + completed.stderr) if completed.stderr else "")
-        output = output.strip()
+        output = _compress_command_output(command, output.strip())
         if self.on_bash_executed is not None:
             try:
                 # the receipt keeps the tail; E1 handles the full text
