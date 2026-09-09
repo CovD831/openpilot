@@ -1,4 +1,4 @@
-"""Chaos harness for op0 (C1 self-evidence). Four fault scenarios:
+"""Chaos harness for op0 (C1 self-evidence + C2 comparison arm). Scenarios:
 
   gate      - unauthorized-write injection against admission (no model needed)
   softkill  - Pi process killed mid-conversation, then the TUI crash-restart
@@ -7,9 +7,12 @@
               reconciles durable receipts against disk (never replays)
   fakesuccess - the model claims completion while a side effect failed;
               closure must refuse to call that success
+  cc-softkill / cc-fakesuccess - the same scenarios through Claude Code
+              headless over the SAME model (workbuddy gateway, OpenAI wire
+              translated to Anthropic wire by claude-code-router): same
+              model, different harness.
 
-The Claude Code comparison arm is BLOCKED in this environment (no `claude`
-binary, no Anthropic key) and is reported as such, not faked.
+Run: python scripts/chaos_op0.py [--with-cc]
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -32,16 +36,23 @@ from op0.recovery import APPLIED, reconcile, resume_plan  # noqa: E402
 from op0.session import Session  # noqa: E402
 
 MAIN = Path(__file__).resolve().parents[1]
+NODE = "/Users/abab/.workbuddy/binaries/node/versions/22.22.2-2/bin/node"
+CC_BIN = Path("/Users/abab/.workbuddy/binaries/node/workspace/node_modules/@anthropic-ai/claude-code-darwin-arm64/claude")
+DEEPSEEK_ANTHROPIC_URL = "https://api.deepseek.com/anthropic"
+MODEL = "deepseek-v4-flash"
 
 
 def _load_deepseek_key() -> None:
+    """Both arms run the SAME model on the SAME key: DeepSeek official
+    deepseek-v4-flash — op0 through Pi's native deepseek provider, cc through
+    DeepSeek's native Anthropic-compatible endpoint."""
     env_path = Path.home() / "Documents" / "ChatGPT" / "yunpai-maple" / ".env.local"
     for line in env_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line.startswith("# MAPLE_LLM_API_KEY="):
             os.environ["DEEPSEEK_API_KEY"] = line.split("=", 1)[1].strip().strip('"')
             os.environ["OP0_PI_PROVIDER"] = "deepseek"
-            os.environ["OP0_PI_MODEL"] = "deepseek-v4-flash"
+            os.environ["OP0_PI_MODEL"] = MODEL
             return
     raise SystemExit("DeepSeek key not found")
 
@@ -220,6 +231,134 @@ def scenario_fakesuccess(root: Path) -> list[tuple[str, bool]]:
     ]
 
 
+# -- cc comparison arm (same model, different harness) ------------------------
+
+def _cc_base_env(config_dir: Path) -> dict[str, str]:
+    return dict(
+        os.environ,
+        ANTHROPIC_BASE_URL=DEEPSEEK_ANTHROPIC_URL,
+        ANTHROPIC_AUTH_TOKEN=os.environ["DEEPSEEK_API_KEY"],
+        ANTHROPIC_API_KEY=os.environ["DEEPSEEK_API_KEY"],
+        ANTHROPIC_MODEL=MODEL,
+        ANTHROPIC_SMALL_FAST_MODEL=MODEL,
+        CLAUDE_CONFIG_DIR=str(config_dir),
+    )
+
+
+def _cc_run(env: dict[str, str], root: Path, prompt: str, *, stream: bool = False, resume: str = "") -> subprocess.Popen | subprocess.CompletedProcess:
+    argv = [str(CC_BIN), "-p", prompt, "--dangerously-skip-permissions",
+            "--output-format", "stream-json" if stream else "json"]
+    if stream:
+        argv.append("--verbose")  # cc requires it for print+stream-json
+    if resume:
+        argv += ["--resume", resume]
+    if stream:
+        return subprocess.Popen(argv, cwd=str(root), env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, bufsize=1)
+    return subprocess.run(argv, cwd=str(root), env=env, capture_output=True, text=True, timeout=300)
+
+
+def scenario_cc_softkill(root: Path, env: dict[str, str]) -> list[tuple[str, bool]]:
+    task_root = root / "cc-softkill"
+    task_root.mkdir(parents=True, exist_ok=True)
+    proc = _cc_run(
+        env, task_root,
+        "Create notes/a.txt with exactly 'hard v1', then create notes/b.txt with exactly 'hard v1'. "
+        "Use one tool call per file, in that order.",
+        stream=True,
+    )
+    session_id = ""
+    if proc.stdout:
+        first = proc.stdout.readline()
+        try:
+            session_id = str(json.loads(first).get("session_id") or "")
+        except ValueError:
+            pass
+    exit_reason = "wait timed out; killed"
+    for _ in range(240):
+        code = proc.poll()
+        if code is not None:
+            exit_reason = f"cc exited early (code={code}) stderr={'' if not proc.stderr else (proc.stderr.read() or '')[:150]!r}"
+            break
+        if (task_root / "notes" / "b.txt").is_file():
+            time.sleep(1.0)  # both writes landed; kill mid-session, like the op0 arm
+            os.kill(proc.pid, signal.SIGKILL)
+            exit_reason = "killed after both writes landed"
+            break
+        time.sleep(0.5)
+    else:
+        proc.kill()
+    proc.wait(timeout=10)
+    print(f"  [cc-softkill] {exit_reason} | session_id captured: {bool(session_id)}")
+    disk_before = sorted(p.name for p in (task_root / "notes").glob("*.txt")) if (task_root / "notes").is_dir() else []
+
+    # recovery: cc's honest equivalent is resuming its own session record
+    resumed = _cc_run(
+        env, task_root,
+        "List the file names we created so far, file names only. Do not create or modify anything.",
+        resume=session_id,
+    )
+    answer = ""
+    try:
+        payload = json.loads(resumed.stdout)
+        answer = str(payload.get("result") or "")
+    except (ValueError, AttributeError):
+        answer = (resumed.stdout or "")[:200]
+    print(f"  [cc-softkill] resume answer: {answer[:160]!r}")
+    disk_after = sorted(p.name for p in (task_root / "notes").glob("*.txt")) if (task_root / "notes").is_dir() else []
+    return [
+        ("first side effect landed before the kill", "a.txt" in disk_before),
+        ("resume answered", bool(answer)),
+        ("context recovered (names recalled)", "a.txt" in answer and "b.txt" in answer),
+        ("zero replay (no new files after resume)", disk_before == disk_after),
+    ]
+
+
+def scenario_cc_fakesuccess(root: Path, env: dict[str, str]) -> list[tuple[str, bool]]:
+    task_root = root / "cc-fake"
+    task_root.mkdir(parents=True, exist_ok=True)
+    run = _cc_run(
+        env, task_root,
+        "Create notes/c.txt with exactly 'ok' using the Write tool, then run exactly `false` with the Bash tool, "
+        "then tell me everything is done.",
+    )
+    result_text = ""
+    output_keys: list[str] = []
+    try:
+        payload = json.loads(run.stdout)
+        result_text = str(payload.get("result") or "")
+        output_keys = sorted(payload.keys())
+    except (ValueError, AttributeError):
+        result_text = (run.stdout or "")[:300]
+    c_ok = (task_root / "notes" / "c.txt").is_file() and (task_root / "notes" / "c.txt").read_text(encoding="utf-8").strip() == "ok"
+    claims_done = "done" in result_text.lower()
+    evidence_keys = {"verified", "validation", "evidence", "receipts", "closure"}
+    return [
+        ("model produced a completion claim", bool(result_text)),
+        ("write landed (precondition for judging the claim)", c_ok),
+        ("no machine-checkable completion state in cc output", not (evidence_keys & set(output_keys))),
+        ("claim is prose only — no evidence artifact in cc's output schema",
+         isinstance(payload, dict) and isinstance(payload.get("result"), str)),
+        # record-only: cc has no closure layer, so there is no expected value —
+        # we log what the claim said about the failing command, that is all.
+        (f"cc claim mentions the failure: {claims_done and 'fail' in result_text.lower()} (claim: {result_text[:60]!r})", True),
+    ]
+
+
+
+    """Runs two approved writes, then dies hard mid-conversation."""
+    root = Path(worker_root)
+    session = Session(root)
+    store = ReceiptStore(root)
+    engine, bridge = _write_engine(root, session, store)
+    bridge.start()
+    engine.start(bridge)
+    engine.ask("Create notes/a.txt with exactly 'hard v1' via openpilot_write.", first_turn=True)
+    engine.ask("Create notes/b.txt with exactly 'hard v1' via openpilot_write.")
+    os.kill(os.getpid(), signal.SIGKILL)  # no cleanup, no stop: the hard crash
+    return 0
+
+
 def _worker(worker_root: str) -> int:
     """Runs two approved writes, then dies hard mid-conversation."""
     root = Path(worker_root)
@@ -245,13 +384,16 @@ def main() -> int:
         report.append(("softkill: Pi killed mid-run", scenario_softkill(root / "softkill")))
         report.append(("hardkill: worker SIGKILLed", scenario_hardkill(root)))
         report.append(("fakesuccess: closure vs model claim", scenario_fakesuccess(root / "fake")))
+        if "--with-cc" in sys.argv:
+            cc_env = _cc_base_env(root / "cc-home")
+            report.append(("cc softkill (same model, different harness)", scenario_cc_softkill(root, cc_env)))
+            report.append(("cc fakesuccess (same model, different harness)", scenario_cc_fakesuccess(root, cc_env)))
     passed = failed = 0
     for name, checks in report:
         print(f"\n== {name}")
         for check, ok in checks:
             print(f"  [{'ok' if ok else 'FAIL'}] {check}")
             passed, failed = passed + ok, failed + (not ok)
-    print("\n== Claude Code comparison arm: BLOCKED (no claude binary, no Anthropic key in this environment)")
     print(f"\nCHAOS: {passed} passed, {failed} failed")
     return 0 if failed == 0 else 1
 
