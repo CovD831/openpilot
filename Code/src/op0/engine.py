@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from op0.bridge import ReadOnlyToolBridge
+from op0.compaction import build_projection, estimate_usage, should_compact
 from op0.contracts import TaskSpec
 from op0.response import error_message_from_payload
 from op0.session import Session
@@ -54,6 +55,8 @@ class EngineConfig:
     cwd: str = ""
     timeout_seconds: float = 180.0
     enable_read_tool: bool = True
+    context_budget_tokens: int = 0  # 0 disables compaction (safe default)
+    observations_dir: str = ""
 
     def argv(self) -> list[str]:
         argv = [
@@ -66,7 +69,7 @@ class EngineConfig:
         if self.enable_read_tool:
             extension = str(Path(__file__).resolve().parents[2] / "pi_sidecar" / "openpilot_tool_bridge.ts")
             argv.extend(
-                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search")
+                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search,openpilot_obs")
             )
         else:
             argv.append("--no-tools")
@@ -93,7 +96,9 @@ class Engine:
         self._buffer = bytearray()
         self._lock = threading.Lock()
         self._process: subprocess.Popen[bytes] | None = None
+        self._bridge: ReadOnlyToolBridge | None = None
         self._turns = 0
+        self._context = ""  # projection to deliver with the next first-turn prompt
 
     def start(self, bridge: ReadOnlyToolBridge | None = None) -> None:
         if self.state is EngineState.RUNNING:
@@ -104,6 +109,7 @@ class Engine:
             # Defensive: spawning Pi without the socket env makes every tool
             # call fail with "OPENPILOT_PI_TOOL_SOCKET is not configured".
             bridge.start()
+        self._bridge = bridge
         self._process = subprocess.Popen(
             self.config.argv(),
             cwd=self.config.cwd or None,
@@ -124,10 +130,51 @@ class Engine:
         _stop_process(self._process)
         self._process = None
 
+    def restart(self) -> None:
+        """Fresh Pi process; the next first-turn prompt carries the projection."""
+        self.stop()
+        self.start(self._bridge)
+
+    def inject_recovery_projection(self) -> None:
+        """Crash-recovery hand-off: continue with context, not amnesia."""
+        if self.config.context_budget_tokens <= 0 or self._context:
+            return
+        projection = build_projection(
+            self.session.load_events(), self.config.observations_dir or None
+        )
+        if projection:
+            self._context = projection
+
+    def _maybe_compact(self) -> None:
+        """Fold at the turn boundary when real usage crosses the budget."""
+        if self.config.context_budget_tokens <= 0:
+            return
+        events = self.session.load_events()
+        usage = estimate_usage(events)
+        if not should_compact(usage, self.config.context_budget_tokens):
+            return
+        projection = build_projection(events, self.config.observations_dir or None)
+        if not projection:
+            return  # fail-closed: nothing foldable, stay on the verbatim path
+        self.session.record(
+            "compaction",
+            {
+                "policy": "mask-v1",
+                "usage_estimate": usage,
+                "budget_tokens": self.config.context_budget_tokens,
+            },
+            producer="compaction",
+        )
+        self.restart()
+        self._context = projection
+
     def ask(self, prompt: str, *, first_turn: bool = False, _retry: bool = True) -> str:
         """Run one conversation turn against the live process."""
         if self.state is not EngineState.RUNNING or self._process is None:
             raise RuntimeError("engine is not running")
+        self._maybe_compact()
+        if self.state is not EngineState.RUNNING or self._process is None:
+            raise RuntimeError("engine failed to restart for compaction")
         self._turns += 1
         turn_id = f"turn-{self._turns}"
         self._buffer.clear()
@@ -135,7 +182,11 @@ class Engine:
         try:
             assert self._process.stdin is not None
             request_id = f"prompt:{self.session.run_id}:{self._turns}"
-            message = compose_turn_message(prompt) if first_turn else prompt
+            if first_turn or self._context:
+                message = compose_turn_message(prompt, self._context)
+                self._context = ""
+            else:
+                message = prompt
             self._write_record(
                 self._process, {"id": request_id, "type": "prompt", "message": message}
             )
@@ -254,22 +305,33 @@ def _map_event_type(event_type: str) -> str:
     }.get(event_type, "")
 
 
-def compose_turn_message(prompt: str) -> str:
-    """First-turn message: pin the tool contract for the whole session (L4 surface)."""
-    return (
+def compose_turn_message(prompt: str, context: str = "") -> str:
+    """First-turn message: pin the tool contract for the whole session (L4
+    surface); `context` carries the compaction projection after a fold or a
+    crash-recovery restart."""
+    message = (
         "You are op0, working inside the user's project through the OpenPilot "
         "gateway. Tools: openpilot_read (read a project file), openpilot_search "
         "(search file contents), openpilot_patch (replace lines of an existing "
         "file), openpilot_write (create or overwrite a file), openpilot_bash "
-        "(run one shell command in the project root). Reads and search run "
+        "(run one shell command in the project root), openpilot_obs (retrieve "
+        "the full text of a stored observation by id). Reads and search run "
         "freely. A patch, write, or bash call may pause until the human "
         "approves it: when approved, the same call executes and returns its "
         "result normally; when denied you will see a denial — do not retry "
         "the same call, briefly acknowledge the denial and ask the human what "
         "to do differently, then stop that line of work. Use project-relative "
         "paths. This contract holds for every later turn in this "
-        "conversation.\n\nUser task:\n" + prompt
+        "conversation.\n\n"
     )
+    if context:
+        message += (
+            "Context from earlier turns in this conversation, verbatim user "
+            "intents and assistant replies. Oversized tool outputs were stored "
+            "outside the context and are retrievable by id with openpilot_obs."
+            "\n\n" + context + "\n\n"
+        )
+    return message + "User task:\n" + prompt
 
 
 def _stop_process(process: subprocess.Popen[bytes] | None) -> None:

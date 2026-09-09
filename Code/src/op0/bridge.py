@@ -19,6 +19,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+from op0.compaction import fetch_observation, observation_tombstone, store_observation
+
 _MAX_REQUEST_BYTES = 1_000_000
 _MAX_CONTENT_BYTES = 16_384
 _MAX_OUTPUT_BYTES = 8_000
@@ -27,7 +29,14 @@ _BASH_TIMEOUT_SECONDS = 60.0
 _CONNECTION_TIMEOUT_SECONDS = 5.0
 _SKIPPED_DIRS = {".git", ".openpilot", ".venv", "node_modules", "__pycache__", ".pytest_cache", "runs"}
 _ALLOWED_TOOLS = frozenset(
-    {"openpilot_read", "openpilot_patch", "openpilot_write", "openpilot_bash", "openpilot_search"}
+    {
+        "openpilot_read",
+        "openpilot_patch",
+        "openpilot_write",
+        "openpilot_bash",
+        "openpilot_search",
+        "openpilot_obs",
+    }
 )
 
 
@@ -66,6 +75,7 @@ class ReadOnlyToolBridge:
         self,
         scoped_roots: tuple[str, ...],
         *,
+        observations_dir: str | None = None,
         patch_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         command_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         on_patch_applied: Callable[[str, str, str, Any], None] | None = None,
@@ -74,6 +84,7 @@ class ReadOnlyToolBridge:
         on_result: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.scoped_roots = tuple(Path(root).expanduser().resolve(strict=False) for root in scoped_roots)
+        self.observations_dir = observations_dir
         self.patch_authorizer = patch_authorizer
         self.command_authorizer = command_authorizer
         self.on_patch_applied = on_patch_applied
@@ -157,16 +168,25 @@ class ReadOnlyToolBridge:
             if self.on_request is not None:
                 self.on_request(request)
             args = dict(request.get("args") or {})
-            if tool == "openpilot_read":
-                content = self._read_scoped(str(args.get("path") or ""), args)
-            elif tool == "openpilot_patch":
-                content = self._apply_patch(args)
-            elif tool == "openpilot_write":
-                content = self._apply_write(args)
-            elif tool == "openpilot_bash":
-                content = self._run_bash(args)
+            if tool == "openpilot_obs":
+                content = fetch_observation(self.observations_dir, str(args.get("id") or ""))
             else:
-                content = self._search(args)
+                if tool == "openpilot_read":
+                    content = self._read_scoped(str(args.get("path") or ""), args)
+                elif tool == "openpilot_patch":
+                    content = self._apply_patch(args)
+                elif tool == "openpilot_write":
+                    content = self._apply_write(args)
+                elif tool == "openpilot_bash":
+                    content = self._run_bash(args)
+                else:
+                    content = self._search(args)
+                # E1 entry cap: an oversized result is stored whole outside the
+                # context window; the model sees a retrieval pointer plus the
+                # output tail, where errors and verdicts live.
+                stored = store_observation(self.observations_dir, call_id, str(tool), content)
+                if stored:
+                    content = observation_tombstone(stored)
             response: dict[str, Any] = {
                 "toolCallId": call_id,
                 "success": True,
@@ -324,11 +344,11 @@ class ReadOnlyToolBridge:
         output = output.strip()
         if self.on_bash_executed is not None:
             try:
-                self.on_bash_executed(command, completed.returncode, output, consent)
+                # the receipt keeps the tail; E1 handles the full text
+                self.on_bash_executed(command, completed.returncode, output[-_MAX_OUTPUT_BYTES:], consent)
             except Exception:  # noqa: BLE001
                 pass
-        tail = output[-_MAX_OUTPUT_BYTES:]
-        return f"exit {completed.returncode}\n{tail}" if tail else f"exit {completed.returncode}"
+        return f"exit {completed.returncode}\n{output}" if output else f"exit {completed.returncode}"
 
     # -- search ----------------------------------------------------------
 

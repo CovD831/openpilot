@@ -152,6 +152,21 @@ export default function openpilotToolBridge(pi: ExtensionAPI) {
         { type: "tool_call", toolName: "openpilot_search", toolCallId, args: params },
         signal,
       );
+  pi.registerTool({
+    name: "openpilot_obs",
+    label: "OpenPilot Observation",
+    description:
+      "Retrieve the full recorded text of one oversized tool output by its observation id. " +
+      "Read-only and free — use it whenever a masked observation [observation ... stored] matters again.",
+    parameters: Type.Object({
+      id: Type.String({ description: "Observation id shown in the [observation ...] placeholder" }),
+    }),
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal) {
+      const response = await invokeGateway(
+        { type: "tool_call", toolName: "openpilot_obs", toolCallId, args: params },
+        signal,
+      );
       if (!response.success) throw new Error(response.content);
       return {
         content: [{ type: "text", text: response.content }],

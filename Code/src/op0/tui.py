@@ -353,6 +353,7 @@ class TuiSession:
             self._crash_retries += 1
             self.bridge.start()  # fresh socket first, then a fresh Pi process
             self.engine.start(self.bridge)
+            self.engine.inject_recovery_projection()
             self.append_block(
                 f"[yellow](engine crashed; restarting — continuing the task, "
                 f"attempt {self._crash_retries}/3)[/yellow]"

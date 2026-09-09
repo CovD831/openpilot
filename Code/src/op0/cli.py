@@ -71,7 +71,16 @@ def _apply_patch_receipt(store, session, registry, path, hash_before, hash_after
         )
 
 
-def _make_bridge(session, registry, store, project_root: str, *, goal_state: dict, gate_holder: dict | None = None) -> ReadOnlyToolBridge:
+def _make_bridge(
+    session,
+    registry,
+    store,
+    project_root: str,
+    *,
+    goal_state: dict,
+    gate_holder: dict | None = None,
+    observations_dir: str | None = None,
+) -> ReadOnlyToolBridge:
     gate = gate_holder if gate_holder is not None else {"fn": None}
 
     def _auto_consent(proposal):
@@ -204,6 +213,7 @@ def _make_bridge(session, registry, store, project_root: str, *, goal_state: dic
 
     return ReadOnlyToolBridge(
         (project_root,),
+        observations_dir=observations_dir,
         patch_authorizer=authorize,
         command_authorizer=authorize_cmd,
         on_patch_applied=on_patch_applied,
@@ -233,6 +243,8 @@ def _engine_config(spec: TaskSpec) -> EngineConfig:
         cwd=spec.project_root,
         timeout_seconds=spec.timeout_seconds,
         enable_read_tool=True,
+        context_budget_tokens=int(os.environ.get("OP0_CONTEXT_BUDGET_TOKENS") or 0),
+        observations_dir=str(Path(spec.project_root) / ".openpilot" / "observations"),
     )
 
 
@@ -243,7 +255,10 @@ def run_once_task(spec: TaskSpec) -> str:
     registry = AdmissionRegistry(spec.project_root)
     store = ReceiptStore(spec.project_root)
     goal_state = {"goal": spec.goal}
-    bridge = _make_bridge(session, registry, store, spec.project_root, goal_state=goal_state)
+    bridge = _make_bridge(
+        session, registry, store, spec.project_root, goal_state=goal_state,
+        observations_dir=str(Path(spec.project_root) / ".openpilot" / "observations"),
+    )
     bridge.start()
     engine = Engine(session, _engine_config(spec))
     try:
@@ -308,7 +323,10 @@ def _run_repl(project_root: Path) -> int:
     store = ReceiptStore(project_root)
     state = {"goal": "", "saw_response": False, "verbose": False, "approval_mode": "ask"}
     gate = {"fn": None}
-    bridge = _make_bridge(traj, registry, store, str(project_root), goal_state=state, gate_holder=gate)
+    bridge = _make_bridge(
+        traj, registry, store, str(project_root), goal_state=state, gate_holder=gate,
+        observations_dir=str(project_root / ".openpilot" / "observations"),
+    )
     engine = Engine(traj, _engine_config(TaskSpec(goal="", project_root=str(project_root))))
 
     def handle_command(text: str) -> None:
