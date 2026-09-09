@@ -28,16 +28,17 @@ _TOMBSTONE_TAIL = 400
 
 
 def estimate_usage(events: list) -> int:
-    """Real provider usage summed over assistant responses; falls back to a
-    rough character estimate when no usage was recorded."""
+    """Real provider usage summed over turn-end records (usage lives in the
+    message envelope as `input`, not on message_end); falls back to a rough
+    character estimate when no usage was recorded."""
     real = fallback = 0
     for event in events:
         payload = event.payload or {}
         message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
         usage = message.get("usage") or payload.get("usage") or {}
         real += int(
-            usage.get("input_tokens") or usage.get("prompt_tokens")
-            or usage.get("inputTokens") or usage.get("promptTokens") or 0
+            usage.get("input") or usage.get("input_tokens") or usage.get("inputTokens")
+            or usage.get("prompt_tokens") or usage.get("promptTokens") or 0
         )
         if event.event_type == "turn_started":
             fallback += len(str(payload.get("prompt") or "")) // 3
@@ -136,9 +137,7 @@ def _tool_result_text(payload: Any) -> str:
         if isinstance(value, str) and value.strip():
             return value
         if isinstance(value, list):
-            text = "\n".join(str(i.get("text") or "") for i in value if isinstance(i, dict))
-            if text.strip():
-                return text
+            return "\n".join(str(i.get("text") or "") for i in value if isinstance(i, dict))
     return ""
 
 
