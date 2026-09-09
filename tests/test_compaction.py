@@ -80,7 +80,10 @@ def test_store_is_idempotent_per_call_id(tmp_path: Path) -> None:
     observations = tmp_path / "observations"
     first = store_observation(str(observations), "bbbbbbbb-0000-4000-8000-000000000002", "t", "x" * 9000)
     second = store_observation(str(observations), "bbbbbbbb-0000-4000-8000-000000000002", "t", "y" * 9000)
-    assert first is not None and second is None
+    # repeated store keeps the first form AND still yields a pointer, so E1
+    # never leaks the full text back into the context on a duplicate call
+    assert first is not None and second is not None
+    assert second["sha256"] == first["sha256"]
     assert (observations / "bbbbbbbb-0000-4000-8000-000000000002.txt").read_text() == "x" * 9000
 
 
@@ -161,6 +164,53 @@ def test_projection_masks_folded_and_keeps_recent(tmp_path: Path) -> None:
     # idempotent: same ledger rebuilds the same projection
     again = build_projection(session.load_events(), str(observations))
     assert again == projection
+
+
+def test_p3_folds_snip_midsize_results(tmp_path: Path) -> None:
+    session = _session(tmp_path / "proj")
+    mid = "head line\n" + "filler\n" * 300 + "ERROR: the real verdict\n"  # ~2.2k
+    _record_turn(session, 1, "task 1", "reply 1", result=mid)
+    _record_turn(session, 2, "task 2", "reply 2")
+    _record_turn(session, 3, "task 3", "reply 3")
+    projection = build_projection(session.load_events(), None)
+    assert projection is not None
+    assert "snipped" in projection          # P3 middle dropped
+    assert "ERROR: the real verdict" in projection  # tail kept (verdicts live at the end)
+    assert "head line" in projection        # head kept
+    assert projection.count("filler") < 120  # the 300-line middle is gone, head+tail remain
+
+
+def test_p4_duplicate_results_collapse(tmp_path: Path) -> None:
+    session = _session(tmp_path / "proj")
+    same = "repeated output\n" * 400  # ~6.8k, masked zone
+    for index in (1, 2, 3, 4, 5):
+        _record_turn(session, index, f"task {index}", f"reply {index}", result=same)
+    observations = tmp_path / "proj" / ".openpilot" / "observations"
+    projection = build_projection(session.load_events(), str(observations))
+    assert projection is not None
+    # five identical results, three folded: the first is stored, the next two collapse
+    assert "3 folded turns" in projection
+    assert projection.count("duplicate of an earlier result") == 2
+    assert len(list(observations.glob("*.txt"))) == 1
+
+
+def test_p5_collapses_blank_runs(tmp_path: Path) -> None:
+    session = _session(tmp_path / "proj")
+    _record_turn(session, 1, "task\n\n\n\nwith blanks   \n", "reply\n\n\n\nwith blanks")
+    _record_turn(session, 2, "task 2", "reply 2")
+    _record_turn(session, 3, "task 3", "reply 3")
+    projection = build_projection(session.load_events(), None)
+    assert projection is not None
+    assert "\n\n\n" not in projection
+    assert "with blanks" in projection
+
+
+def test_e1_duplicate_store_returns_existing_meta(tmp_path: Path) -> None:
+    observations = tmp_path / "obs"
+    first = store_observation(str(observations), "aaaaaaaa-0000-4000-8000-00000000000a", "t", "x" * 9000)
+    again = store_observation(str(observations), "aaaaaaaa-0000-4000-8000-00000000000a", "t", "x" * 9000)
+    assert first is not None and again is not None  # idempotent store still yields a pointer
+    assert again["sha256"] == first["sha256"]
 
 
 def test_projection_none_when_short(tmp_path: Path) -> None:

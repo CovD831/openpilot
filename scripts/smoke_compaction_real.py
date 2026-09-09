@@ -29,7 +29,7 @@ def _load_maple_key() -> str:
 
 
 def _model_name() -> str:
-    return "deepseek-chat"
+    return "deepseek-v4-flash"  # boss's pick: flash, not pro
 
 
 def main() -> int:

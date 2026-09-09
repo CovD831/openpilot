@@ -20,6 +20,10 @@ from op0.response import assistant_text_from_payload
 
 _OBS_INLINE_BYTES = 8_192   # E1: results above this never reach Pi memory
 _OBS_MASK_BYTES = 4_096     # folded results above this gain a retrieval pointer
+_SNIP_INLINE_BYTES = 1_024  # folded results above this stay inline, snipped
+_SNIP_HEAD = 200
+_SNIP_TAIL = 400
+_REPLY_SNIP_CHARS = 2_048   # folded assistant replies above this get snipped
 _OBS_FETCH_BYTES = 65_536   # openpilot_obs retrieval bound (matches sidecar)
 _TRIGGER_RATIO = 0.70
 _RECENT_TURNS = 2
@@ -69,7 +73,11 @@ def store_observation(
     directory.mkdir(parents=True, exist_ok=True)
     full = directory / f"{call_id}.txt"
     if full.is_file():
-        return None
+        # idempotent, and the caller still needs the meta: a repeated store
+        # must not fall through and leak the full text back into the context
+        meta = json.loads((directory / f"{call_id}.json").read_text(encoding="utf-8"))
+        meta["path"] = str(full)
+        return meta
     full.write_bytes(data)
     meta = {"call_id": call_id, "tool": tool, "bytes": len(data), "path": str(full)}
     meta["sha256"] = hashlib.sha256(data).hexdigest()
@@ -141,6 +149,19 @@ def _tool_result_text(payload: Any) -> str:
     return ""
 
 
+def _snip(text: str, head: int, tail: int) -> str:
+    """Tail-biased inline trim: errors and verdicts live at the end."""
+    total = len(text)
+    if total <= head + tail + 64:
+        return text
+    return text[:head] + f"\n[...snipped {total - head - tail} chars...]\n" + text[-tail:]
+
+
+def _clean_text(text: str) -> str:
+    """P5 whitespace pass: trailing blanks off, blank-line runs collapsed."""
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(line.rstrip() for line in text.splitlines()))
+
+
 def _turn_pairs(events: list) -> list[dict[str, Any]]:
     """Group the trajectory into turns. Only turn_started events carrying a
     prompt open a turn: the engine records one, Pi re-emits a mirror without
@@ -173,19 +194,31 @@ def build_projection(events: list, observations_dir: str | None) -> str | None:
         return None
     recent_from = len(turns) - _RECENT_TURNS
     blocks: list[str] = []
+    seen: set[str] = set()
     for number, turn in enumerate(turns, 1):
         is_recent = number > recent_from
-        block = [f"### Turn {number}" + (" (recent, verbatim)" if is_recent else ""), f"user: {turn['prompt']}"]
-        if turn["reply"]:
-            block.append(f"assistant: {turn['reply']}")
+        block = [f"### Turn {number}" + (" (recent, verbatim)" if is_recent else ""), f"user: {_clean_text(turn['prompt'])}"]
+        reply = turn["reply"]
+        if reply and not is_recent and len(reply) > _REPLY_SNIP_CHARS:
+            reply = _snip(reply, 300, 500)  # P3: keep the verdict, drop the middle
+        if reply:
+            block.append(f"assistant: {_clean_text(reply)}")
+        if not is_recent:
+            for call_id, text in turn["results"]:
+                text = _clean_text(text)
+                size = len(text.encode("utf-8", errors="replace"))
+                digest = hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+                if digest in seen:
+                    block.append(f"[duplicate of an earlier result · {size} chars]")  # P4
+                    continue
+                seen.add(digest)
+                if size >= _OBS_MASK_BYTES:
+                    # P1: retrieval pointer, indexed below
+                    store_observation(observations_dir, call_id, "folded", text, min_bytes=_OBS_MASK_BYTES)
+                elif size >= _SNIP_INLINE_BYTES:
+                    block.append(_snip(text, _SNIP_HEAD, _SNIP_TAIL))  # P3: head+tail inline
+                # else: too small to matter — rerunning is cheaper than a fetch
         blocks.append("\n".join(block))
-        if is_recent:
-            continue
-        for call_id, text in turn["results"]:
-            # P1: a folded result above the mask threshold gains a retrieval
-            # pointer; smaller ones stay implicit (rerunning is cheaper than
-            # a fetch round-trip for a few hundred chars).
-            store_observation(observations_dir, call_id, "folded", text, min_bytes=_OBS_MASK_BYTES)
     parts = [
         f"[op0 compact projection · {recent_from} folded turns · "
         f"{_RECENT_TURNS} recent turns verbatim · policy mask-v1]",
