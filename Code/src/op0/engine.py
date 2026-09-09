@@ -136,11 +136,13 @@ class Engine:
         self.start(self._bridge)
 
     def inject_recovery_projection(self) -> None:
-        """Crash-recovery hand-off: continue with context, not amnesia."""
-        if self.config.context_budget_tokens <= 0 or self._context:
+        """Crash-recovery hand-off: continue with context, not amnesia.
+        Independent of the compaction budget — recovery must never depend on
+        whether folding is enabled."""
+        if self._context:
             return
         projection = build_projection(
-            self.session.load_events(), self.config.observations_dir or None
+            self.session.load_events(), self.config.observations_dir or None, recovery=True
         )
         if projection:
             self._context = projection

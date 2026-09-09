@@ -6,9 +6,9 @@ from pathlib import Path
 
 # 3000 approved on the 2,893-line base; 2026-09-09 the boss raised it twice:
 # 3250 (compaction P1, after +144 of parallel tui work) then 3300 (P3/P4/P5).
-# S1-S4 token savings net +114 (the S3 handoff builder outweighs the removed
-# snip family) -> real number 3,414, budget 3,420. Do not raise casually.
-LINE_BUDGET = 3420
+# S1-S4 net +114 -> 3420; the chaos-tested crash-recovery projection fix
+# (recovery=True replay, budget-independent injection) cost +10 -> 3,430.
+LINE_BUDGET = 3430
 
 
 def test_line_budget() -> None:

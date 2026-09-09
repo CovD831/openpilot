@@ -225,6 +225,18 @@ def test_projection_none_when_short(tmp_path: Path) -> None:
     assert build_projection(session.load_events(), None) is None
 
 
+def test_recovery_projection_covers_short_history(tmp_path: Path) -> None:
+    """Chaos finding: after a crash even a two-turn conversation must
+    survive into the fresh process — no fold threshold on recovery."""
+    session = _session(tmp_path)
+    _record_turn(session, 1, "create a", "done")
+    _record_turn(session, 2, "create b", "done")
+    projection = build_projection(session.load_events(), None, recovery=True)
+    assert projection is not None
+    assert "recovery projection" in projection
+    assert "create a" in projection and "create b" in projection  # both verbatim
+
+
 def test_estimate_usage_prefers_real_tokens(tmp_path: Path) -> None:
     session = _session(tmp_path)
     session.record("model_response", _model_response_usage(12345), producer="pi")

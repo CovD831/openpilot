@@ -191,16 +191,24 @@ def _turn_line(number: int, turn: dict[str, Any], *, prompt_cap: int, reply_cap:
     return line
 
 
-def build_projection(events: list, observations_dir: str | None) -> str | None:
+def build_projection(events: list, observations_dir: str | None, *, recovery: bool = False) -> str | None:
     """Materialize the folded projection; None if nothing is foldable.
 
     Folded zone = one line per turn; every folded tool result is stored
     outside the context and indexed for openpilot_obs retrieval, so anything
-    the model once saw stays retrievable after folding (S1's promise)."""
+    the model once saw stays retrievable after folding (S1's promise).
+    recovery=True replays the whole history verbatim with no fold threshold:
+    after a crash even a two-turn conversation must survive into the fresh
+    process, or the amnesiac model redoes side effects (chaos-tested)."""
     turns = _turn_pairs(events)
-    if len(turns) <= _RECENT_TURNS:
+    if not turns:
         return None
-    recent_from = len(turns) - _RECENT_TURNS
+    if recovery:
+        recent_from = 0
+    elif len(turns) <= _RECENT_TURNS:
+        return None
+    else:
+        recent_from = len(turns) - _RECENT_TURNS
     folded = [
         _turn_line(n, turn, prompt_cap=_TURN_PROMPT_CHARS, reply_cap=_TURN_REPLY_CHARS)
         for n, turn in enumerate(turns[:recent_from], 1)
@@ -220,13 +228,17 @@ def build_projection(events: list, observations_dir: str | None) -> str | None:
         if turn["reply"]:
             block.append(f"assistant: {_clean_text(turn['reply'])}")
         recent.append("\n".join(block))
-    parts = [
-        f"[op0 compact projection · {recent_from} folded turns (one line each) · "
-        f"{_RECENT_TURNS} recent turns verbatim · policy mask-v2]",
-        f"Task: {' '.join(_clean_text(turns[0]['prompt']).split())[:_TASK_CHARS]}",
-        "\n".join(folded),
-        "\n\n".join(recent),
-    ]
+    header = (
+        f"[op0 recovery projection · {len(turns)} turns verbatim · policy mask-v2]"
+        if recovery
+        else f"[op0 compact projection · {recent_from} folded turns (one line each) · "
+        f"{_RECENT_TURNS} recent turns verbatim · policy mask-v2]"
+    )
+    parts = [header]
+    if folded:
+        parts.append(f"Task: {' '.join(_clean_text(turns[0]['prompt']).split())[:_TASK_CHARS]}")
+        parts.append("\n".join(folded))
+    parts.append("\n\n".join(recent))
     index = _observation_lines(observations_dir)
     if index:
         parts.append("Stored observations (retrieve full text on demand):\n" + "\n".join(index))
