@@ -84,8 +84,7 @@ def _make_bridge(
     gate = gate_holder if gate_holder is not None else {"fn": None}
 
     def _auto_consent(proposal):
-        """Auto mode: approved the moment it exists (still recorded —
-        consent_bound carries auto: true)."""
+        """Auto mode: approved the moment it exists (still recorded; consent_bound carries auto: true)."""
         consent = registry.approve(proposal.proposal_id, session.run_id)
         session.record(
             "consent_bound",
