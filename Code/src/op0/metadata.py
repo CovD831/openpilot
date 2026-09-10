@@ -100,10 +100,11 @@ def _register() -> None:
 
     # -- subagent: the first domain contract born inside the registry ---
     _contract("task_spawned", producer="task", consumers=("audit", "recovery"),
-              required={"task_run_id": str, "task": str, "depth": int})
+              required={"task_run_id": str, "task": str, "depth": int},
+              optional={"worktree": str})
     _contract("task_finished", producer="task", consumers=("audit", "recovery", "parent model"),
               required={"task_run_id": str, "status": str, "summary": str, "receipts": int},
-              optional={"verified": bool, "validation": str})
+              optional={"verified": bool, "validation": str, "worktree": str})
     _contract("task_validation", producer="task", consumers=("audit", "parent model"),
               required={"command": str, "exit_code": int}, optional={"tail": str})
 

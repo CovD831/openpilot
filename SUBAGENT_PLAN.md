@@ -69,3 +69,18 @@
 1. 单测：子 run 账本独立性、delegation 事件完整、结构化返回、子 skill 索引独立计算；
 2. chaos 新场景 `subagent`：正常完成（两本账+事件链）/ 子进程 kill（父收 indeterminate、无孤儿）/ 子 run 越权（子 admission 拦截）；
 3. 真实冒烟：派只读研究子任务 → 父账本含 task_spawned/task_finished → 父模型收到结构化摘要。
+
+
+## Phase 2：并行 + worktree（2026-09-10 设计，validation 闭环之后）
+
+调研基础：cc 的 `isolation: worktree`（临时 worktree、无改动自动清理、有改动保留供审查）与 /batch 的 per-agent worktree 模式——git worktree 本身 20 年成熟度，无需新搜索。
+
+**并发安全前提核查**：AdmissionRegistry 无锁（_counter 非原子、dict 并发竞态）→ 方案：**全局审批锁**（module 级 threading.Lock，粗粒度覆盖 propose→gate UI→approve 全程——审批本就串行人处理，排队正确且最小改动）；per-child registry 与 authorizer 参数化留 Phase 3。
+
+**设计**：
+- 新工具 `openpilot_tasks`（复数）：`{tasks: [{task, validate?, worktree?}]}` 一次派发 N 个（≤4），ThreadPoolExecutor 并发，聚合 TaskHandoff 数组返回；单发 `openpilot_task` 保留；
+- worktree 生命周期：`worktree: true` → `git worktree add -b op0/task-<short>` 于系统临时目录（子 run 的 scoped_roots 即 worktree，沙箱写白名单自动覆盖）；完成后 `git status --porcelain` 判定——干净 → remove+清分支；有改动 → **保留 + 分支路径进 TaskHandoff**（merge 是人的决定，不自动）；
+- registry 客户：task_spawned/task_finished 加 optional `worktree` 字段；
+- 限制：depth=1 保持、单次 ≤4 并行（15× token 成本红线进契约）、审批串行排队。
+
+任务：T1 registry 2 字段 → T2 bridge openpilot_tasks handler → T3 cli 并发 spawner + worktree + 审批锁 → T4 TS + 契约 → T5 E2E（并行聚合 + worktree 生命周期）→ T6 冒烟 + 预算 + 提交。预估净增 ~150 行。

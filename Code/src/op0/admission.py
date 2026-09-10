@@ -13,9 +13,20 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator
+from threading import RLock
 from uuid import uuid4
 
 MAX_PENDING = 3
+
+
+def _synchronized(method):
+    # Serialize registry access: parallel child runs approve on one shared
+    # registry and the proposal counter must stay race-free.
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return wrapped
 
 
 @dataclass(frozen=True)
@@ -72,6 +83,8 @@ class AdmissionRegistry:
         self._proposals: dict[str, Proposal] = {}
         self._consents: dict[str, ConsentGrant] = {}
         self._counter = 0
+        self._lock = RLock()
+        self._lock = RLock()
 
     def _next_task_id(self) -> str:
         self._counter += 1
@@ -86,6 +99,8 @@ class AdmissionRegistry:
         self._proposals[proposal.proposal_id] = proposal
         return proposal
 
+    @_synchronized
+    @_synchronized
     def propose(
         self,
         goal: str,
@@ -112,6 +127,8 @@ class AdmissionRegistry:
         )
         return self._register(grant)
 
+    @_synchronized
+    @_synchronized
     def propose_command(self, goal: str, command: str) -> Proposal:
         normalized = " ".join(command.split())
         for existing in self.pending():
@@ -158,6 +175,8 @@ class AdmissionRegistry:
         self._consents[consent.consent_id] = consent
         return consent
 
+    @_synchronized
+    @_synchronized
     def approve(
         self,
         proposal_id: str,
@@ -180,6 +199,8 @@ class AdmissionRegistry:
             proposal_id=proposal.proposal_id,
         )
 
+    @_synchronized
+    @_synchronized
     def approve_all(self, run_id: str, *, validation_command: str = "") -> tuple[ConsentGrant, tuple[str, ...]]:
         """Approve every pending proposal of this run as one merged consent."""
         pending = self.pending()
@@ -208,6 +229,8 @@ class AdmissionRegistry:
         self._consents[merged.consent_id] = merged
         return merged, tuple(p.proposal_id for p in pending)
 
+    @_synchronized
+    @_synchronized
     def deny(self, proposal_id: str) -> Proposal:
         proposal = self.get(proposal_id)
         if proposal.status != "pending":
@@ -216,12 +239,16 @@ class AdmissionRegistry:
         self._proposals[proposal_id] = denied
         return denied
 
+    @_synchronized
+    @_synchronized
     def pending(self) -> list[Proposal]:
         return [p for p in self._proposals.values() if p.status == "pending"]
 
     def active_consents(self) -> tuple[ConsentGrant, ...]:
         return tuple(self._consents.values())
 
+    @_synchronized
+    @_synchronized
     def authorize_patch(self, path: str, run_id: str) -> ConsentGrant:
         """Return the consent covering this path, or raise — the single gate."""
         canonical = _canonical(path)
@@ -232,6 +259,8 @@ class AdmissionRegistry:
             f"write to {path} is not covered by an approved consent; /approve a proposal first"
         )
 
+    @_synchronized
+    @_synchronized
     def authorize_command(self, command: str, run_id: str) -> ConsentGrant:
         """Bash gate: the exact command string must match an approved consent."""
         normalized = " ".join(command.split())

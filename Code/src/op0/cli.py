@@ -13,8 +13,10 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from op0 import ui
@@ -73,6 +75,38 @@ def _apply_patch_receipt(store, session, registry, path, hash_before, hash_after
         )
 
 
+def make_worktree(project_root: str) -> tuple[str, str]:
+    """One git worktree per parallel child that writes files: isolated
+    checkout on its own branch, kept for human review when dirty."""
+    short = uuid.uuid4().hex[:8]
+    branch = f"op0/task-{short}"
+    path = str(Path(tempfile.gettempdir()) / f"op0-wt-{short}")
+    completed = subprocess.run(
+        ["git", "-C", project_root, "worktree", "add", "-b", branch, path],
+        capture_output=True, text=True,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(f"worktree creation failed: {completed.stderr[:200]}")
+    return path, branch
+
+
+def dispose_worktree(project_root: str, path: str, branch: str) -> str:
+    """Clean checkout -> removed; dirty -> kept for human review. The
+    returned string (empty or '<path> (branch <name>)') is audit metadata."""
+    state = subprocess.run(["git", "-C", path, "status", "--porcelain"],
+                           capture_output=True, text=True)
+    if state.stdout.strip():
+        return f"{path} (branch {branch})"  # merge or drop: a human decision
+    subprocess.run(["git", "-C", project_root, "worktree", "remove", "--force", path],
+                   capture_output=True, text=True)
+    subprocess.run(["git", "-C", project_root, "branch", "-D", branch],
+                   capture_output=True, text=True)
+    return ""
+
+
+_GATE_LOCK = threading.Lock()  # one approval card at a time, even with parallel children
+
+
 def _make_bridge(
     session,
     registry,
@@ -107,7 +141,8 @@ def _make_bridge(
         same call executes; "n" -> refusal telling the model to adapt instead
         of retrying; "" (timeout) -> the proposal stays pending and the model
         is told to stop this turn, never denied behind the human's back."""
-        answer = gate["fn"](proposal) if gate["fn"] else ""
+        with _GATE_LOCK:  # parallel children queue: one card on screen at a time
+            answer = gate["fn"](proposal) if gate["fn"] else ""
         if answer in ("y", "a"):
             consent = registry.approve(proposal.proposal_id, session.run_id)
             session.record(
@@ -213,7 +248,7 @@ def _make_bridge(
             producer="receipts",
         )
 
-    def _spawn_task(task_prompt: str, validate_cmd: str) -> dict:
+    def _spawn_task(task_prompt: str, validate_cmd: str = "", worktree: bool = False) -> dict:
         """Subagent: a full op0 run in a child context. Child carries its own
         ledger and engine; approvals surface on the SAME human gate (the
         registry is shared, keyed by run id); the child bridge has no
@@ -221,10 +256,15 @@ def _make_bridge(
         the child's admission events land in the parent ledger (the
         authorizers are shared closures); splitting them needs an
         authorizer-parameterization pass (phase 2)."""
+        wt_path, wt_branch = ("", "")
+        base = project_root
+        if worktree:
+            wt_path, wt_branch = make_worktree(project_root)
+            base = wt_path
         child_session = Session(Path(project_root))
         child_store = ReceiptStore(Path(project_root))
         child_bridge = ReadOnlyToolBridge(
-            (project_root,),
+            (base,),
             observations_dir=observations_dir,
             patch_authorizer=authorize,
             command_authorizer=authorize_cmd,
@@ -236,7 +276,7 @@ def _make_bridge(
             EngineConfig(
                 provider=str(os.environ.get("OP0_PI_PROVIDER") or ""),
                 model=str(os.environ.get("OP0_PI_MODEL") or ""),
-                cwd=project_root,
+                cwd=base,
                 timeout_seconds=timeout_seconds,
                 enable_read_tool=True,
                 context_budget_tokens=0,
@@ -245,7 +285,12 @@ def _make_bridge(
         )
         session.record(
             "task_spawned",
-            {"task_run_id": child_session.run_id, "task": task_prompt[:200], "depth": 1},
+            {
+                "task_run_id": child_session.run_id,
+                "task": task_prompt[:200],
+                "depth": 1,
+                **({"worktree": wt_branch} if wt_branch else {}),
+            },
             producer="task",
         )
         status, summary = "indeterminate", ""
@@ -269,6 +314,7 @@ def _make_bridge(
             child_engine.stop()
             child_bridge.stop()
         receipts = len(child_store.all(run_id=child_session.run_id))
+        kept = dispose_worktree(project_root, wt_path, wt_branch) if wt_branch else ""
 
         # evidence-only verdict: a declared validation command outranks the
         # child's own completion claim; it runs inside the same sandbox
@@ -311,6 +357,7 @@ def _make_bridge(
                 "summary": summary,
                 "receipts": receipts,
                 **({"verified": verified, "validation": f"exit {exit_code}"} if validate_cmd else {}),
+                **({"worktree": kept} if wt_branch else {}),
             },
             producer="task",
         )
@@ -320,7 +367,20 @@ def _make_bridge(
             "summary": summary,
             "receipts": receipts,
             "verified": verified,
+            **({"worktree": kept} if wt_branch else {}),
         }
+
+    def _spawn_tasks(specs: list[dict]) -> list[dict]:
+        """Parallel delegation: one independent child run per spec, on its
+        own thread; the shared human gate serializes approvals."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(4, len(specs))) as pool:
+            futures = [
+                pool.submit(_spawn_task, spec["task"], spec["validate"], spec["worktree"])
+                for spec in specs
+            ]
+            return [future.result() for future in futures]
 
     return ReadOnlyToolBridge(
         (project_root,),
@@ -342,6 +402,7 @@ def _make_bridge(
             tool_state.clear(),
         )[0],
         task_spawner=_spawn_task,
+        tasks_spawner=_spawn_tasks,
     )
 
 

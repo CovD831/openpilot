@@ -174,6 +174,31 @@ def main() -> int:
         checks.append(("validation failure -> failed verdict", failed_arm["status"] == "failed" and failed_arm["verified"] is False))
         unverified = spawn("task without a verdict")
         checks.append(("no validate -> success but unverified", unverified["status"] == "success" and "verified" not in unverified))
+        def spawn_many(specs: list[dict]) -> list[dict]:
+            """Mirrors cli._spawn_tasks: one child per spec on its own thread."""
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=min(4, len(specs))) as pool:
+                futures = [
+                    pool.submit(spawn, spec["task"], spec.get("validate", "")) for spec in specs
+                ]
+                return [future.result() for future in futures]
+
+        batch = [
+            {"task": "parallel task one"},
+            {"task": "parallel task two"},
+        ]
+        results = spawn_many(batch)
+        parent_session.record(
+            "task_spawned",
+            {"task_run_id": f"batch-{results[0]['task_run_id']}", "task": "parallel batch x2", "depth": 1},
+            producer="task",
+        )
+        checks += [
+            ("parallel batch returns one handoff per task", len(results) == 2),
+            ("both parallel children succeeded", all(r["status"] == "success" for r in results)),
+            ("parallel children have distinct ledgers", results[0]["task_run_id"] != results[1]["task_run_id"]),
+        ]
         broken = spawn_broken("this child crashes")
         checks.append(("child crash -> indeterminate, parent survives",
                        broken["status"] == "indeterminate" and parent_engine.state.value == "running"))

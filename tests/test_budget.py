@@ -12,9 +12,10 @@ from pathlib import Path
 # then skills (discovery + contract index + read carve-out + /skill, +94)
 # -> 3,630; subagent phase 1 (metadata registry + openpilot_task + double
 # ledger + structured TaskHandoff) -> 3,880; validation loop (validate arg
-# on the task ticket + sandboxed auto-run + verdict matrix) -> 3,940,
+# on the task ticket + sandboxed auto-run + verdict matrix) -> 3,940;
+# parallel delegation + worktree isolation + registry locking -> 4,060,
 # pending the boss's ruling.
-LINE_BUDGET = 3940
+LINE_BUDGET = 4060
 
 
 def test_line_budget() -> None:

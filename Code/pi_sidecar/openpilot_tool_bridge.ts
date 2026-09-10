@@ -184,6 +184,66 @@ export default function openpilotToolBridge(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "openpilot_tasks",
+    label: "OpenPilot Parallel Tasks",
+    description:
+      "Delegate 2-4 independent subtasks to op0 subagents running in parallel, " +
+      "each optionally in its own git worktree. Returns one structured report per task.",
+    parameters: Type.Object({
+      tasks: Type.Array(
+        Type.Object({
+          task: Type.String({ description: "The complete, self-contained task" }),
+          validate: Type.Optional(Type.String({ description: "Command that must exit 0 for done" })),
+          worktree: Type.Optional(Type.Boolean({ description: "Isolate file changes in a git worktree" })),
+        }),
+        { minItems: 2, maxItems: 4 },
+      ),
+    }),
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal) {
+      const response = await invokeGateway(
+        { type: "tool_call", toolName: "openpilot_tasks", toolCallId, args: params },
+        signal,
+      );
+      if (!response.success) throw new Error(response.content);
+      return {
+        content: [{ type: "text", text: response.content }],
+        details: { gateway: "openpilot", success: response.success },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "openpilot_tasks",
+    label: "OpenPilot Parallel Tasks",
+    description:
+      "Delegate 2-4 independent subtasks to op0 subagents running in parallel, " +
+      "each optionally in its own git worktree. Returns one structured report per task.",
+    parameters: Type.Object({
+      tasks: Type.Array(
+        Type.Object({
+          task: Type.String({ description: "The complete, self-contained task" }),
+          validate: Type.Optional(Type.String({ description: "Command that must exit 0 for done" })),
+          worktree: Type.Optional(Type.Boolean({ description: "Isolate file changes in a git worktree" })),
+        }),
+        { minItems: 2, maxItems: 4 },
+      ),
+    }),
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal) {
+      const response = await invokeGateway(
+        { type: "tool_call", toolName: "openpilot_tasks", toolCallId, args: params },
+        signal,
+      );
+      if (!response.success) throw new Error(response.content);
+      return {
+        content: [{ type: "text", text: response.content }],
+        details: { gateway: "openpilot", success: response.success },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "openpilot_task",
     label: "OpenPilot Task",
     description:

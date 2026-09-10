@@ -39,6 +39,7 @@ _ALLOWED_TOOLS = frozenset(
         "openpilot_search",
         "openpilot_obs",
         "openpilot_task",
+        "openpilot_tasks",
     }
 )
 
@@ -120,6 +121,7 @@ class ReadOnlyToolBridge:
         sandbox: bool | None = None,
         sandbox_network: bool = False,
         task_spawner: Callable[[str, str], dict[str, Any]] | None = None,
+        tasks_spawner: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
         patch_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         command_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         on_patch_applied: Callable[[str, str, str, Any], None] | None = None,
@@ -137,6 +139,7 @@ class ReadOnlyToolBridge:
         # subagent delegation: only the parent run's bridge carries a
         # spawner, so child runs cannot nest (depth=1 by construction)
         self.task_spawner = task_spawner
+        self.tasks_spawner = tasks_spawner
         # skill bodies live outside the write scope (anti prompt-injection:
         # the model must not edit its own instructions) but reads may pass
         self._read_only_roots = tuple(
@@ -228,6 +231,8 @@ class ReadOnlyToolBridge:
             args = dict(request.get("args") or {})
             if tool == "openpilot_task":
                 content = self._run_task(args, call_id)
+            elif tool == "openpilot_tasks":
+                content = self._run_tasks(args, call_id)
             elif tool == "openpilot_obs":
                 content = fetch_observation(self.observations_dir, str(args.get("id") or ""))
             else:
@@ -342,6 +347,33 @@ class ReadOnlyToolBridge:
         result = self.task_spawner(task, str(args.get("validate") or "").strip())
         result["call_id"] = call_id
         return json.dumps(result, ensure_ascii=False)
+
+    def _run_tasks(self, args: dict[str, Any], call_id: str) -> str:
+        """Parallel delegation: N child runs at once, one aggregated
+        TaskHandoff list back. Requires the injected parallel spawner;
+        child bridges never have one, so nesting stays impossible."""
+        if self.tasks_spawner is None:
+            raise PermissionError("parallel delegation is not available here (depth limit)")
+        tasks = args.get("tasks")
+        if not isinstance(tasks, list) or not tasks:
+            raise ValueError("openpilot_tasks requires a non-empty tasks array")
+        if len(tasks) > 4:
+            raise ValueError("at most 4 parallel tasks (token cost is superlinear)")
+        consent = self.command_authorizer(f"tasks x{len(tasks)}", args)
+        if consent is None:
+            raise PermissionError("task delegation denied by the human")
+        specs = []
+        for item in tasks:
+            if not isinstance(item, dict) or not str(item.get("task") or "").strip():
+                raise ValueError("each entry needs a task string")
+            specs.append(
+                {
+                    "task": str(item["task"]).strip(),
+                    "validate": str(item.get("validate") or "").strip(),
+                    "worktree": bool(item.get("worktree")),
+                }
+            )
+        return json.dumps(self.tasks_spawner(specs), ensure_ascii=False)
 
     def _in_scope(self, resolved: Path) -> bool:
         for root in self.scoped_roots:

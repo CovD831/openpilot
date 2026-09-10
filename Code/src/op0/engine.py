@@ -71,7 +71,7 @@ class EngineConfig:
         if self.enable_read_tool:
             extension = str(Path(__file__).resolve().parents[2] / "pi_sidecar" / "openpilot_tool_bridge.ts")
             argv.extend(
-                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search,openpilot_obs,openpilot_task")
+                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search,openpilot_obs,openpilot_task,openpilot_tasks")
             )
         else:
             argv.append("--no-tools")
@@ -330,7 +330,9 @@ def compose_turn_message(prompt: str, context: str = "", skills: str = "") -> st
         "(run one shell command in the project root), openpilot_obs (retrieve "
         "the full text of a stored observation by id), openpilot_task (delegate "
         "one self-contained subtask to a subagent, which returns a structured "
-        "report). Delegate only when a subtask needs its own context window — "
+        "report), openpilot_tasks (2-4 independent subtasks in parallel, each "
+        "optionally isolated in its own git worktree when they write files). "
+        "Delegate only when a subtask needs its own context window — "
         "broad exploration or independent analysis — never for a step you can "
         "do directly. Reads and search run "
         "freely. A patch, write, or bash call may pause until the human "
