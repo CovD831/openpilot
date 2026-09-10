@@ -71,7 +71,7 @@ class EngineConfig:
         if self.enable_read_tool:
             extension = str(Path(__file__).resolve().parents[2] / "pi_sidecar" / "openpilot_tool_bridge.ts")
             argv.extend(
-                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search,openpilot_obs")
+                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search,openpilot_obs,openpilot_task")
             )
         else:
             argv.append("--no-tools")
@@ -229,6 +229,10 @@ class Engine:
                 raise RuntimeError("Pi completed without accepting the prompt")
             if error and _retry:
                 return self.ask(prompt, first_turn=first_turn, _retry=False)
+            if error:
+                # a model error is never a silent empty success: raise so the
+                # caller (tui, subagent spawner) sees the failure
+                raise RuntimeError(error)
         except (EOFError, TimeoutError, RuntimeError, OSError, ValueError) as exc:
             self.state = EngineState.CRASHED
             self.session.record(
@@ -300,13 +304,15 @@ class Engine:
 
 def _map_event_type(event_type: str) -> str:
     return {
-        "agent_start": "engine_started",
-        "turn_start": "turn_started",
+        # the three name-conflicting passthroughs carry a pi_ prefix so the
+        # engine-built events keep their strict contracts (see metadata.py)
+        "agent_start": "pi_engine_started",
+        "turn_start": "pi_turn_started",
         "message_start": "model_response_started",
         "message_update": "model_response_delta",
         "message_end": "model_response",
-        "turn_end": "turn_finished",
-        "agent_end": "agent_end",
+        "turn_end": "pi_turn_finished",
+        "agent_end": "pi_agent_end",
         "tool_execution_start": "tool_call",
         "tool_execution_end": "tool_result",
     }.get(event_type, "")
@@ -322,7 +328,11 @@ def compose_turn_message(prompt: str, context: str = "", skills: str = "") -> st
         "(search file contents), openpilot_patch (replace lines of an existing "
         "file), openpilot_write (create or overwrite a file), openpilot_bash "
         "(run one shell command in the project root), openpilot_obs (retrieve "
-        "the full text of a stored observation by id). Reads and search run "
+        "the full text of a stored observation by id), openpilot_task (delegate "
+        "one self-contained subtask to a subagent, which returns a structured "
+        "report). Delegate only when a subtask needs its own context window — "
+        "broad exploration or independent analysis — never for a step you can "
+        "do directly. Reads and search run "
         "freely. A patch, write, or bash call may pause until the human "
         "approves it: when approved, the same call executes and returns its "
         "result normally; when denied you will see a denial — do not retry "

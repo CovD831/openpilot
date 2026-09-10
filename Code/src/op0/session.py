@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from op0 import metadata
 from op0.contracts import EventRecord
 
 
@@ -29,6 +30,9 @@ class Session:
         producer: str = "op0",
         call_id: str = "",
     ) -> EventRecord:
+        problem = metadata.violation(event_type, payload or {})
+        if problem:
+            raise ValueError(f"ledger contract violation: {problem}")
         self._index += 1
         record = EventRecord(
             event_type=event_type,

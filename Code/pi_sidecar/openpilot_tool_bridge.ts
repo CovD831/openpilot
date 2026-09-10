@@ -182,4 +182,27 @@ export default function openpilotToolBridge(pi: ExtensionAPI) {
       };
     },
   });
+
+  pi.registerTool({
+    name: "openpilot_task",
+    label: "OpenPilot Task",
+    description:
+      "Delegate one self-contained subtask to an op0 subagent with its own context window. " +
+      "Use for broad exploration or independent analysis; never for a step you can do directly.",
+    parameters: Type.Object({
+      task: Type.String({ description: "The complete, self-contained task for the subagent" }),
+    }),
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal) {
+      const response = await invokeGateway(
+        { type: "tool_call", toolName: "openpilot_task", toolCallId, args: params },
+        signal,
+      );
+      if (!response.success) throw new Error(response.content);
+      return {
+        content: [{ type: "text", text: response.content }],
+        details: { gateway: "openpilot", success: response.success },
+      };
+    },
+  });
 }

@@ -38,6 +38,7 @@ _ALLOWED_TOOLS = frozenset(
         "openpilot_bash",
         "openpilot_search",
         "openpilot_obs",
+        "openpilot_task",
     }
 )
 
@@ -118,6 +119,7 @@ class ReadOnlyToolBridge:
         observations_dir: str | None = None,
         sandbox: bool | None = None,
         sandbox_network: bool = False,
+        task_spawner: Callable[[str], dict[str, Any]] | None = None,
         patch_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         command_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         on_patch_applied: Callable[[str, str, str, Any], None] | None = None,
@@ -132,6 +134,9 @@ class ReadOnlyToolBridge:
         # one that needs a physical wall behind the policy gate.
         self.sandbox_enabled = sandbox_mod.available() if sandbox is None else bool(sandbox)
         self.sandbox_network = bool(sandbox_network)
+        # subagent delegation: only the parent run's bridge carries a
+        # spawner, so child runs cannot nest (depth=1 by construction)
+        self.task_spawner = task_spawner
         # skill bodies live outside the write scope (anti prompt-injection:
         # the model must not edit its own instructions) but reads may pass
         self._read_only_roots = tuple(
@@ -221,7 +226,9 @@ class ReadOnlyToolBridge:
             if self.on_request is not None:
                 self.on_request(request)
             args = dict(request.get("args") or {})
-            if tool == "openpilot_obs":
+            if tool == "openpilot_task":
+                content = self._run_task(args, call_id)
+            elif tool == "openpilot_obs":
                 content = fetch_observation(self.observations_dir, str(args.get("id") or ""))
             else:
                 if tool == "openpilot_read":
@@ -318,6 +325,23 @@ class ReadOnlyToolBridge:
                 f"after a fold, retrieve it with openpilot_obs(\"{prior['call_id']}\")]"
             )
         return content
+
+    def _run_task(self, args: dict[str, Any], call_id: str) -> str:
+        """Subagent delegation: a full op0 run in a child context, governed
+        by its own ledger/receipts/gate and reported back as a structured
+        TaskHandoff. The spawner is injected by the host; a child bridge has
+        none, so nesting is impossible by construction."""
+        if self.task_spawner is None:
+            raise PermissionError("subagent delegation is not available here (depth limit)")
+        task = str(args.get("task") or "").strip()
+        if not task:
+            raise ValueError("openpilot_task requires a task")
+        consent = self.command_authorizer(f"task: {task[:160]}", args)
+        if consent is None:
+            raise PermissionError("task delegation denied by the human")
+        result = self.task_spawner(task)
+        result["call_id"] = call_id
+        return json.dumps(result, ensure_ascii=False)
 
     def _in_scope(self, resolved: Path) -> bool:
         for root in self.scoped_roots:

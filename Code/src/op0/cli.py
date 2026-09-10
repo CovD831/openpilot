@@ -82,6 +82,7 @@ def _make_bridge(
     goal_state: dict,
     gate_holder: dict | None = None,
     observations_dir: str | None = None,
+    timeout_seconds: float = 180.0,
 ) -> ReadOnlyToolBridge:
     gate = gate_holder if gate_holder is not None else {"fn": None}
 
@@ -212,6 +213,74 @@ def _make_bridge(
             producer="receipts",
         )
 
+    def _spawn_task(task_prompt: str) -> dict:
+        """Subagent: a full op0 run in a child context. Child carries its own
+        ledger and engine; approvals surface on the SAME human gate (the
+        registry is shared, keyed by run id); the child bridge has no
+        spawner, so nesting is impossible by construction. KNOWN COMPROMISE:
+        the child's admission events land in the parent ledger (the
+        authorizers are shared closures); splitting them needs an
+        authorizer-parameterization pass (phase 2)."""
+        child_session = Session(Path(project_root))
+        child_store = ReceiptStore(Path(project_root))
+        child_bridge = ReadOnlyToolBridge(
+            (project_root,),
+            observations_dir=observations_dir,
+            patch_authorizer=authorize,
+            command_authorizer=authorize_cmd,
+            on_patch_applied=on_patch_applied,
+            on_bash_executed=on_bash_executed,
+        )
+        child_engine = Engine(
+            child_session,
+            EngineConfig(
+                provider=str(os.environ.get("OP0_PI_PROVIDER") or ""),
+                model=str(os.environ.get("OP0_PI_MODEL") or ""),
+                cwd=project_root,
+                timeout_seconds=timeout_seconds,
+                enable_read_tool=True,
+                context_budget_tokens=0,
+                observations_dir=observations_dir,
+            ),
+        )
+        session.record(
+            "task_spawned",
+            {"task_run_id": child_session.run_id, "task": task_prompt[:200], "depth": 1},
+            producer="task",
+        )
+        status, summary = "indeterminate", ""
+        try:
+            child_bridge.start()
+            child_engine.start(child_bridge)
+            answer = child_engine.ask(
+                "You are an op0 subagent running one delegated task. Complete it "
+                "and report concisely; the parent decides what to do with your "
+                "report. Task:\n" + task_prompt,
+                first_turn=True,
+            )
+            # fail-closed: an empty report is an incomplete run, never success
+            if answer.strip():
+                status, summary = "success", answer[:2000]
+            else:
+                summary = "subagent returned no report"[:2000]
+        except Exception as exc:  # noqa: BLE001 - a child failure must not kill the parent run
+            summary = f"subagent did not complete: {type(exc).__name__}: {exc}"[:2000]
+        finally:
+            child_engine.stop()
+            child_bridge.stop()
+        receipts = len(child_store.all(run_id=child_session.run_id))
+        session.record(
+            "task_finished",
+            {"task_run_id": child_session.run_id, "status": status, "summary": summary, "receipts": receipts},
+            producer="task",
+        )
+        return {
+            "task_run_id": child_session.run_id,
+            "status": status,
+            "summary": summary,
+            "receipts": receipts,
+        }
+
     return ReadOnlyToolBridge(
         (project_root,),
         observations_dir=observations_dir,
@@ -231,6 +300,7 @@ def _make_bridge(
             ),
             tool_state.clear(),
         )[0],
+        task_spawner=_spawn_task,
     )
 
 
@@ -258,6 +328,7 @@ def run_once_task(spec: TaskSpec) -> str:
     goal_state = {"goal": spec.goal}
     bridge = _make_bridge(
         session, registry, store, spec.project_root, goal_state=goal_state,
+        timeout_seconds=spec.timeout_seconds,
         observations_dir=str(Path(spec.project_root) / ".openpilot" / "observations"),
     )
     bridge.start()
@@ -324,11 +395,13 @@ def _run_repl(project_root: Path) -> int:
     store = ReceiptStore(project_root)
     state = {"goal": "", "saw_response": False, "verbose": False, "approval_mode": "ask"}
     gate = {"fn": None}
+    spec = TaskSpec(goal="", project_root=str(project_root))
     bridge = _make_bridge(
         traj, registry, store, str(project_root), goal_state=state, gate_holder=gate,
         observations_dir=str(project_root / ".openpilot" / "observations"),
+        timeout_seconds=spec.timeout_seconds,
     )
-    engine = Engine(traj, _engine_config(TaskSpec(goal="", project_root=str(project_root))))
+    engine = Engine(traj, _engine_config(spec))
 
     def handle_command(text: str) -> None:
         parts = text.split(maxsplit=1)

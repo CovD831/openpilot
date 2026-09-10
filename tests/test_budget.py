@@ -10,8 +10,9 @@ from pathlib import Path
 # (recovery=True replay, budget-independent injection) cost +10 -> 3,430.
 # 2026-09-10: sandbox (the physical wall behind the policy gate, +99 net)
 # then skills (discovery + contract index + read carve-out + /skill, +94)
-# -> 3,630, pending the boss's ruling.
-LINE_BUDGET = 3630
+# -> 3,630; subagent phase 1 (metadata registry + openpilot_task + double
+# ledger + structured TaskHandoff) -> 3,880, pending the boss's ruling.
+LINE_BUDGET = 3880
 
 
 def test_line_budget() -> None:
