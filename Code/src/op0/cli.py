@@ -23,6 +23,8 @@ from op0.bridge import ReadOnlyToolBridge
 from op0.contracts import TaskSpec
 from op0.engine import Engine, EngineConfig
 from rich.markup import escape
+from op0 import skills as skills_mod
+from op0 import skills as skills_mod
 from op0.receipts import ReceiptStore, decide_closure, file_hash, record_validation
 from op0.recovery import reconcile, resume_plan
 from op0.session import Session
@@ -349,6 +351,18 @@ def _run_repl(project_root: Path) -> int:
         elif cmd == "/recover":
             report = _recovery_report_to_str(store, None)
             tui.append_block(report or "[dim](nothing to recover)[/dim]")
+        elif cmd == "/skill":
+            found = skills_mod.discover(registry.project_root)
+            if not found:
+                tui.append_block("[dim](no skills installed)[/dim]")
+            for name, text, path in found:
+                tui.append_block(f"[bold]{escape(name)}[/bold] — {escape(text)}\n[dim]{escape(str(path))}[/dim]")
+        elif cmd == "/skill":
+            found = skills_mod.discover(registry.project_root)
+            if not found:
+                tui.append_block("[dim](no skills installed)[/dim]")
+            for name, text, path in found:
+                tui.append_block(f"[bold]{escape(name)}[/bold] — {escape(text)}\n[dim]{escape(str(path))}[/dim]")
         elif cmd == "/proposals":
             pending = registry.pending()
             if not pending:

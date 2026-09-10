@@ -132,6 +132,11 @@ class ReadOnlyToolBridge:
         # one that needs a physical wall behind the policy gate.
         self.sandbox_enabled = sandbox_mod.available() if sandbox is None else bool(sandbox)
         self.sandbox_network = bool(sandbox_network)
+        # skill bodies live outside the write scope (anti prompt-injection:
+        # the model must not edit its own instructions) but reads may pass
+        self._read_only_roots = tuple(
+            root / ".openpilot" / "skills" for root in self.scoped_roots
+        ) + (Path.home() / ".openpilot" / "skills",)
         self.patch_authorizer = patch_authorizer
         self.command_authorizer = command_authorizer
         self.on_patch_applied = on_patch_applied
@@ -269,7 +274,7 @@ class ReadOnlyToolBridge:
         if not path.is_absolute() and self.scoped_roots:
             path = self.scoped_roots[0] / path
         resolved = path.resolve(strict=False)
-        if not self._in_scope(resolved):
+        if not (self._in_scope(resolved) or self._in_read_only(resolved)):
             raise PermissionError("path is outside the declared read scope")
         if not resolved.is_file():
             raise FileNotFoundError(f"path is not a regular file: {raw_path}")
@@ -319,6 +324,12 @@ class ReadOnlyToolBridge:
             if resolved == root:
                 return True
             if root.is_dir() and root in resolved.parents:
+                return True
+        return False
+
+    def _in_read_only(self, resolved: Path) -> bool:
+        for root in self._read_only_roots:
+            if root in resolved.parents or resolved == root:
                 return True
         return False
 

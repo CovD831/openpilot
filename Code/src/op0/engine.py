@@ -16,6 +16,7 @@ from typing import Any
 from op0.bridge import ReadOnlyToolBridge
 from op0.compaction import build_projection, estimate_usage, should_compact
 from op0.contracts import TaskSpec
+from op0 import skills as skills_mod
 from op0.response import error_message_from_payload
 from op0.session import Session
 
@@ -99,6 +100,9 @@ class Engine:
         self._process: subprocess.Popen[bytes] | None = None
         self._bridge: ReadOnlyToolBridge | None = None
         self._turns = 0
+        # skill index is part of the pinned contract: computed once, carried
+        # through every re-pin (first turn, fold, crash recovery)
+        self._skills_index = skills_mod.index_block(self.config.cwd) if self.config.cwd else ""
         self._context = ""  # projection to deliver with the next first-turn prompt
 
     def start(self, bridge: ReadOnlyToolBridge | None = None) -> None:
@@ -186,7 +190,7 @@ class Engine:
             assert self._process.stdin is not None
             request_id = f"prompt:{self.session.run_id}:{self._turns}"
             if first_turn or self._context:
-                message = compose_turn_message(prompt, self._context)
+                message = compose_turn_message(prompt, self._context, skills=self._skills_index)
                 self._context = ""
             else:
                 message = prompt
@@ -308,7 +312,7 @@ def _map_event_type(event_type: str) -> str:
     }.get(event_type, "")
 
 
-def compose_turn_message(prompt: str, context: str = "") -> str:
+def compose_turn_message(prompt: str, context: str = "", skills: str = "") -> str:
     """First-turn message: pin the tool contract for the whole session (L4
     surface); `context` carries the compaction projection after a fold or a
     crash-recovery restart."""
@@ -328,6 +332,8 @@ def compose_turn_message(prompt: str, context: str = "") -> str:
         "summarize or point at them instead. This contract holds for every "
         "later turn in this conversation.\n\n"
     )
+    if skills:
+        message += skills + "\n\n"
     if context:
         message += (
             "Context from earlier turns: one line per folded turn (user "
