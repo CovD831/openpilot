@@ -8,6 +8,7 @@ the depth=1 wall."""
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -49,7 +50,7 @@ def main() -> int:
         parent_session = Session(root)
         parent_store = ReceiptStore(root)
 
-        def spawn(task_prompt: str) -> dict:
+        def spawn(task_prompt: str, validate_cmd: str = "") -> dict:
             """Mirrors cli._spawn_task: child stack, same scope, no spawner."""
             child_session = Session(root)
             child_store = ReceiptStore(root)
@@ -71,12 +72,29 @@ def main() -> int:
                 child_engine.stop()
                 child_bridge.stop()
             receipts = len(child_store.all(run_id=child_session.run_id))
-            parent_session.record(
-                "task_finished",
-                {"task_run_id": child_session.run_id, "status": status, "summary": summary, "receipts": receipts},
-                producer="task",
-            )
-            return {"task_run_id": child_session.run_id, "status": status, "summary": summary, "receipts": receipts}
+            verified, exit_code = False, None
+            if validate_cmd and status == "success":
+                completed = subprocess.run(validate_cmd, shell=True, capture_output=True, text=True)
+                exit_code, verified = completed.returncode, completed.returncode == 0
+                child_session.record(
+                    "task_validation",
+                    {"command": validate_cmd, "exit_code": exit_code, "tail": (completed.stderr or "")[-200:]},
+                    producer="task",
+                )
+                if verified:
+                    summary = f"[validated] {summary}"[:2000]
+                else:
+                    status = "failed"
+                    summary = f"validation failed (exit {exit_code}): {(completed.stderr or '')[:200]}"[:2000]
+            payload = {
+                "task_run_id": child_session.run_id,
+                "status": status,
+                "summary": summary,
+                "receipts": receipts,
+                **({"verified": verified, "validation": f"exit {exit_code}"} if validate_cmd else {}),
+            }
+            parent_session.record("task_finished", payload, producer="task")
+            return payload
 
         parent_engine, parent_bridge = _engine(root, parent_session, "parent ack", spawner=spawn)
         parent_bridge.start()
@@ -100,11 +118,12 @@ def main() -> int:
         # parent model (here: direct handler call) delegates one task
         response = parent_bridge._handle(
             {"toolName": "openpilot_task", "toolCallId": "cccccccc-0000-4000-8000-00000000t001",
-             "args": {"task": "read notes/a.txt and summarize"}}
+             "args": {"task": "read notes/a.txt and summarize", "validate": "true"}}
         )
         payload = json.loads(response["content"])
         checks += [
             ("handler returns structured TaskHandoff", payload["status"] == "success"),
+            ("validated verdict: success + verified", payload["status"] == "success" and payload["verified"] is True),
             ("child summary travels back", "alpha v1" in payload["summary"]),
             ("delegation events in parent ledger", any(
                 e.event_type == "task_spawned" for e in parent_session.load_events())
@@ -151,6 +170,10 @@ def main() -> int:
             return {"task_run_id": child_session.run_id, "status": status,
                     "summary": summary, "receipts": 0}
 
+        failed_arm = spawn("another task", validate_cmd="false")
+        checks.append(("validation failure -> failed verdict", failed_arm["status"] == "failed" and failed_arm["verified"] is False))
+        unverified = spawn("task without a verdict")
+        checks.append(("no validate -> success but unverified", unverified["status"] == "success" and "verified" not in unverified))
         broken = spawn_broken("this child crashes")
         checks.append(("child crash -> indeterminate, parent survives",
                        broken["status"] == "indeterminate" and parent_engine.state.value == "running"))

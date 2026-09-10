@@ -119,7 +119,7 @@ class ReadOnlyToolBridge:
         observations_dir: str | None = None,
         sandbox: bool | None = None,
         sandbox_network: bool = False,
-        task_spawner: Callable[[str], dict[str, Any]] | None = None,
+        task_spawner: Callable[[str, str], dict[str, Any]] | None = None,
         patch_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         command_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         on_patch_applied: Callable[[str, str, str, Any], None] | None = None,
@@ -339,7 +339,7 @@ class ReadOnlyToolBridge:
         consent = self.command_authorizer(f"task: {task[:160]}", args)
         if consent is None:
             raise PermissionError("task delegation denied by the human")
-        result = self.task_spawner(task)
+        result = self.task_spawner(task, str(args.get("validate") or "").strip())
         result["call_id"] = call_id
         return json.dumps(result, ensure_ascii=False)
 

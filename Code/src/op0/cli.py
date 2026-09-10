@@ -23,7 +23,7 @@ from op0.bridge import ReadOnlyToolBridge
 from op0.contracts import TaskSpec
 from op0.engine import Engine, EngineConfig
 from rich.markup import escape
-from op0 import skills as skills_mod
+from op0 import sandbox as sandbox_mod
 from op0 import skills as skills_mod
 from op0.receipts import ReceiptStore, decide_closure, file_hash, record_validation
 from op0.recovery import reconcile, resume_plan
@@ -213,7 +213,7 @@ def _make_bridge(
             producer="receipts",
         )
 
-    def _spawn_task(task_prompt: str) -> dict:
+    def _spawn_task(task_prompt: str, validate_cmd: str) -> dict:
         """Subagent: a full op0 run in a child context. Child carries its own
         ledger and engine; approvals surface on the SAME human gate (the
         registry is shared, keyed by run id); the child bridge has no
@@ -269,9 +269,49 @@ def _make_bridge(
             child_engine.stop()
             child_bridge.stop()
         receipts = len(child_store.all(run_id=child_session.run_id))
+
+        # evidence-only verdict: a declared validation command outranks the
+        # child's own completion claim; it runs inside the same sandbox
+        verified = False
+        if validate_cmd and status == "success":
+            argv = (
+                sandbox_mod.wrap_command(
+                    (Path(project_root),), validate_cmd, network=False, home=str(Path.home())
+                )
+                if sandbox_mod.available()
+                else validate_cmd
+            )
+            try:
+                completed = subprocess.run(
+                    argv if isinstance(argv, list) else argv,
+                    shell=not isinstance(argv, list),
+                    capture_output=True, text=True, timeout=120.0,
+                    cwd=project_root,
+                )
+                exit_code, tail = completed.returncode, (completed.stderr or completed.stdout or "")[-400:]
+            except subprocess.TimeoutExpired:
+                exit_code, tail = 124, "validation timed out after 120s"
+            child_session.record(
+                "task_validation",
+                {"command": validate_cmd, "exit_code": exit_code, "tail": tail},
+                producer="task",
+            )
+            verified = exit_code == 0
+            if verified:
+                summary = f"[validated: {validate_cmd[:120]}] {summary}"[:2000]
+            else:
+                status = "failed"
+                summary = f"validation failed (exit {exit_code}, {validate_cmd[:120]}): {tail}"[:2000]
+
         session.record(
             "task_finished",
-            {"task_run_id": child_session.run_id, "status": status, "summary": summary, "receipts": receipts},
+            {
+                "task_run_id": child_session.run_id,
+                "status": status,
+                "summary": summary,
+                "receipts": receipts,
+                **({"verified": verified, "validation": f"exit {exit_code}"} if validate_cmd else {}),
+            },
             producer="task",
         )
         return {
@@ -279,6 +319,7 @@ def _make_bridge(
             "status": status,
             "summary": summary,
             "receipts": receipts,
+            "verified": verified,
         }
 
     return ReadOnlyToolBridge(

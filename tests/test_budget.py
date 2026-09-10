@@ -11,8 +11,10 @@ from pathlib import Path
 # 2026-09-10: sandbox (the physical wall behind the policy gate, +99 net)
 # then skills (discovery + contract index + read carve-out + /skill, +94)
 # -> 3,630; subagent phase 1 (metadata registry + openpilot_task + double
-# ledger + structured TaskHandoff) -> 3,880, pending the boss's ruling.
-LINE_BUDGET = 3880
+# ledger + structured TaskHandoff) -> 3,880; validation loop (validate arg
+# on the task ticket + sandboxed auto-run + verdict matrix) -> 3,940,
+# pending the boss's ruling.
+LINE_BUDGET = 3940
 
 
 def test_line_budget() -> None:

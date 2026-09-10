@@ -191,6 +191,11 @@ export default function openpilotToolBridge(pi: ExtensionAPI) {
       "Use for broad exploration or independent analysis; never for a step you can do directly.",
     parameters: Type.Object({
       task: Type.String({ description: "The complete, self-contained task for the subagent" }),
+      validate: Type.String({
+        description:
+          "Optional shell command that must exit 0 for the task to count as done. " +
+          "Its verdict is evidence, not the subagent's own claim.",
+      }),
     }),
     executionMode: "sequential",
     async execute(toolCallId, params, signal) {

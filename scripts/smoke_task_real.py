@@ -7,6 +7,7 @@ the parent answers from the child's structured report."""
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -65,7 +66,7 @@ def main() -> int:
         session = Session(root)
         store = ReceiptStore(root)
 
-        def spawn(task_prompt: str) -> dict:
+        def spawn(task_prompt: str, validate_cmd: str = "") -> dict:
             child_session = Session(root)
             child_store = ReceiptStore(root)
             child_engine, child_bridge = _engine(root, child_session, None)
@@ -92,29 +93,58 @@ def main() -> int:
                 child_engine.stop()
                 child_bridge.stop()
             receipts = len(child_store.all(run_id=child_session.run_id))
+            verified, exit_code = False, None
+            if validate_cmd and status == "success":
+                completed = subprocess.run(validate_cmd, shell=True, capture_output=True, text=True, cwd=str(root))
+                exit_code, verified = completed.returncode, completed.returncode == 0
+                child_session.record(
+                    "task_validation",
+                    {"command": validate_cmd, "exit_code": exit_code, "tail": (completed.stderr or "")[-200:]},
+                    producer="task",
+                )
+                if verified:
+                    summary = f"[validated] {summary}"[:2000]
+                else:
+                    status = "failed"
+                    summary = f"validation failed (exit {exit_code}): {(completed.stderr or '')[:200]}"[:2000]
             session.record(
                 "task_finished",
-                {"task_run_id": child_session.run_id, "status": status, "summary": summary, "receipts": receipts},
+                {
+                    "task_run_id": child_session.run_id,
+                    "status": status,
+                    "summary": summary,
+                    "receipts": receipts,
+                    **({"verified": verified, "validation": f"exit {exit_code}"} if validate_cmd else {}),
+                },
                 producer="task",
             )
-            print(f"  [info] child {child_session.run_id}: {status}, {receipts} receipt(s)")
+            print(f"  [info] child {child_session.run_id}: {status}, verified={verified}, {receipts} receipt(s)")
             print(f"  [info] child summary: {summary[:160]!r}")
-            return {"task_run_id": child_session.run_id, "status": status, "summary": summary, "receipts": receipts}
+            return {"task_run_id": child_session.run_id, "status": status, "summary": summary, "receipts": receipts, "verified": verified}
 
         engine, bridge = _engine(root, session, spawn)
         bridge.start()
         engine.start(bridge)
         answer = engine.ask(
-            "Delegate via openpilot_task: have a subagent read notes/secret2.txt and report "
-            "the code it contains. Then relay that code to me exactly.",
+            "Delegate via openpilot_task: have a subagent create notes/answer.txt containing "
+            "exactly SECRET-TWO-9042, and declare a validate command that verifies the file "
+            "content. Then relay the validation result to me.",
             first_turn=True,
         )
         engine.stop()
         bridge.stop()
         events = [e.event_type for e in session.load_events()]
+        validation_events = [
+            e for e in session.load_events()
+            if e.event_type == "task_validation"
+        ] or [
+            e for e in (root / ".openpilot" / "trajectory").glob("*.jsonl")
+            if "task_validation" in e.read_text(encoding="utf-8")
+        ]
         checks = [
             ("parent model called openpilot_task", "task_spawned" in events),
             ("task_finished recorded", "task_finished" in events),
+            ("child validation ran (evidence, not claim)", bool(validation_events)),
             ("answer carries the code", "SECRET-TWO-9042" in answer),
         ]
         print("answer:", answer[:220].replace("\n", " "))
