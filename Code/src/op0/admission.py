@@ -84,7 +84,6 @@ class AdmissionRegistry:
         self._consents: dict[str, ConsentGrant] = {}
         self._counter = 0
         self._lock = RLock()
-        self._lock = RLock()
 
     def _next_task_id(self) -> str:
         self._counter += 1

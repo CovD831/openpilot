@@ -104,32 +104,25 @@ def dispose_worktree(project_root: str, path: str, branch: str) -> str:
     return ""
 
 
-_GATE_LOCK = threading.Lock()  # one approval card at a time, even with parallel children
-
-
-def _make_bridge(
-    session,
-    registry,
-    store,
-    project_root: str,
-    *,
-    goal_state: dict,
-    gate_holder: dict | None = None,
-    observations_dir: str | None = None,
-    timeout_seconds: float = 180.0,
-) -> ReadOnlyToolBridge:
-    gate = gate_holder if gate_holder is not None else {"fn": None}
-
+def _bind_authorizers(ledger, receipts, registry, gate, project_root, goal_state):
+    """Authorizer bundle bound to ONE ledger: the parent run and each
+    child run bind their own set, so every admission event lands in the
+    ledger of the run it governs. The registry, the human gate and the
+    goal state stay shared - approval remains one serialized card."""
     def _auto_consent(proposal):
         """Auto mode: approved the moment it exists (still recorded; consent_bound carries auto: true)."""
-        consent = registry.approve(proposal.proposal_id, session.run_id)
-        session.record(
+        consent = registry.approve(proposal.proposal_id, ledger.run_id)
+        ledger.record(
             "consent_bound",
             {"consent_id": consent.consent_id, "proposal_id": consent.proposal_id, "auto": True},
             producer="admission",
         )
-        session.record(
-            "patch_authorized",
+        # the authorized-event type matches what was authorized (registry:
+        # a command approval is not a patch approval)
+        kind = getattr(getattr(proposal, "grant", None), "kind", "")
+        authorized = "command_authorized" if kind == "bash" else "patch_authorized"
+        ledger.record(
+            authorized,
             {"consent_id": consent.consent_id, "auto": True},
             producer="admission",
         )
@@ -144,15 +137,15 @@ def _make_bridge(
         with _GATE_LOCK:  # parallel children queue: one card on screen at a time
             answer = gate["fn"](proposal) if gate["fn"] else ""
         if answer in ("y", "a"):
-            consent = registry.approve(proposal.proposal_id, session.run_id)
-            session.record(
+            consent = registry.approve(proposal.proposal_id, ledger.run_id)
+            ledger.record(
                 "consent_bound",
                 {"consent_id": consent.consent_id, "proposal_id": consent.proposal_id, "run_id": consent.run_id},
                 producer="admission",
             )
             return consent
         if answer == "":
-            session.record(
+            ledger.record(
                 "approval_timeout", {"proposal_id": proposal.proposal_id}, producer="admission"
             )
             raise PermissionError(
@@ -160,7 +153,7 @@ def _make_bridge(
                 "stop this turn and wait for their decision"
             )
         registry.deny(proposal.proposal_id)
-        session.record(
+        ledger.record(
             "proposal_denied",
             {"proposal_id": proposal.proposal_id, "gate": True},
             producer="admission",
@@ -173,8 +166,8 @@ def _make_bridge(
     def authorize(raw_path: str, args: dict):
         canonical = str(Path(raw_path).expanduser().resolve(strict=False))
         try:
-            consent = registry.authorize_patch(canonical, session.run_id)
-            session.record(
+            consent = registry.authorize_patch(canonical, ledger.run_id)
+            ledger.record(
                 "patch_authorized",
                 {"path": canonical, "consent_id": consent.consent_id},
                 producer="admission",
@@ -186,7 +179,7 @@ def _make_bridge(
             proposal = registry.propose(
                 goal_state["goal"], canonical, (project_root,), kind=kind, diff_preview=diff
             )
-            session.record(
+            ledger.record(
                 "patch_proposed",
                 {
                     "proposal_id": proposal.proposal_id,
@@ -204,8 +197,8 @@ def _make_bridge(
 
     def authorize_cmd(command: str, args: dict):
         try:
-            consent = registry.authorize_command(command, session.run_id)
-            session.record(
+            consent = registry.authorize_command(command, ledger.run_id)
+            ledger.record(
                 "command_authorized",
                 {"command": command, "consent_id": consent.consent_id},
                 producer="admission",
@@ -213,7 +206,7 @@ def _make_bridge(
             return consent
         except PermissionError:
             proposal = registry.propose_command(goal_state["goal"], command)
-            session.record(
+            ledger.record(
                 "command_proposed",
                 {"proposal_id": proposal.proposal_id, "command": command},
                 producer="admission",
@@ -225,11 +218,11 @@ def _make_bridge(
             raise
 
     def on_patch_applied(path: str, hash_before: str, hash_after: str, consent) -> None:
-        _apply_patch_receipt(store, session, registry, path, hash_before, hash_after, consent)
+        _apply_patch_receipt(receipts, ledger, registry, path, hash_before, hash_after, consent)
 
     def on_bash_executed(command: str, exit_code: int, output: str, consent) -> None:
-        receipt = store.write_bash_receipt(
-            run_id=session.run_id,
+        receipt = receipts.write_bash_receipt(
+            run_id=ledger.run_id,
             consent_id=consent.consent_id,
             proposal_id=consent.proposal_id,
             admission_id=consent.admission_id,
@@ -237,7 +230,7 @@ def _make_bridge(
             exit_code=exit_code,
             output_tail=output,
         )
-        session.record(
+        ledger.record(
             "bash_receipt_written",
             {
                 "receipt_id": receipt.receipt_id,
@@ -248,14 +241,36 @@ def _make_bridge(
             producer="receipts",
         )
 
+    return authorize, authorize_cmd, on_patch_applied, on_bash_executed
+
+
+_GATE_LOCK = threading.Lock()  # one approval card at a time, even with parallel children
+
+
+def _make_bridge(
+    session,
+    registry,
+    store,
+    project_root: str,
+    *,
+    goal_state: dict,
+    gate_holder: dict | None = None,
+    observations_dir: str | None = None,
+    timeout_seconds: float = 180.0,
+) -> ReadOnlyToolBridge:
+    gate = gate_holder if gate_holder is not None else {"fn": None}
+
+    authorize, authorize_cmd, on_patch_applied, on_bash_executed = _bind_authorizers(
+        session, store, registry, gate, project_root, goal_state
+    )
+
     def _spawn_task(task_prompt: str, validate_cmd: str = "", worktree: bool = False) -> dict:
         """Subagent: a full op0 run in a child context. Child carries its own
         ledger and engine; approvals surface on the SAME human gate (the
         registry is shared, keyed by run id); the child bridge has no
-        spawner, so nesting is impossible by construction. KNOWN COMPROMISE:
-        the child's admission events land in the parent ledger (the
-        authorizers are shared closures); splitting them needs an
-        authorizer-parameterization pass (phase 2)."""
+        spawner, so nesting is impossible by construction. The child binds
+        its own authorizer set, so its admission events land in its own
+        ledger (phase 3 separation)."""
         wt_path, wt_branch = ("", "")
         base = project_root
         if worktree:
@@ -263,13 +278,18 @@ def _make_bridge(
             base = wt_path
         child_session = Session(Path(project_root))
         child_store = ReceiptStore(Path(project_root))
+        # the child binds its OWN authorizers: admission events land in the
+        # child ledger they govern (registry and human gate stay shared)
+        c_authorize, c_authorize_cmd, c_on_patch, c_on_bash = _bind_authorizers(
+            child_session, child_store, registry, gate, project_root, goal_state
+        )
         child_bridge = ReadOnlyToolBridge(
             (base,),
             observations_dir=observations_dir,
-            patch_authorizer=authorize,
-            command_authorizer=authorize_cmd,
-            on_patch_applied=on_patch_applied,
-            on_bash_executed=on_bash_executed,
+            patch_authorizer=c_authorize,
+            command_authorizer=c_authorize_cmd,
+            on_patch_applied=c_on_patch,
+            on_bash_executed=c_on_bash,
         )
         child_engine = Engine(
             child_session,
