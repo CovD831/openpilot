@@ -13,9 +13,10 @@ from pathlib import Path
 # -> 3,630; subagent phase 1 (metadata registry + openpilot_task + double
 # ledger + structured TaskHandoff) -> 3,880; validation loop (validate arg
 # on the task ticket + sandboxed auto-run + verdict matrix) -> 3,940;
-# parallel delegation + worktree isolation + registry locking -> 4,060,
-# pending the boss's ruling.
-LINE_BUDGET = 4060
+# parallel delegation + worktree isolation + registry locking -> 4,060;
+# checkpoint resume (schema header, unfinished-run detection, in-place
+# continuation, /checkpoint) -> 4,180, pending the boss's ruling.
+LINE_BUDGET = 4180
 
 
 def test_line_budget() -> None:

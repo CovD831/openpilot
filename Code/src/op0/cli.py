@@ -491,7 +491,18 @@ def _recovery_report_to_str(store: ReceiptStore, run_id: str | None) -> str:
 def _run_repl(project_root: Path) -> int:
     from op0.tui import TuiSession
 
-    traj = Session(project_root)
+    # resume: an unfinished previous run is a first-class state, not a
+    # failure. Pure resume semantics — the ledger is appended, side effects
+    # are reconciled from receipts and never replayed.
+    resumed_from = ""
+    unfinished = Session.unfinished_runs(project_root)
+    if unfinished:
+        newest = unfinished[0]
+        answer = input(f"unfinished run {newest.stem} found — resume it? (y/N) ")
+        if answer.strip().lower() == "y":
+            resumed_from = newest.stem
+
+    traj = Session(project_root, run_id=resumed_from, resume=bool(resumed_from))
     traj.record("session_started", {"project_root": str(project_root)})
     registry = AdmissionRegistry(str(project_root))
     store = ReceiptStore(project_root)
@@ -512,7 +523,7 @@ def _run_repl(project_root: Path) -> int:
         if cmd == "/help":
             tui.append_block(
                 "[dim]reads free · writes/bash approved (y/n/a) · /validate <cmd> · "
-                "/dismiss <id> · /recover /proposals /verbose /new /clear /exit[/dim]"
+                "/checkpoint <note> · /checkpoint <note> · /dismiss <id> · /recover /proposals /verbose /new /clear /exit[/dim]"
             )
         elif cmd == "/verbose":
             state["verbose"] = not state["verbose"]
@@ -532,12 +543,14 @@ def _run_repl(project_root: Path) -> int:
                 tui.append_block("[dim](no skills installed)[/dim]")
             for name, text, path in found:
                 tui.append_block(f"[bold]{escape(name)}[/bold] — {escape(text)}\n[dim]{escape(str(path))}[/dim]")
-        elif cmd == "/skill":
-            found = skills_mod.discover(registry.project_root)
-            if not found:
-                tui.append_block("[dim](no skills installed)[/dim]")
-            for name, text, path in found:
-                tui.append_block(f"[bold]{escape(name)}[/bold] — {escape(text)}\n[dim]{escape(str(path))}[/dim]")
+        elif cmd == "/checkpoint":
+            note = rest
+            traj.record(
+                "checkpoint_recorded",
+                {"checkpoint_id": f"ckpt-{uuid.uuid4().hex[:8]}", "note": note},
+                producer="op0",
+            )
+            tui.append_block(f"[dim]checkpoint recorded{(' — ' + escape(note)) if note else ''}[/dim]")
         elif cmd == "/proposals":
             pending = registry.pending()
             if not pending:
@@ -630,6 +643,14 @@ def _run_repl(project_root: Path) -> int:
         tui.append_block(report)
     bridge.start()
     engine.start(bridge)
+    if resumed_from:
+        engine.inject_recovery_projection()
+        traj.record(
+            "checkpoint_recorded",
+            {"checkpoint_id": f"resume-{uuid.uuid4().hex[:8]}", "note": f"resumed from {resumed_from}"},
+            producer="op0",
+        )
+        tui.append_block(f"[dim]resumed run {resumed_from} — context restored from the ledger[/dim]")
     return tui.run()
 
 

@@ -18,6 +18,8 @@ Four honesty rules keep this from becoming the 6,390-line past:
 
 from __future__ import annotations
 
+SCHEMA_VERSION = 1  # ledger format version; written as the first line of every trajectory
+
 _CONTRACT: dict[str, dict] = {}
 # event -> {producer, consumers, required, optional, strict}
 
@@ -107,6 +109,8 @@ def _register() -> None:
               optional={"verified": bool, "validation": str, "worktree": str})
     _contract("task_validation", producer="task", consumers=("audit", "parent model"),
               required={"command": str, "exit_code": int}, optional={"tail": str})
+    _contract("checkpoint_recorded", producer="op0", consumers=("resume", "audit"),
+              required={"checkpoint_id": str}, optional={"note": str})
 
 
 _register()
