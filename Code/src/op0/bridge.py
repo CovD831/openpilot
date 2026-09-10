@@ -20,6 +20,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+from op0 import sandbox as sandbox_mod
 from op0.compaction import fetch_observation, observation_tombstone, store_observation
 
 _MAX_REQUEST_BYTES = 1_000_000
@@ -115,6 +116,8 @@ class ReadOnlyToolBridge:
         scoped_roots: tuple[str, ...],
         *,
         observations_dir: str | None = None,
+        sandbox: bool | None = None,
+        sandbox_network: bool = False,
         patch_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         command_authorizer: Callable[[str, dict[str, Any]], Any] | None = None,
         on_patch_applied: Callable[[str, str, str, Any], None] | None = None,
@@ -124,6 +127,11 @@ class ReadOnlyToolBridge:
     ) -> None:
         self.scoped_roots = tuple(Path(root).expanduser().resolve(strict=False) for root in scoped_roots)
         self.observations_dir = observations_dir
+        # sandbox=None means auto: on wherever Seatbelt is available. Bash is
+        # the only tool that can spawn arbitrary processes, so it is the only
+        # one that needs a physical wall behind the policy gate.
+        self.sandbox_enabled = sandbox_mod.available() if sandbox is None else bool(sandbox)
+        self.sandbox_network = bool(sandbox_network)
         self.patch_authorizer = patch_authorizer
         self.command_authorizer = command_authorizer
         self.on_patch_applied = on_patch_applied
@@ -391,14 +399,24 @@ class ReadOnlyToolBridge:
             raise ValueError("openpilot_bash requires a command")
         consent = self.command_authorizer(command, args)
         try:
-            completed = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=_BASH_TIMEOUT_SECONDS,
-                cwd=self.scoped_roots[0] if self.scoped_roots else None,
-            )
+            if self.sandbox_enabled:
+                # physical wall: the policy layer already approved, this keeps the
+                # blast radius of any gate defect or model escape inside the scope
+                argv = sandbox_mod.wrap_command(
+                    self.scoped_roots, command, network=self.sandbox_network, home=str(Path.home())
+                )
+                completed = subprocess.run(
+                    argv, capture_output=True, text=True, timeout=_BASH_TIMEOUT_SECONDS
+                )
+            else:
+                completed = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=_BASH_TIMEOUT_SECONDS,
+                    cwd=self.scoped_roots[0] if self.scoped_roots else None,
+                )
         except subprocess.TimeoutExpired as exc:
             if self.on_bash_executed is not None:
                 try:

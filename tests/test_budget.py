@@ -8,7 +8,9 @@ from pathlib import Path
 # 3250 (compaction P1, after +144 of parallel tui work) then 3300 (P3/P4/P5).
 # S1-S4 net +114 -> 3420; the chaos-tested crash-recovery projection fix
 # (recovery=True replay, budget-independent injection) cost +10 -> 3,430.
-LINE_BUDGET = 3430
+# 2026-09-10: sandbox (the physical wall behind the policy gate, sandbox.py
+# plus bridge wiring, +99 net) -> 3,550, pending the boss's ruling.
+LINE_BUDGET = 3550
 
 
 def test_line_budget() -> None:

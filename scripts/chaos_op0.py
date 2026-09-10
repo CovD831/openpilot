@@ -33,6 +33,7 @@ from op0.bridge import ReadOnlyToolBridge  # noqa: E402
 from op0.engine import Engine, EngineConfig  # noqa: E402
 from op0.receipts import ReceiptStore, decide_closure  # noqa: E402
 from op0.recovery import APPLIED, reconcile, resume_plan  # noqa: E402
+from op0 import sandbox as sandbox_mod  # noqa: E402
 from op0.session import Session  # noqa: E402
 
 MAIN = Path(__file__).resolve().parents[1]
@@ -373,6 +374,44 @@ def _worker(worker_root: str) -> int:
     return 0
 
 
+def scenario_sandbox(root: Path) -> list[tuple[str, bool]]:
+    """Physical wall: bash is the only tool that can spawn arbitrary
+    processes, so even a command the policy layer approves must stay
+    inside the scope, and the ledger must be untouchable by bash."""
+    if not sandbox_mod.available():
+        return [("seatbelt unavailable on this platform (skipped)", True)]
+    task_root = root / "sandbox"
+    ledger = task_root / ".openpilot" / "trajectory"
+    ledger.mkdir(parents=True)
+    (ledger / "run.jsonl").write_text("keep\n", encoding="utf-8")
+    bridge = ReadOnlyToolBridge(
+        (str(task_root),),
+        sandbox=True,
+        command_authorizer=lambda c, a: SimpleNamespace(consent_id="chaos-ok"),
+    )
+
+    def bash(command: str, suffix: str) -> dict:
+        return bridge._handle(
+            {"toolName": "openpilot_bash",
+             "toolCallId": f"aaaaaaaa-0000-4000-8000-00000000{suffix}",
+             "args": {"command": command}}
+        )
+
+    inside = bash(f"echo ok > {task_root}/in.txt", "sa01")
+    outside = Path.home() / f"op0-sbx-chaos-{os.getpid()}.txt"
+    try:
+        bash(f"echo pwn > {outside}", "sa02")
+        escaped = outside.exists()
+    finally:
+        outside.unlink(missing_ok=True)
+    bash(f"echo tampered > {ledger / 'run.jsonl'}", "sa03")
+    return [
+        ("approved write inside scope lands", inside.get("success") is True and (task_root / "in.txt").is_file()),
+        ("approved write outside scope is physically blocked", not escaped),
+        ("ledger tamper via bash is physically blocked", (ledger / "run.jsonl").read_text(encoding="utf-8") == "keep\n"),
+    ]
+
+
 def main() -> int:
     if len(sys.argv) > 2 and sys.argv[1] == "--worker":
         return _worker(sys.argv[2])
@@ -384,6 +423,7 @@ def main() -> int:
         report.append(("softkill: Pi killed mid-run", scenario_softkill(root / "softkill")))
         report.append(("hardkill: worker SIGKILLed", scenario_hardkill(root)))
         report.append(("fakesuccess: closure vs model claim", scenario_fakesuccess(root / "fake")))
+        report.append(("sandbox: physical wall behind the gate", scenario_sandbox(root)))
         if "--with-cc" in sys.argv:
             cc_env = _cc_base_env(root / "cc-home")
             report.append(("cc softkill (same model, different harness)", scenario_cc_softkill(root, cc_env)))
