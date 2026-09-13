@@ -15,8 +15,10 @@ from pathlib import Path
 # on the task ticket + sandboxed auto-run + verdict matrix) -> 3,940;
 # parallel delegation + worktree isolation + registry locking -> 4,060;
 # checkpoint resume (schema header, unfinished-run detection, in-place
-# continuation, /checkpoint) -> 4,180, pending the boss's ruling.
-LINE_BUDGET = 4180
+# continuation, /checkpoint) -> 4,180; yes-to-all fix + fixed-height
+# approval card scrolling (both from the real flask-4992 run) -> 4,210,
+# pending the boss's ruling.
+LINE_BUDGET = 4210
 
 
 def test_line_budget() -> None:

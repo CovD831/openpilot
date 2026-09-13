@@ -193,7 +193,7 @@ class TuiSession:
         self._card_window = Window(
             content=FormattedTextControl(self._get_card_text),
             style="class:approval",
-            height=D(max=lambda: max(10, (os.get_terminal_size().lines if os.isatty(1) else 30) - 5)),
+            height=lambda: D(max=max(10, (os.get_terminal_size().lines if os.isatty(1) else 30) - 5)),
         )
 
         # claude-code input: a thin divider rule above a "❯ " prompt — no
