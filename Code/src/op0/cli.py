@@ -508,7 +508,7 @@ def _recovery_report_to_str(store: ReceiptStore, run_id: str | None) -> str:
     ui.recovery_report(reconciled, status, actions, console=capture)
     return capture.file.getvalue()
 
-def _run_repl(project_root: Path) -> int:
+def _run_repl(project_root: Path, initial_goal: str | None = None) -> int:
     from op0.tui import TuiSession
 
     # resume: an unfinished previous run is a first-class state, not a
@@ -528,7 +528,7 @@ def _run_repl(project_root: Path) -> int:
     store = ReceiptStore(project_root)
     state = {"goal": "", "saw_response": False, "verbose": False, "approval_mode": "ask"}
     gate = {"fn": None}
-    spec = TaskSpec(goal="", project_root=str(project_root))
+    spec = TaskSpec(goal=initial_goal or "", project_root=str(project_root))
     bridge = _make_bridge(
         traj, registry, store, str(project_root), goal_state=state, gate_holder=gate,
         observations_dir=str(project_root / ".openpilot" / "observations"),
@@ -543,7 +543,7 @@ def _run_repl(project_root: Path) -> int:
         if cmd == "/help":
             tui.append_block(
                 "[dim]reads free · writes/bash approved (y/n/a) · /validate <cmd> · "
-                "/checkpoint <note> · /checkpoint <note> · /dismiss <id> · /recover /proposals /verbose /new /clear /exit[/dim]"
+                "/checkpoint <note> · /dismiss <id> · /recover /proposals /verbose /new /clear /exit[/dim]"
             )
         elif cmd == "/verbose":
             state["verbose"] = not state["verbose"]
@@ -656,6 +656,7 @@ def _run_repl(project_root: Path) -> int:
         version=_version(),
         on_command=handle_command,
         state=state,
+        initial_goal=spec.goal,
     )
     gate["fn"] = tui.approval_gate  # tool-call-time approvals (cc semantics)
     report = _recovery_report_to_str(store, None)
@@ -684,6 +685,7 @@ def _version() -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="op0", description="op0 L4 execution base")
     parser.add_argument("--once", help="run one read-only goal and exit")
+    parser.add_argument("--goal", help="initial goal for the interactive session")
     parser.add_argument("--project-path", default=".", help="project root for this task")
     args = parser.parse_args(argv)
     project_root = Path(args.project_path).expanduser().resolve(strict=False)
@@ -693,7 +695,7 @@ def main(argv: list[str] | None = None) -> int:
         if response:
             ui.markdown_response(response)
         return 0 if response else 1
-    return _run_repl(project_root)
+    return _run_repl(project_root, initial_goal=args.goal)
 
 
 if __name__ == "__main__":

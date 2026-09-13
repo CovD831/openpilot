@@ -89,6 +89,7 @@ class TuiSession:
         state: dict,
         input=None,
         output=None,
+        initial_goal: str = "",
     ) -> None:
         self.project_root = project_root
         self.traj = traj
@@ -99,6 +100,7 @@ class TuiSession:
         self.version = version
         self.on_command = on_command
         self.state = state
+        self.initial_goal = initial_goal
 
         self.blocks: list[str] = []
         self.mode = "idle"  # idle | working | waiting-approval | exiting
@@ -719,6 +721,11 @@ class TuiSession:
 
         # raw=True: print() carries real ANSI escape codes (tool colors);
         # without it patch_stdout escapes them into literal '?[32m' garbage.
+        # --goal: auto-dispatch once the app loop is live (a timer because
+        # _dispatch needs the rendered app to exist)
+        if self.initial_goal:
+            goal = self.initial_goal
+            threading.Timer(1.2, self._dispatch, args=(goal,)).start()
         with patch_stdout(raw=True):
             self.app.run()
         return 0
