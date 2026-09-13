@@ -288,7 +288,8 @@ def render_settled_line(proposal, answered: str) -> str:
 
 
 def render_proposal_to_str(proposal, *, verbose: bool = False, selected: int | None = None,
-                           answered: str = "") -> str:
+                           answered: str = "", body_height: int | None = None,
+                           scroll: int = 0) -> str:
     """Live approval card, claude-code shape — reconstructed from the
     decompiled PermissionDialog/PermissionPrompt/ListItem source
     (777genius/claude-code-source-code-full):
@@ -299,8 +300,11 @@ def render_proposal_to_str(proposal, *, verbose: bool = False, selected: int | N
     - dim footer, no closing rule
 
     selected: which option carries the ❯ (live selection). answered: settled
-    mode — options collapse into the chosen outcome. Returns RENDERED ANSI
-    (the TUI card window and /proposals print it as-is)."""
+    mode — options collapse into the chosen outcome. body_height: fixed
+    visible rows for the content area — a long command/diff scrolls inside
+    the card (scroll = first visible body line) so the options never leave
+    the screen. Returns RENDERED ANSI (the TUI card window and /proposals
+    print it as-is)."""
     from rich.console import Console as RichConsole
 
     grant = proposal.grant
@@ -327,7 +331,14 @@ def render_proposal_to_str(proposal, *, verbose: bool = False, selected: int | N
         ])
     body: list[str] = []
     if grant.command:
-        body.append(f"[dim]   $ {escape(grant.command)}[/dim]")
+        # wrap HERE (to the card width) so body logical rows == rendered
+        # physical rows: the fixed-height truncation below counts real rows
+        import textwrap
+
+        wrapped = textwrap.wrap(grant.command, width=max(24, width - 8)) or [""]
+        body.append(f"[dim]   $ {escape(wrapped[0])}[/dim]")
+        for cont in wrapped[1:]:
+            body.append(f"[dim]     {escape(cont)}[/dim]")
     for path in grant.write_paths:
         body.append(f"[dim]   {escape(path)}[/dim]")
     if grant.diff_preview.strip():
@@ -336,6 +347,23 @@ def render_proposal_to_str(proposal, *, verbose: bool = False, selected: int | N
         removed = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
         body.append(f"[dim]   changes: +{added} −{removed} lines ('/verbose' to expand)[/dim]")
     body_text = ("\n".join(body) + "\n") if body else ""
+
+    # fixed-height content window: the header (rule + title) and the options
+    # block stay always visible; only the body scrolls when it overflows
+    if body_height is not None and body_text:
+        body_lines = body_text.rstrip("\n").split("\n")
+        scroll = max(0, min(scroll, max(0, len(body_lines) - body_height)))
+        visible = body_lines[scroll:scroll + body_height]
+        above = scroll
+        below = len(body_lines) - scroll - len(visible)
+        framed = []
+        if above > 0:
+            framed.append(f"   [dim]… {above} lines above — PgUp[/dim]")
+        framed.extend(visible)
+        if below > 0:
+            framed.append(f"   [dim]… {below} more lines — PgDn[/dim]")
+        body_text = "\n".join(framed) + "\n"
+
     markup = (
         f"[dim]{rule}[/dim]\n"
         f"[bold]{label}[/bold][dim] · {proposal.proposal_id}[/dim]\n"

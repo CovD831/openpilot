@@ -159,10 +159,21 @@ class TuiSession:
                 _submit(("y", "a", "n")[selected])(event)
             return handler
 
+        def _scroll(delta: int):
+            def handler(event) -> None:
+                if self._card_state is not None:
+                    self._card_state["scroll"] = max(0, self._card_state.get("scroll", 0) + delta)
+                    self._refresh()
+            return handler
+
         approval_kb.add("escape", filter=approving)(_submit("n"))
         approval_kb.add("up", filter=approving)(_move(-1))
         approval_kb.add("down", filter=approving)(_move(1))
         approval_kb.add("enter", filter=approving)(_confirm_selected())
+        approval_kb.add("pageup", filter=approving)(_scroll(-5))
+        approval_kb.add("pagedown", filter=approving)(_scroll(5))
+        approval_kb.add("c-u", filter=approving)(_scroll(-5))
+        approval_kb.add("c-d", filter=approving)(_scroll(5))
         for key, answer in (("y", "y"), ("n", "n"), ("a", "a"), ("1", "y"), ("2", "a"), ("3", "n")):
             approval_kb.add(key, filter=approving)(_submit(answer))
 
@@ -182,6 +193,7 @@ class TuiSession:
         self._card_window = Window(
             content=FormattedTextControl(self._get_card_text),
             style="class:approval",
+            height=D(max=lambda: max(10, (os.get_terminal_size().lines if os.isatty(1) else 30) - 5)),
         )
 
         # claude-code input: a thin divider rule above a "❯ " prompt — no
@@ -531,11 +543,28 @@ class TuiSession:
     def _get_card_text(self):
         """The live approval card (claude-code shape), rendered from
         _card_state — a layout window, so selection changes are pure
-        re-renders: the ❯ moves with an invalidate, never cursor math."""
+        re-renders: the ❯ moves with an invalidate, never cursor math.
+
+        The content area is height-capped: a long command or diff scrolls
+        INSIDE the card (PgUp/PgDn) and the options block never leaves the
+        screen — found during the real flask-4992 run, where a long bash
+        command pushed the options off-screen."""
         state = self._card_state
         if state is None:
             return ""
-        return ANSI(ui.render_proposal_to_str(state["proposal"], selected=state["selected"]))
+        try:
+            rows = os.get_terminal_size().lines
+        except OSError:
+            rows = 30
+        body_height = max(3, rows - 12)  # room for header, options, input, status
+        return ANSI(
+            ui.render_proposal_to_str(
+                state["proposal"],
+                selected=state["selected"],
+                body_height=body_height,
+                scroll=state.get("scroll", 0),
+            )
+        )
 
     def _settle_card(self, answer: str) -> None:
         """Answer given: close the live card and put a one-line outcome into
@@ -565,7 +594,7 @@ class TuiSession:
         # BEFORE opening the card — claude-code order: tool line, then question
         self._stream_events(0)
         self._print_new_thinking(0)
-        self._card_state = {"proposal": proposal, "selected": 0}
+        self._card_state = {"proposal": proposal, "selected": 0, "scroll": 0}
         self.mode = "waiting-approval"
         self._refresh()
         # invalidate() called from inside a key handler does NOT schedule a
