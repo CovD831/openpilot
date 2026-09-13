@@ -608,12 +608,16 @@ class TuiSession:
                     self.append_block(f"[green]approved[/green] {consent.consent_id}")
                 elif answer in ("a", "all"):
                     consent, ids = self.registry.approve_all(self.traj.run_id)
+                    # yes-to-all: also flip future proposals to auto so the
+                    # card never comes back this session (same as the cli
+                    # tool-call-time gate)
+                    self.state["approval_mode"] = "auto"
                     self.traj.record(
                         "consent_bound",
-                        {"consent_id": consent.consent_id, "proposal_ids": list(ids), "batch": True},
+                        {"consent_id": consent.consent_id, "proposal_ids": list(ids), "batch": True, "auto": True},
                         producer="admission",
                     )
-                    self.append_block(f"[green]approved {len(ids)} proposal(s)[/green]")
+                    self.append_block(f"[green]approved {len(ids)} proposal(s) — future ones auto[/green]")
                 elif answer in ("n", "no"):
                     denied = self.registry.deny(self.registry.pending()[0].proposal_id)
                     self.append_block(f"[red]denied[/red] {denied.proposal_id}")

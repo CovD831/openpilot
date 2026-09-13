@@ -138,11 +138,17 @@ def _bind_authorizers(ledger, receipts, registry, gate, project_root, goal_state
             answer = gate["fn"](proposal) if gate["fn"] else ""
         if answer in ("y", "a"):
             consent = registry.approve(proposal.proposal_id, ledger.run_id)
-            ledger.record(
-                "consent_bound",
-                {"consent_id": consent.consent_id, "proposal_id": consent.proposal_id, "run_id": consent.run_id},
-                producer="admission",
-            )
+            payload = {
+                "consent_id": consent.consent_id,
+                "proposal_id": consent.proposal_id,
+                "run_id": consent.run_id,
+            }
+            if answer == "a":
+                # yes-to-all (cc semantics): this one approves, and every
+                # future proposal skips the card via _auto_consent
+                goal_state["approval_mode"] = "auto"
+                payload["auto"] = True
+            ledger.record("consent_bound", payload, producer="admission")
             return consent
         if answer == "":
             ledger.record(

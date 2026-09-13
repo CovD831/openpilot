@@ -62,6 +62,35 @@ def test_parent_and_child_ledgers_do_not_leak(tmp_path):
     assert not (child_types & {"patch_proposed", "consent_bound", "patch_authorized"}) & parent_types
 
 
+def test_yes_to_all_flips_auto_mode_and_skips_card(tmp_path):
+    """Boss's real-run finding (flask-4992): pressing 'a' (Yes to all) used
+    to behave exactly like 'y' - the card came back every time. Now 'a'
+    approves this one AND flips approval_mode to auto, so no further card
+    is shown for the rest of the session."""
+    registry = AdmissionRegistry(str(tmp_path))
+    gate = {"fn": lambda proposal: "a"}  # the human presses 2. Yes to all
+    goal_state = {"goal": "g", "approval_mode": "ask"}
+
+    session = Session(tmp_path)
+    store = ReceiptStore(tmp_path)
+    authorize, _cmd, _patch, _bash = _bind_authorizers(
+        session, store, registry, gate, str(tmp_path), goal_state
+    )
+    consent = authorize(str(tmp_path / "f1.txt"), {"content": "x"})
+    assert goal_state["approval_mode"] == "auto"
+
+    types = {e.event_type: e for e in session.load_events()}
+    assert types["consent_bound"].payload.get("auto") is True  # the flip is on the ledger
+
+    gate_calls = []
+    gate["fn"] = lambda proposal: gate_calls.append(1) or "y"
+    authorize(str(tmp_path / "f2.txt"), {"content": "y"})
+    assert gate_calls == []  # the card never comes back
+    consents = [e for e in session.load_events() if e.event_type == "consent_bound"]
+    assert len(consents) == 2
+    assert consents[-1].payload.get("auto") is True  # auto-consents mark themselves
+
+
 def test_bash_receipt_lands_in_bound_ledger(tmp_path):
     registry = AdmissionRegistry(str(tmp_path))
     gate = {"fn": None}
