@@ -486,7 +486,6 @@ def payload_to_artifact(tool_name: str, payload: Any, input_metadata: Any = None
         "llm_summarizer",
         "code_reviewer",
         "memory_context",
-        "autonomy_tool",
     }:
         content = (
             payload.get("summary")
