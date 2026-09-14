@@ -16,6 +16,25 @@
 | sympy-15609 | **success** | 27 | 21,575 | $0.0573 | 91s |
 
 补测后总量：**9 条，可测 7 条，成功 7（100%）**——其中 5063 经 3 次失败 + 规格推演契约后首次通过（实现与官方一字不差，F2P 手动验证 2/2 PASS + 同口径对照一致）。
+
+## 扩样批次：django（2026-09-14 下午）
+
+harness 增加 django runner（tests/runtests.py + test_sqlite + django 风格 F2P 转换 + py3.13 环境门）。4 条 django 功能增强型：
+
+| instance | verdict | turns | cost | spec 审计 |
+|---|---|---|---|---|
+| django-15996 | **success** | 96 | $0.33 | **spec_assumptions 账本首录**（3 条序列化格式假设） |
+| django-15789 | **success** | 22 | $0.049 | miss（简单任务未调用） |
+| django-16527 | **success** | 15 | $0.027 | miss |
+| django-14608 | environment | - | - | django 4.0 `import cgi`，py3.13 移除 |
+
+**累计：11 条任务，可测 10 条，成功 10（100%）；功能增强型 5/5**（4992、5063-契约后、15996、15789、16527——15996/15789/16527 在契约+typed 化下首跑或低成本命中）。
+
+harness 层的 django 判定学费（全部已修）：
+1. runtests.py 不认 pytest 的 `--basetemp`；
+2. -v 2 的逐测试行会被 8000 字符尾部窗口截掉（16527 的 ok 行在窗外）——改为保留全部 `... ` 行；
+3. 数据集 F2P 名存在截断变体（"test_x (module.Class.t" 无闭括号）——判定统一改为模块级跑 + 按裸测试名 grep；
+4. WORKROOT 迁出 /tmp（WorkBuddy 会话会清理 /tmp，工作区曾整体丢失，靠老板从废纸篓救回）；prepare 的清理改用 git（用户目录下 `rm -rf` 被环境守护拦截）。
 | sympy-16988 | environment | - | - | - | - |
 | sympy-18057 | environment | - | - | - | - |
 | sympy-20212 | **success** | 51 | 39,001 | $0.1271 | 155s |

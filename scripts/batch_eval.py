@@ -112,8 +112,16 @@ def prepare(instance: dict) -> tuple[Path, str]:
     tarball = ws / "src.tar.gz"
     repo = ws / "repo"
     if repo.exists():
-        subprocess.run(["rm", "-rf", str(repo)], check=True)  # keep the tarball
-    repo.mkdir(parents=True)
+        # persistent workspaces: restore the base snapshot via git —
+        # rm -rf under the user's home is blocked by the environment guard.
+        # A crashed git leaves .git/index.lock behind: clear it first, or
+        # every recovery command silently no-ops.
+        subprocess.run(["rm", "-f", str(repo / ".git" / "index.lock")], capture_output=True)
+        for clean_args in (["checkout", "--", "."],
+                           ["clean", "-qfdx", "-e", ".openpilot", "-e", ".pytest-tmp",
+                            "-e", ".pytest-f2p", "-e", ".pytest-base-f2p"]):
+            subprocess.run(["git", "-C", str(repo), *clean_args], capture_output=True)
+        return repo, ""
     if not tarball.exists() or tarball.stat().st_size < 10_000:
         url = f"https://gh-proxy.com/https://codeload.github.com/{instance['repo']}/tar.gz/{instance['base_commit']}"
         return repo, f"tarball missing — download it first: curl -sL -o '{tarball}' '{url}'"
@@ -246,7 +254,13 @@ def evaluate(instance: dict) -> dict:
     test_files = test_files_from_patch(instance["test_patch"])
     f2p = json.loads(instance["FAIL_TO_PASS"])
     if django:
-        f2p_ids = [_django_ref(n) for n in f2p]
+        # some dataset F2P names are TRUNCATED ("test_x (module.Class.t" -
+        # no closing paren), so _django_ref cannot always resolve them;
+        # run the touched MODULES instead and match per-test output lines
+        # by bare test name (always recoverable from the truncated string)
+        f2p_modules = [f[len("tests/"):-3].replace("/", ".") for f in test_files
+                       if f.startswith("tests/") and f.endswith(".py")]
+        f2p_ids = [m for m in (_django_ref(n) for n in f2p) if m != n] or f2p_modules
         run_tests = run_django_tests
     else:
         # node ids: full ones pass through; bare names attach to the touched file
@@ -260,7 +274,7 @@ def evaluate(instance: dict) -> dict:
         record.update(verdict="environment", cause=f"test patch failed on base: {proc.stderr[-160:]}")
         return record
     if django:
-        base = run_tests(repo, py, f2p_ids)
+        base = run_tests(repo, py, f2p_ids + f2p_modules)
     else:
         base = run_tests(repo, py, test_files + f2p_ids)
     if django and ("ModuleNotFoundError" in base["output"] or "ImportError" in base["output"]):
@@ -337,7 +351,7 @@ def evaluate(instance: dict) -> dict:
         record.update(verdict="failed", cause=f"test patch conflicts with op0 patch: {proc.stderr[-160:]}")
         record["elapsed_s"] = round(time.monotonic() - t0, 1)
         return record
-    got = run_tests(repo, py, f2p_ids) if django else run_tests(repo, py, test_files + f2p_ids)
+    got = run_tests(repo, py, f2p_ids + f2p_modules) if django else run_tests(repo, py, test_files + f2p_ids)
     record["op0"] = {k: got[k] for k in ("failed", "passed", "errors")}
     record["spec_audit_miss"] = (run.get("spec_assumptions", 0) == 0)
     if django and ("ModuleNotFoundError" in got["output"] or "ImportError" in got["output"]):
@@ -348,7 +362,7 @@ def evaluate(instance: dict) -> dict:
         return record
     if django:
         # -v 2 prints "test_x (module.Class.test_x) ... ok" per test; match
-        # on the test NAME (the parenthesised form duplicates it)
+        # on the bare test NAME - truncated dataset names still yield it
         f2p_missing = [nid for nid in f2p
                        if not re.search(re.escape(nid.split(" ")[0]) + r" \(.*\) \.\.\. ok", got["output"])]
     else:
