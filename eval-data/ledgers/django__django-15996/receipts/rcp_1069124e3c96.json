@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_1069124e3c96",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_5e76cfb6424c",
+  "proposal_id": "prop_b27b7cb79b0d",
+  "admission_id": "adm_8399e5c3f935",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:25:32.798326+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python -c \"import django, os; print(os.path.dirname(django.__file__))\"",
+  "exit_code": 0,
+  "output_tail": "/private/tmp/swebench-eval/django__django-15996/repo/django"
+}

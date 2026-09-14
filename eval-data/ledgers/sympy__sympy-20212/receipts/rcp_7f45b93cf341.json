@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_7f45b93cf341",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_9f24e56b9bfe",
+  "proposal_id": "prop_3fa574ea9a0b",
+  "admission_id": "adm_31b893b10510",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:36:45.075327+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-20212/repo:/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages /Users/abab/.workbuddy/binaries/python/envs/default/bin/python -m pytest sympy/core/tests/test_power.py sympy/core/tests/test_numbers.py -q 2>&1 | tail -40",
+  "exit_code": 0,
+  "output_tail": "[test output: 34 of 40 lines dropped — failures and summaries kept]\nE       ValueError: could not convert string to float: 'np.float16(0.6665)'\n/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages/mpmath/libmp/libmpf.py:1294: ValueError\n=============================== warnings summary ===============================\n=========================== short test summary info ============================\nFAILED sympy/core/tests/test_numbers.py::test_numpy_to_float - ValueError: co...\n1 failed, 131 passed, 1 xfailed, 1 warning in 2.04s"
+}

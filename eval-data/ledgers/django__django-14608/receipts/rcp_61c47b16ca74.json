@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_61c47b16ca74",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_41bceaedc3ad",
+  "proposal_id": "prop_759d54b5c454",
+  "admission_id": "adm_e1424fc3b91f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:44:30.040569+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && grep -rn \"errorlist\" tests/admin_views/tests.py tests/admin_inlines/tests.py tests/inline_formsets/tests.py tests/model_formsets/tests.py",
+  "exit_code": 0,
+  "output_tail": "tests/admin_views/tests.py:3278:            '<tr><td colspan=\"4\"><ul class=\"errorlist nonfield\"><li>Food delivery '\ntests/admin_views/tests.py:3311:            '<tr><td colspan=\"4\"><ul class=\"errorlist nonfield\"><li>Food delivery '\ntests/admin_views/tests.py:3335:    def test_non_form_errors_is_errorlist(self):\ntests/admin_inlines/tests.py:148:            '<tr class=\"row-form-errors\"><td colspan=\"4\"><ul class=\"errorlist nonfield\">'\ntests/admin_inlines/tests.py:1041:        errorlist = self.selenium.find_element_by_css_selector(\ntests/admin_inlines/tests.py:1042:            '%s .dynamic-inner4stacked_set .errorlist li' % inline_id\ntests/admin_inlines/tests.py:1044:        self.assertEqual('Please correct the duplicate values below.', errorlist.text)\ntests/admin_inlines/tests.py:1049:            self.selenium.find_element_by_css_selector('%s .dynamic-inner4stacked_set .errorlist li' % inline_id)\ntests/admin_inlines/tests.py:1086:        # Non-field errorlist is in its own <tr> just before\ntests/admin_inlines/tests.py:1088:        errorlist = self.selenium.find_element_by_css_selector(\ntests/admin_inlines/tests.py:1089:            '%s #inner4tabular_set-3 + .row-form-errors .errorlist li' % inline_id\ntests/admin_inlines/tests.py:1091:        self.assertEqual('Please correct the duplicate values below.', errorlist.text)\ntests/admin_inlines/tests.py:1096:            self.selenium.find_element_by_css_selector('%s .dynamic-inner4tabular_set .errorlist li' % inline_id)\ntests/admin_inlines/tests.py:1309:            'td ul.errorlist + input', 'td ul.errorlist + select', 'td ul.errorlist + textarea'"
+}

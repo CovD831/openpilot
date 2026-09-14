@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_51a7e21ef68c",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_1f191d30e835",
+  "proposal_id": "prop_5946e8427fb3",
+  "admission_id": "adm_138a19c38465",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:28:07.398402+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && head -40 CHANGES.rst",
+  "exit_code": 0,
+  "output_tail": ".. currentmodule:: flask\n\nVersion 2.0.1\n-------------\n\nUnreleased\n\n-   Re-add the ``filename`` parameter in ``send_from_directory``. The\n    ``filename`` parameter has been renamed to ``path``, the old name\n    is deprecated. :pr:`4019`\n-   Mark top-level names as exported so type checking understands\n    imports in user projects. :issue:`4024`\n-   Fix type annotation for ``g`` and inform mypy that it is a namespace\n    object that has arbitrary attributes. :issue:`4020`\n-   Fix some types that weren't available in Python 3.6.0. :issue:`4040`\n-   Improve typing for ``send_file``, ``send_from_directory``, and\n    ``get_send_file_max_age``. :issue:`4044`, :pr:`4026`\n\n\nVersion 2.0.0\n-------------\n\nReleased 2021-05-11\n\n-   Drop support for Python 2 and 3.5.\n-   Bump minimum versions of other Pallets projects: Werkzeug >= 2,\n    Jinja2 >= 3, MarkupSafe >= 2, ItsDangerous >= 2, Click >= 8. Be sure\n    to check the change logs for each project. For better compatibility\n    with other applications (e.g. Celery) that still require Click 7,\n    there is no hard dependency on Click 8 yet, but using Click 7 will\n    trigger a DeprecationWarning and Flask 2.1 will depend on Click 8.\n-   JSON support no longer uses simplejson. To use another JSON module,\n    override ``app.json_encoder`` and ``json_decoder``. :issue:`3555`\n-   The ``encoding`` option to JSON functions is deprecated. :pr:`3562`\n-   Passing ``script_info`` to app factory functions is deprecated. This\n    was not portable outside the ``flask`` command. Use\n    ``click.get_current_context().obj`` if it's needed. :issue:`3552`\n-   The CLI shows better error messages when the app failed to load\n    when looking up commands. :issue:`2741`\n-   Add :meth:`sessions.SessionInterface.get_cookie_name` to allow"
+}

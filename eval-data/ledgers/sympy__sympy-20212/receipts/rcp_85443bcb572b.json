@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_85443bcb572b",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_5fd93c8604b7",
+  "proposal_id": "prop_a1475075dd0e",
+  "admission_id": "adm_b25195fd1534",
+  "path": "/private/tmp/swebench-eval/sympy__sympy-20212/repo/sympy/core/numbers.py",
+  "hash_before": "1d3f76545bc0227e70586fead41690125125e390e9c1a2d928fd71c203fa3860",
+  "hash_after": "32d4e706484aed0733823b7535c1d161c4cfef0c4088dd64754c961b526d82bf",
+  "created_at": "2026-09-14T01:36:29.124260+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

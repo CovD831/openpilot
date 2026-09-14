@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_7d61c20af12f",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_2b2eb6adb9ac",
+  "proposal_id": "prop_6e4cda7465c5",
+  "admission_id": "adm_eeb6b1ba0989",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:36:06.628161+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-20212/repo:/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages /Users/abab/.workbuddy/binaries/python/envs/default/bin/python -c \"\nfrom sympy import Float, S, oo\nfor e in [2, -2, oo, -oo]:\n    r = Float(0)**e\n    print(e, r, type(r).__name__, 'is S.Zero', r is S.Zero)\n\"",
+  "exit_code": 0,
+  "output_tail": "2 0 Zero is S.Zero True\n-2 oo Infinity is S.Zero False\noo 0 Zero is S.Zero True\n-oo oo Infinity is S.Zero False"
+}

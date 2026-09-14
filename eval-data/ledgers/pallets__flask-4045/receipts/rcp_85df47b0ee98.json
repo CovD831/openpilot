@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_85df47b0ee98",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_ae0f6ab89f08",
+  "proposal_id": "prop_88ff6b6d147e",
+  "admission_id": "adm_a26044dc6e30",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:28:24.194999+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && git diff -- src/flask/blueprints.py tests/test_blueprints.py",
+  "exit_code": 0,
+  "output_tail": "diff --git a/src/flask/blueprints.py b/src/flask/blueprints.py\nindex 5fb84d8..9e8877a 100644\n--- a/src/flask/blueprints.py\n+++ b/src/flask/blueprints.py\n@@ -189,6 +189,8 @@ class Blueprint(Scaffold):\n             root_path=root_path,\n         )\n         self.name = name\n+        if \".\" in name:\n+            raise ValueError(\"'name' may not contain a dot '.' character.\")\n         self.url_prefix = url_prefix\n         self.subdomain = subdomain\n         self.deferred_functions: t.List[DeferredSetupFunction] = []\ndiff --git a/tests/test_blueprints.py b/tests/test_blueprints.py\nindex b986ca0..85a4b84 100644\n--- a/tests/test_blueprints.py\n+++ b/tests/test_blueprints.py\n@@ -253,28 +253,9 @@ def test_templates_list(test_apps):\n     assert templates == [\"admin/index.html\", \"frontend/index.html\"]\n \n \n-def test_dotted_names(app, client):\n-    frontend = flask.Blueprint(\"myapp.frontend\", __name__)\n-    backend = flask.Blueprint(\"myapp.backend\", __name__)\n-\n-    @frontend.route(\"/fe\")\n-    def frontend_index():\n-        return flask.url_for(\"myapp.backend.backend_index\")\n-\n-    @frontend.route(\"/fe2\")\n-    def frontend_page2():\n-        return flask.url_for(\".frontend_index\")\n-\n-    @backend.route(\"/be\")\n-    def backend_index():\n-        return flask.url_for(\"myapp.frontend.frontend_index\")\n-\n-    app.register_blueprint(frontend)\n-    app.register_blueprint(backend)\n-\n-    assert client.get(\"/fe\").data.strip() == b\"/be\"\n-    assert client.get(\"/fe2\").data.strip() == b\"/fe\"\n-    assert client.get(\"/be\").data.strip() == b\"/fe\"\n+def test_dotted_name_raises():\n+    with pytest.raises(ValueError):\n+        flask.Blueprint(\"myapp.frontend\", __name__)\n \n \n def test_dotted_names_from_app(app, client):"
+}

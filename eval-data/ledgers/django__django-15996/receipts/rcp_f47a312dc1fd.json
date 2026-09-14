@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_f47a312dc1fd",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_5412cd703cf6",
+  "proposal_id": "prop_e63167bf03b9",
+  "admission_id": "adm_2e453dbd8ec6",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:26.610192+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && grep -n \"ERROR\\|ImproperlyConfigured\\|settings\" /tmp/pytest_out.txt | head -20",
+  "exit_code": 0,
+  "output_tail": "2:==================================== ERRORS ====================================\n3:_______________ ERROR collecting tests/migrations/test_writer.py _______________\n16:ERROR tests/migrations/test_writer.py - django.core.exceptions.AppRegistryNot..."
+}

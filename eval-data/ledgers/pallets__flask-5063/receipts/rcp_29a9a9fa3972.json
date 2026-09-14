@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_29a9a9fa3972",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_0989f730565a",
+  "proposal_id": "prop_edbe89a177d2",
+  "admission_id": "adm_da5a6dfd6bd7",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:31.060183+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -rn \"Domain.*Methods.*Endpoint.*Rule\\|_get_domain\\|get_domain\" /tmp/swebench-eval 2>/dev/null | head -50",
+  "exit_code": 0,
+  "output_tail": "__sympy-15609/repo/sympy/polys/polytools.py:477:    def get_domain(f):\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/polys/polytools.py:512:        domain = f.get_domain()\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/polys/polytools.py:581:            dom = f.get_domain()\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/polys/polytools.py:2170:        dom = f.get_domain()\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/polys/polytools.py:2371:                new_domain = f.get_domain().unify_with_symbols(a_domain, f.gens)\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/polys/polytools.py:4128:                g = f.__class__(g, f.gens, domain=f.get_domain())\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/polys/polytools.py:4206:                g = f.__class__(g, f.gens, domain=f.get_domain())\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/polys/polytools.py:6149:    if f.get_domain().is_EX and _has_square_roots(f):\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/polys/partfrac.py:167:    dom = Q.get_domain().inject(*symbols)\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/concrete/gosper.py:137:    domain = A.get_domain().inject(*coeffs)\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/printing/str.py:510:            format += \", domain='%s'\" % expr.get_domain()\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/printing/latex.py:1961:        domain = \"domain=%s\" % self._print(poly.get_domain())\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/solvers/polysys.py:284:    dom = f.get_domain()\n/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/integrals/risch.py:942:    One = Poly(1, DE.t, domain=p.get_domain())\nBinary file /tmp/swebench-eval/sympy__sympy-15609/repo/.git/objects/d7/4c36f71ef875a8cd4615f8d3e82b453ba20e95 matches\nBinary file /tmp/swebench-eval/sympy__sympy-15609/repo/.git/objects/89/d8b761b1b0ad1dc4dbd720d17e6c36c3d4bdcd matches\nBinary file /tmp/swebench-eval/sympy__sympy-15609/repo/.git/objects/86/b14bc7f0e42df2bb613b8ad86a4bdb6e392c3f matches"
+}

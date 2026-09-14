@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e25f255b5ad1",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_26caf489dfea",
+  "proposal_id": "prop_2acba5950df1",
+  "admission_id": "adm_af5ea5f9b194",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:07.074543+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -rls \"flask_4992\\|flask-4992\" /Users/abab/Developer/openpilot-l0 2>/dev/null | head -30",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/Developer/openpilot-l0/BATCH_REPORT.md\n/Users/abab/Developer/openpilot-l0/tests/test_authorizers.py\n/Users/abab/Developer/openpilot-l0/tests/test_budget.py\n/Users/abab/Developer/openpilot-l0/tests/test_card_scroll.py\n/Users/abab/Developer/openpilot-l0/Code/src/op0/tui.py\n/Users/abab/Developer/openpilot-l0/REAL_TASK_REPORT.md\n/Users/abab/Developer/openpilot-l0/scripts/batch_eval.py"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e170bb9718f8",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_e650fc10c701",
+  "proposal_id": "prop_1342c63ea635",
+  "admission_id": "adm_2c9dd417eb90",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:47:55.683624+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -n \"def convert_frac\" -A 40 /opt/anaconda3/lib/python3.13/site-packages/sympy/parsing/latex/_parse_latex_antlr.py",
+  "exit_code": 0,
+  "output_tail": "349:def convert_frac(frac):\n350-    diff_op = False\n351-    partial_op = False\n352-    if frac.lower and frac.upper:\n353-        lower_itv = frac.lower.getSourceInterval()\n354-        lower_itv_len = lower_itv[1] - lower_itv[0] + 1\n355-        if (frac.lower.start == frac.lower.stop\n356-                and frac.lower.start.type == LaTeXLexer.DIFFERENTIAL):\n357-            wrt = get_differential_var_str(frac.lower.start.text)\n358-            diff_op = True\n359-        elif (lower_itv_len == 2 and frac.lower.start.type == LaTeXLexer.SYMBOL\n360-              and frac.lower.start.text == '\\\\partial'\n361-              and (frac.lower.stop.type == LaTeXLexer.LETTER\n362-                   or frac.lower.stop.type == LaTeXLexer.SYMBOL)):\n363-            partial_op = True\n364-            wrt = frac.lower.stop.text\n365-            if frac.lower.stop.type == LaTeXLexer.SYMBOL:\n366-                wrt = wrt[1:]\n367-\n368-        if diff_op or partial_op:\n369-            wrt = sympy.Symbol(wrt)\n370-            if (diff_op and frac.upper.start == frac.upper.stop\n371-                    and frac.upper.start.type == LaTeXLexer.LETTER\n372-                    and frac.upper.start.text == 'd'):\n373-                return [wrt]\n374-            elif (partial_op and frac.upper.start == frac.upper.stop\n375-                  and frac.upper.start.type == LaTeXLexer.SYMBOL\n376-                  and frac.upper.start.text == '\\\\partial'):\n377-                return [wrt]\n378-            upper_text = rule2text(frac.upper)\n379-\n380-            expr_top = None\n381-            if diff_op and upper_text.startswith('d'):\n382-                expr_top = parse_latex(upper_text[1:])\n383-            elif partial_op and frac.upper.start.text == '\\\\partial':\n384-                expr_top = parse_latex(upper_text[len('\\\\partial'):])\n385-            if expr_top:\n386-                return sympy.Derivative(expr_top, wrt)\n387-    if frac.upper:\n388-        expr_top = convert_expr(frac.upper)\n389-    else:"
+}

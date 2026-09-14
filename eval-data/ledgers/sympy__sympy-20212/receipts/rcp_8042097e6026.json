@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_8042097e6026",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_61fb9f441360",
+  "proposal_id": "prop_b9ebbd961dfd",
+  "admission_id": "adm_e8325ef358d1",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:30:53.642793+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && pip install mpmath 2>&1 | tail -20",
+  "exit_code": 0,
+  "output_tail": "ner of that directory. If executing pip with sudo, you should use sudo's -H flag.\nDefaulting to user installation because normal site-packages is not writeable\nWARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ProxyError('Cannot connect to proxy.', NewConnectionError('<pip._vendor.urllib3.connection.HTTPSConnection object at 0x10b0e9d30>: Failed to establish a new connection: [Errno 1] Operation not permitted'))': /simple/mpmath/\nWARNING: Retrying (Retry(total=3, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ProxyError('Cannot connect to proxy.', NewConnectionError('<pip._vendor.urllib3.connection.HTTPSConnection object at 0x10afc3ed0>: Failed to establish a new connection: [Errno 1] Operation not permitted'))': /simple/mpmath/\nWARNING: Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ProxyError('Cannot connect to proxy.', NewConnectionError('<pip._vendor.urllib3.connection.HTTPSConnection object at 0x10b100050>: Failed to establish a new connection: [Errno 1] Operation not permitted'))': /simple/mpmath/\nWARNING: Retrying (Retry(total=1, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ProxyError('Cannot connect to proxy.', NewConnectionError('<pip._vendor.urllib3.connection.HTTPSConnection object at 0x10b100190>: Failed to establish a new connection: [Errno 1] Operation not permitted'))': /simple/mpmath/\nWARNING: Retrying (Retry(total=0, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ProxyError('Cannot connect to proxy.', NewConnectionError('<pip._vendor.urllib3.connection.HTTPSConnection object at 0x10b1002d0>: Failed to establish a new connection: [Errno 1] Operation not permitted'))': /simple/mpmath/\nERROR: Could not find a version that satisfies the requirement mpmath (from versions: none)\nERROR: No matching distribution found for mpmath"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9c3a9584f82d",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_71f52459fffa",
+  "proposal_id": "prop_d281ade5b1d7",
+  "admission_id": "adm_c57f7627daa1",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:33:06.580629+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && grep -rn \"0\\*\\*\\|S.Zero\\*\\*\\|zoo\\*\\*\\|oo\\*\\*\\|-oo\\*\\*\" sympy/core/tests/test_arit.py sympy/core/tests/test_power.py sympy/core/tests/test_numbers.py | head -120",
+  "exit_code": 0,
+  "output_tail": "0655\nsympy/core/tests/test_numbers.py:993:    assert integer_nthroot(2, 10**10) == (1, False)\nsympy/core/tests/test_numbers.py:1000:    assert integer_nthroot(10**(50*50), 50) == (10**50, True)\nsympy/core/tests/test_numbers.py:1001:    assert integer_nthroot(10**100000, 10000) == (10**10, True)\nsympy/core/tests/test_numbers.py:1042:    raises(ValueError, lambda: isqrt(-10**1000))\nsympy/core/tests/test_numbers.py:1045:    tiny = Rational(1, 10**1000)\nsympy/core/tests/test_numbers.py:1049:    assert isqrt(10**100 - tiny) == 10**50 - 1\nsympy/core/tests/test_numbers.py:1375:    assert pi*(E + 10**10) + pi*(-E - 10**10) != 0\nsympy/core/tests/test_numbers.py:1376:    assert pi*(E + 10**20) + pi*(-E - 10**20) != 0\nsympy/core/tests/test_numbers.py:1377:    assert pi*(E + 10**80) + pi*(-E - 10**80) != 0\nsympy/core/tests/test_numbers.py:1380:    assert (pi*(E + 10**10) + pi*(-E - 10**10)).expand() == 0\nsympy/core/tests/test_numbers.py:1381:    assert (pi*(E + 10**20) + pi*(-E - 10**20)).expand() == 0\nsympy/core/tests/test_numbers.py:1382:    assert (pi*(E + 10**80) + pi*(-E - 10**80)).expand() == 0\nsympy/core/tests/test_numbers.py:1397:    a, b = 720**99911, 480**12342\nsympy/core/tests/test_numbers.py:1565:    assert zoo**zoo is S.NaN\nsympy/core/tests/test_numbers.py:1566:    assert zoo**0 is S.One\nsympy/core/tests/test_numbers.py:1567:    assert zoo**2 is zoo\nsympy/core/tests/test_numbers.py:1775:    x = Float(10**20)\nsympy/core/tests/test_numbers.py:1819:    assert oo**zoo is nan\nsympy/core/tests/test_numbers.py:1827:    assert oo**I is S.NaN\nsympy/core/tests/test_numbers.py:1828:    assert oo**(1 + I) is S.ComplexInfinity\nsympy/core/tests/test_numbers.py:1829:    assert oo**(-1 + I) is S.Zero\nsympy/core/tests/test_numbers.py:1832:    assert oo**t == Pow(oo, t, evaluate=False)\nsympy/core/tests/test_numbers.py:1989:    assert zoo**zoo is S.NaN\nsympy/core/tests/test_numbers.py:1994:    assert oo**S.NaN is S.NaN\nsympy/core/tests/test_numbers.py:1995:    assert oo**zoo is S.NaN"
+}

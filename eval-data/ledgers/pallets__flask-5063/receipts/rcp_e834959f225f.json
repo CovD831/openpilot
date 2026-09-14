@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e834959f225f",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_bc2040d7a506",
+  "proposal_id": "prop_59ca7564b3a8",
+  "admission_id": "adm_a71af23cfd03",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:18.240928+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -c \"from werkzeug.routing import MapAdapter; import inspect; src=inspect.getsource(MapAdapter.match); print(src)\" | head -100",
+  "exit_code": 0,
+  "output_tail": "endpoint='index'),\n        ...     Rule('/downloads/', endpoint='downloads/index'),\n        ...     Rule('/downloads/<int:id>', endpoint='downloads/show')\n        ... ])\n        >>> urls = m.bind(\"example.com\", \"/\")\n        >>> urls.match(\"/\", \"GET\")\n        ('index', {})\n        >>> urls.match(\"/downloads/42\")\n        ('downloads/show', {'id': 42})\n\n        And here is what happens on redirect and missing URLs:\n\n        >>> urls.match(\"/downloads\")\n        Traceback (most recent call last):\n          ...\n        RequestRedirect: http://example.com/downloads/\n        >>> urls.match(\"/missing\")\n        Traceback (most recent call last):\n          ...\n        NotFound: 404 Not Found\n\n        :param path_info: the path info to use for matching.  Overrides the\n                          path info specified on binding.\n        :param method: the HTTP method used for matching.  Overrides the\n                       method specified on binding.\n        :param return_rule: return the rule that matched instead of just the\n                            endpoint (defaults to `False`).\n        :param query_args: optional query arguments that are used for\n                           automatic redirects as string or dictionary.  It's\n                           currently not possible to use the query arguments\n                           for URL matching.\n        :param websocket: Match WebSocket instead of HTTP requests. A\n            websocket request has a ``ws`` or ``wss``\n            :attr:`url_scheme`. This overrides that detection.\n\n        .. versionadded:: 1.0\n            Added ``websocket``.\n\n        .. versionchanged:: 0.8\n            ``query_args`` can be a string.\n\n        .. versionadded:: 0.7\n            Added ``query_args``.\n\n        .. versionadded:: 0.6\n            Added ``return_rule``.\n        \"\"\"\n        self.map.update()\n        if path_info is None:\n            path_info = self.path_info\n        if query_args is None:\n            query_args = self.query_args or {}"
+}

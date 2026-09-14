@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9998ce2fab57",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_fd4e7bffde59",
+  "proposal_id": "prop_7f6078fb2833",
+  "admission_id": "adm_18b7e320b1f6",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:35:38.631235+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && grep -rn \"20033\\|equal_valued\\|Float(0)\\*\\*2\\|Float(0)\\*\\*-2\" sympy | head -40",
+  "exit_code": 0,
+  "output_tail": "sympy/core/tests/test_power.py:268:    assert Float(0)**2 is not S.Zero\nsympy/core/tests/test_power.py:269:    assert Float(0)**2 == 0.0\nsympy/core/tests/test_power.py:270:    assert Float(0)**-2 is zoo"
+}

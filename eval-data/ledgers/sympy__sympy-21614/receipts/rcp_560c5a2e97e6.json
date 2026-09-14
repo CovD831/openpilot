@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_560c5a2e97e6",
+  "run_id": "run_9d33672eb7a54933afbbca8d6d9b2130",
+  "consent_id": "con_bfa618e58223",
+  "proposal_id": "prop_d2c6e1b360b5",
+  "admission_id": "adm_4660bec178b5",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:38:13.837399+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls /private/tmp/swebench-eval/sympy__sympy-21614/repo | head; ls /private/tmp/swebench-eval/sympy__sympy-21614/repo/sympy/core/tests | grep -i kind",
+  "exit_code": 0,
+  "output_tail": "AUTHORS\nCODEOWNERS\nCODE_OF_CONDUCT.md\nCONTRIBUTING.md\nLICENSE\nMANIFEST.in\nPULL_REQUEST_TEMPLATE.md\nREADME.md\nasv.conf.travis.json\nbanner.svg\ntest_kind.py"
+}

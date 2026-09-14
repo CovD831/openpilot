@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_7c8840461979",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_fb88e4a2e747",
+  "proposal_id": "prop_f9541fbe26b4",
+  "admission_id": "adm_5016acb4d411",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:40:34.047657+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && grep -rn \"errorlist\\|nonfield\\|nonform\" docs | head -50",
+  "exit_code": 0,
+  "output_tail": "idation errors as a ``<ul class=\"errorlist\">`` near the\ndocs/ref/forms/api.txt:792:    <tr><th>Subject:</th><td><ul class=\"errorlist\"><li>This field is required.</li></ul><input type=\"text\" name=\"subject\" maxlength=\"100\" required></td></tr>\ndocs/ref/forms/api.txt:794:    <tr><th>Sender:</th><td><ul class=\"errorlist\"><li>Enter a valid email address.</li></ul><input type=\"email\" name=\"sender\" value=\"invalid email address\" required></td></tr>\ndocs/ref/forms/api.txt:797:    <li><ul class=\"errorlist\"><li>This field is required.</li></ul>Subject: <input type=\"text\" name=\"subject\" maxlength=\"100\" required></li>\ndocs/ref/forms/api.txt:799:    <li><ul class=\"errorlist\"><li>Enter a valid email address.</li></ul>Sender: <input type=\"email\" name=\"sender\" value=\"invalid email address\" required></li>\ndocs/ref/forms/api.txt:802:    <p><ul class=\"errorlist\"><li>This field is required.</li></ul></p>\ndocs/ref/forms/api.txt:805:    <p><ul class=\"errorlist\"><li>Enter a valid email address.</li></ul></p>\ndocs/ref/forms/api.txt:824:    ...         return '<div class=\"errorlist\">%s</div>' % ''.join(['<div class=\"error\">%s</div>' % e for e in self])\ndocs/ref/forms/api.txt:827:    <div class=\"errorlist\"><div class=\"error\">This field is required.</div></div>\ndocs/ref/forms/api.txt:830:    <div class=\"errorlist\"><div class=\"error\">Enter a valid email address.</div></div>\ndocs/ref/forms/api.txt:896:    as an HTML ``<ul class=\"errorlist\">`` when printed::\ndocs/ref/forms/api.txt:905:        <ul class=\"errorlist\"><li>This field is required.</li></ul>\ndocs/topics/forms/index.txt:590:    <ul class=\"errorlist\">\ndocs/topics/forms/index.txt:594:The list has a CSS class of ``errorlist`` to allow you to style its appearance.\ndocs/topics/forms/index.txt:610:additional class of ``nonfield`` to help distinguish them from field-specific\ndocs/topics/forms/index.txt:615:    <ul class=\"errorlist nonfield\">\ndocs/topics/forms/index.txt:670:    Outputs a ``<ul class=\"errorlist\">`` containing any validation errors"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_f60c4ca29666",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_fcc69ffca33a",
+  "proposal_id": "prop_bf37703b72ed",
+  "admission_id": "adm_2fb5a5b438a5",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:39.122620+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls -la /Users/abab/Library/Caches/pip 2>/dev/null; find /Users/abab/Library/Caches/pip -iname '*flask*' 2>/dev/null | head -50",
+  "exit_code": 0,
+  "output_tail": "total 0\ndrwxr-xr-x@   4 abab  staff   128 Sep 12 21:13 .\ndrwx------+ 112 abab  staff  3584 Sep 14 08:18 ..\ndrwxr-xr-x@  18 abab  staff   576 Sep 13 23:32 http-v2\ndrwxr-xr-x@   7 abab  staff   224 Sep 14 08:06 selfcheck"
+}

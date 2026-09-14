@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_25ab4c59ab4f",
+  "run_id": "run_be1d49b636634dd3808f3940bc9c5f45",
+  "consent_id": "con_7f4bc1073d95",
+  "proposal_id": "prop_56e8975feb88",
+  "admission_id": "adm_0cb2cb4fb00e",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:25:45.644843+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "pwd && ls -la | head -50",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/Developer/openpilot-l0\ntotal 216\ndrwxr-xr-x@ 22 abab  staff    704 Sep 14 00:50 .\ndrwxr-xr-x@ 44 abab  staff   1408 Sep 13 21:34 ..\n-rw-r--r--@  1 abab  staff   8196 Sep 10 17:05 .DS_Store\n-rw-r--r--@  1 abab  staff     68 Sep  6 18:02 .git\n-rw-r--r--@  1 abab  staff     69 Sep 10 12:59 .gitignore\ndrwxr-xr-x@  6 abab  staff    192 Sep  6 18:08 .pytest_cache\n-rw-r--r--@  1 abab  staff   4713 Sep 14 09:17 BATCH_REPORT.md\n-rw-r--r--@  1 abab  staff   4840 Sep 11 00:20 CHECKPOINT_PLAN.md\n-rw-r--r--@  1 abab  staff   8043 Sep  9 11:37 COMPACTION_PLAN.md\ndrwxr-xr-x@  6 abab  staff    192 Sep  6 18:08 Code\n-rw-r--r--@  1 abab  staff    676 Sep  6 18:08 README.md\n-rw-r--r--@  1 abab  staff   3849 Sep 13 21:45 REAL_TASK_REPORT.md\n-rw-r--r--@  1 abab  staff   5268 Sep 10 14:02 SKILL_STANDARD_RESEARCH.md\n-rw-r--r--@  1 abab  staff   8578 Sep 10 21:44 SUBAGENT_PLAN.md\n-rw-r--r--@  1 abab  staff   8192 Sep  9 17:57 TOKEN_REDUCTION_RESEARCH.md\n-rw-r--r--@  1 abab  staff   5705 Sep 10 20:13 VALIDATION_PLAN.md\n-rw-r--r--@  1 abab  staff  20031 Sep  7 16:36 accept_l0.py\ndrwxr-xr-x@ 10 abab  staff    320 Sep  6 21:30 evidence\ndrwxr-xr-x@ 36 abab  staff   1152 Sep  8 15:50 runs\ndrwxr-xr-x@ 17 abab  staff    544 Sep 13 23:28 scripts\ndrwxr-xr-x@ 21 abab  staff    672 Sep 13 22:21 tests\ndrwxr-xr-x@  5 abab  staff    160 Sep 14 09:16 tmp"
+}

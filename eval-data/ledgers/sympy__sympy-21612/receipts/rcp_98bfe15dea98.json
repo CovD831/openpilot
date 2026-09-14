@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_98bfe15dea98",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_44056d62c0bd",
+  "proposal_id": "prop_28e1f6c5d005",
+  "admission_id": "adm_174dfa632a4b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:47:59.144781+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -n \"def _print_Mul\" -A 130 /opt/anaconda3/lib/python3.13/site-packages/sympy/printing/str.py | head -160",
+  "exit_code": 0,
+  "output_tail": "em in args:\n344-            if (item.is_commutative and\n345-                    isinstance(item, Pow) and\n346-                    bool(item.exp.as_coeff_Mul()[0] < 0)):\n347-                if item.exp is not S.NegativeOne:\n348-                    b.append(apow(item))\n349-                else:\n350-                    if (len(item.args[0].args) != 1 and\n351-                            isinstance(item.base, (Mul, Pow))):\n352-                        # To avoid situations like #14160\n353-                        pow_paren.append(item)\n354-                    b.append(item.base)\n355-            elif item.is_Rational and item is not S.Infinity:\n356-                if item.p != 1:\n357-                    a.append(Rational(item.p))\n358-                if item.q != 1:\n359-                    b.append(Rational(item.q))\n360-            else:\n361-                a.append(item)\n362-\n363-        a = a or [S.One]\n364-\n365-        a_str = [self.parenthesize(x, prec, strict=False) for x in a]\n366-        b_str = [self.parenthesize(x, prec, strict=False) for x in b]\n367-\n368-        # To parenthesize Pow with exp = -1 and having more than one Symbol\n369-        for item in pow_paren:\n370-            if item.base in b:\n371-                b_str[b.index(item.base)] = \"(%s)\" % b_str[b.index(item.base)]\n372-\n373-        if not b:\n374-            return sign + '*'.join(a_str)\n375-        elif len(b) == 1:\n376-            return sign + '*'.join(a_str) + \"/\" + b_str[0]\n377-        else:\n378-            return sign + '*'.join(a_str) + \"/(%s)\" % '*'.join(b_str)\n379-\n380-    def _print_MatMul(self, expr):\n381-        c, m = expr.as_coeff_mmul()\n382-\n383-        sign = \"\"\n384-        if c.is_number:\n385-            re, im = c.as_real_imag()\n386-            if im.is_zero and re.is_negative:\n387-                expr = _keep_coeff(-c, m)\n388-                sign = \"-\"\n389-            elif re.is_zero and im.is_negative:\n390-                expr = _keep_coeff(-c, m)\n391-                sign = \"-\"\n392-"
+}

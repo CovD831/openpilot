@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_ddf1f121349d",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_f6c83babbad1",
+  "proposal_id": "prop_5c0a9ac85102",
+  "admission_id": "adm_bbd8a9dc4bde",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:43.278068+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -rl \"flask\" /Users/abab/Library/Caches/pip/http-v2 2>/dev/null | head -50",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/Library/Caches/pip/http-v2/9/8/5/f/2/985f29fdb9c7e085b571080d779ac1ee5e46e8169cf19496bab440dc.body\n/Users/abab/Library/Caches/pip/http-v2/2/c/2/2/f/2c22f62f5c030605945f708dc42a53dc174af63b8486463f83009994.body"
+}

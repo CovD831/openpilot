@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_5e8a86e72522",
+  "run_id": "run_7e683e38d51d4ad78ed186cbde2d5504",
+  "consent_id": "con_00397b279d61",
+  "proposal_id": "prop_68de1f05ac1e",
+  "admission_id": "adm_e3b96a64bd73",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:37:23.113587+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15789/repo && /tmp/swebench-eval/django__django-15789/venv/bin/python -m pytest tests/utils_tests/test_html.py -q",
+  "exit_code": 1,
+  "output_tail": "sHtml.test_smart_urlquote ______________\n________ ERROR at setup of TestUtilsHtml.test_strip_spaces_between_tags ________\n_______________ ERROR at setup of TestUtilsHtml.test_strip_tags ________________\n____________ ERROR at setup of TestUtilsHtml.test_strip_tags_files _____________\n_________________ ERROR at setup of TestUtilsHtml.test_urlize __________________\n_________ ERROR at setup of TestUtilsHtml.test_urlize_unchanged_inputs _________\n=========================== short test summary info ============================\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_conditional_escape\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_escape - django.cor...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_escapejs - django.c...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_format_html - djang...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_html_safe - django....\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_html_safe_defines_html_error\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_html_safe_doesnt_define_str\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_html_safe_subclass\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_json_script - djang...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_json_script_with_custom_encoder\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_json_script_without_id\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_linebreaks - django...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_smart_urlquote - dj...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_strip_spaces_between_tags\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_strip_tags - django...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_strip_tags_files - ...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_urlize - django.cor...\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_urlize_unchanged_inputs"
+}

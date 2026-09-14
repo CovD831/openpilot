@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_17041071dd8f",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_315c0901a589",
+  "proposal_id": "prop_74c99e805da5",
+  "admission_id": "adm_e63a3e670280",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:28:14.484487+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport enum, re\nfrom django.db.migrations.writer import MigrationWriter\nclass IntFlagEnum(enum.IntFlag):\n    A = 1\n    B = 2\nfor v in [IntFlagEnum.A, IntFlagEnum.A | IntFlagEnum.B]:\n    print(MigrationWriter.serialize(v))\nr = re.UNICODE | re.IGNORECASE\nprint(MigrationWriter.serialize(r))\n# round trip check\nfor v in [IntFlagEnum.A, IntFlagEnum.A | IntFlagEnum.B, re.UNICODE | re.IGNORECASE]:\n    string, imports = MigrationWriter.serialize(v)\n    d = {}\n    exec(\"\\n\".join(imports) + \"\\ntest_value_result = \" + string, globals(), d)\n    print(v, '->', d['test_value_result'], d['test_value_result'] == v)\nPY",
+  "exit_code": 1,
+  "output_tail": "[stderr]\nTraceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\n  File \"/private/tmp/swebench-eval/django__django-15996/repo/django/db/migrations/writer.py\", line 12, in <module>\n    from django.db.migrations.serializer import Serializer, serializer_factory\n  File \"/private/tmp/swebench-eval/django__django-15996/repo/django/db/migrations/serializer.py\", line 141\n    {\"import %s\" % module},\nIndentationError: unexpected indent"
+}

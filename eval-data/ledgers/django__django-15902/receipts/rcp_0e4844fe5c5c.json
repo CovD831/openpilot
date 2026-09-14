@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_0e4844fe5c5c",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_449baaf2fe3e",
+  "proposal_id": "prop_c17f1d2f273d",
+  "admission_id": "adm_c058037540f2",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:26:23.320643+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && cat django/forms/templates/django/forms/formsets/default.html && echo '--- div' && cat django/forms/templates/django/forms/formsets/div.html",
+  "exit_code": 0,
+  "output_tail": "{{ formset.management_form }}{% for form in formset %}{{ form }}{% endfor %}\n--- div\n{{ formset.management_form }}{% for form in formset %}{{ form.as_div }}{% endfor %}"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_dc0e9b158a3f",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_ee385372204d",
+  "proposal_id": "prop_ce8409a049de",
+  "admission_id": "adm_78d2bec25551",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:51:36.781515+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls -la /tmp/flask_4992.json /tmp/flask_4045.json; find /Users/abab/Developer -maxdepth 4 -name '*.json' 2>/dev/null | grep -i 'swe\\|flask\\|instance' | head -50",
+  "exit_code": 0,
+  "output_tail": "ration/EXPLORATORY_CANDIDATE_INVENTORY_RECEIPT_V1.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/PHASE0_DEVELOPMENT_PROTOCOL_V1.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/SMOKE_DEVELOPMENT_PROTOCOL_V2.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_CANDIDATE_INVENTORY_V1.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_TASK_ACQUISITION_RULES_V4.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_ACQUISITION_PREFLIGHT_V6.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/SMOKE_DEVELOPMENT_PROTOCOL_V4.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_CANDIDATE_INVENTORY_RECEIPT_V4.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_ACQUISITION_PREFLIGHT_V5.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/CORE_BENEFIT_SCREEN_ADJUDICATION_PROTOCOL_V1.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_CANDIDATE_INVENTORY_V4.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/DEVELOPMENT_TASK_SUITE_V1.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_ACQUISITION_PREFLIGHT_V4.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_CANDIDATE_INVENTORY_RECEIPT_V2.json\n/Users/abab/Developer/openpilot-evidence-runtime-completion/experiments/mini_swe_active_iteration/EXPLORATORY_ACQUISITION_PREFLIGHT_V3.json"
+}

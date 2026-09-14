@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_8cdf26415233",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_54515c78d72d",
+  "proposal_id": "prop_35c8cc022f0e",
+  "admission_id": "adm_43b145c46a2a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:51:45.762707+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -rl \"pallets__flask-5063\\|pallets__flask-4992\" /Users/abab/Developer/openpilot-l0 /Users/abab/Developer/openpilot-user-error-tuning /Users/abab/Developer/openpilot-evidence-runtime-completion 2>/dev/null | head -50",
+  "exit_code": 0,
+  "output_tail": ""
+}

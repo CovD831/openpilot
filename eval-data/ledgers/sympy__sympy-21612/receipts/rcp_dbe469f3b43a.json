@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_dbe469f3b43a",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_46fad4232ead",
+  "proposal_id": "prop_64ee52cd9400",
+  "admission_id": "adm_6d14fbbcfd79",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:46:27.165769+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21612/repo && /opt/anaconda3/bin/python3 -c \"\nfrom sympy import Symbol, Integer, Pow, Mul, Add, srepr\na,b,c = Symbol('a'),Symbol('b'),Symbol('c')\ninner_top = Mul(Add(Pow(a,3), b), Pow(c,-1, evaluate=False), evaluate=False)\nprint('inner_top', inner_top, srepr(inner_top))\ninner_bot = Pow(Pow(c,2, evaluate=False), -1, evaluate=False)\nprint('inner_bot', inner_bot, srepr(inner_bot))\nouter = Mul(inner_top, Pow(inner_bot, -1, evaluate=False), evaluate=False)\nprint('outer', outer, srepr(outer))\nprint('outer evaluated', outer.doit())\n\" 2>/dev/null",
+  "exit_code": 0,
+  "output_tail": "inner_top (a**3 + b)/c Mul(Pow(Symbol('c'), Integer(-1)), Add(Pow(Symbol('a'), Integer(3)), Symbol('b')))\ninner_bot 1/(c**2) Pow(Pow(Symbol('c'), Integer(2)), Integer(-1))\nouter ((a**3 + b)/c)/1/(c**2) Mul(Mul(Pow(Symbol('c'), Integer(-1)), Add(Pow(Symbol('a'), Integer(3)), Symbol('b'))), Pow(Pow(Pow(Symbol('c'), Integer(2)), Integer(-1)), Integer(-1)))\nouter evaluated c*(a**3 + b)"
+}

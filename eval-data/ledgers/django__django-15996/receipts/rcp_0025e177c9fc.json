@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_0025e177c9fc",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_ec3d23af0763",
+  "proposal_id": "prop_350b337ed6fe",
+  "admission_id": "adm_d8078f91c634",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:31:40.197562+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && find . -name 'conftest.py' -not -path './.git/*' | head; grep -R \"django.setup\" tests --include='*.py' | head",
+  "exit_code": 0,
+  "output_tail": "tests/logging_tests/tests.py:    Calling django.setup() initializes the logging configuration.\ntests/runtests.py:    # django.setup() so that connection.features.gis_enabled can be accessed.\ntests/runtests.py:    django.setup()\ntests/runtests.py:    # This flag must be evaluated after django.setup() because otherwise it can\ntests/runtests.py:# This function should be called only after calling django.setup(),\ntests/runtests.py:        # This doesn't work before django.setup() on some databases."
+}

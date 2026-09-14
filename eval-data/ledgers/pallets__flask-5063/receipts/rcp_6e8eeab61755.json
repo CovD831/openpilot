@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6e8eeab61755",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_e81a0beb155d",
+  "proposal_id": "prop_78c28b771c1a",
+  "admission_id": "adm_ca326f6e15c9",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:51:47.557924+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cat /tmp/flask_4992.json",
+  "exit_code": 0,
+  "output_tail": "py with that for now, although it's worth noting this about `io.TextIOBase.buffer` from the docs:\\r\\n\\r\\n> This is not part of the [TextIOBase](https://docs.python.org/3/library/io.html#io.TextIOBase) API and may not exist in some implementations.\\nOh, didn't mean for you to close this, that was just a shorter workaround. I think a `text=True` parameter would be better, easier to use `True` or `False` rather than mode strings. Some libraries, like `tomllib`, have _Opinions_ about whether text or bytes are correct for parsing files, and we can accommodate that.\\ncan i work on this?\\nNo need to ask to work on an issue. As long as the issue is not assigned to anyone and doesn't have have a linked open PR (both can be seen in the sidebar), anyone is welcome to work on any issue.\", \"created_at\": \"2023-02-22T14:00:17Z\", \"version\": \"2.3\", \"FAIL_TO_PASS\": \"[\\\"tests/test_config.py::test_config_from_file_toml\\\"]\", \"PASS_TO_PASS\": \"[\\\"tests/test_config.py::test_config_from_pyfile\\\", \\\"tests/test_config.py::test_config_from_object\\\", \\\"tests/test_config.py::test_config_from_file_json\\\", \\\"tests/test_config.py::test_from_prefixed_env\\\", \\\"tests/test_config.py::test_from_prefixed_env_custom_prefix\\\", \\\"tests/test_config.py::test_from_prefixed_env_nested\\\", \\\"tests/test_config.py::test_config_from_mapping\\\", \\\"tests/test_config.py::test_config_from_class\\\", \\\"tests/test_config.py::test_config_from_envvar\\\", \\\"tests/test_config.py::test_config_from_envvar_missing\\\", \\\"tests/test_config.py::test_config_missing\\\", \\\"tests/test_config.py::test_config_missing_file\\\", \\\"tests/test_config.py::test_custom_config_class\\\", \\\"tests/test_config.py::test_session_lifetime\\\", \\\"tests/test_config.py::test_get_namespace\\\", \\\"tests/test_config.py::test_from_pyfile_weird_encoding[utf-8]\\\", \\\"tests/test_config.py::test_from_pyfile_weird_encoding[iso-8859-15]\\\", \\\"tests/test_config.py::test_from_pyfile_weird_encoding[latin-1]\\\"]\", \"environment_setup_commit\": \"182ce3dd15dfa3537391c3efaf9c3ff407d134d4\"}"
+}

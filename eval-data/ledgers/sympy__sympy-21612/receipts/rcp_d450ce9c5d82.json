@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_d450ce9c5d82",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_1f0dec5a2b67",
+  "proposal_id": "prop_895c9e98889b",
+  "admission_id": "adm_8cf6f69bb23f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:47:51.834759+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "/opt/anaconda3/bin/python3 -c \"\nfrom sympy.parsing.latex import parse_latex\nfrom sympy import srepr\ne = parse_latex(r'\\frac{\\frac{a^3+b}{c}}{\\frac{1}{c^2}}')\nprint(repr(e))\nprint(e)\nprint(srepr(e))\n\" 2>/dev/null",
+  "exit_code": 1,
+  "output_tail": ""
+}

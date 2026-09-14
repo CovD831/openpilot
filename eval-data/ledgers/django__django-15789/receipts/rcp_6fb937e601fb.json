@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6fb937e601fb",
+  "run_id": "run_7e683e38d51d4ad78ed186cbde2d5504",
+  "consent_id": "con_48ef4f0e5fc9",
+  "proposal_id": "prop_751414e59afa",
+  "admission_id": "adm_9225bac5ddf3",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:37:29.443867+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15789/repo && /tmp/swebench-eval/django__django-15789/venv/bin/python -m pytest tests/utils_tests/test_html.py::TestUtilsHtml::test_json_script -q -x --tb=long > /tmp/testout.txt 2>&1; echo done",
+  "exit_code": 0,
+  "output_tail": "done"
+}

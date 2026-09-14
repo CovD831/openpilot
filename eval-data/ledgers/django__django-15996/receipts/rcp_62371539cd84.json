@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_62371539cd84",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_be01950adec6",
+  "proposal_id": "prop_ef1f65a16d80",
+  "admission_id": "adm_b1ded9d8fd19",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:31:52.729559+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo/tests && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport django\ndjango.setup()\nfrom django.db.migrations.writer import MigrationWriter\nfrom migrations.test_writer import IntFlagEnum\nv = IntFlagEnum.A | IntFlagEnum.B\nstring, imports = MigrationWriter.serialize(v)\nprint(string, imports)\nd = {}\nexec('\\n'.join(imports) + '\\ntest_value_result = ' + string, globals(), d)\nprint(d['test_value_result'], d['test_value_result'] == v, type(d['test_value_result']))\nPY",
+  "exit_code": 1,
+  "output_tail": "[stderr]\nTraceback (most recent call last):\n  File \"<stdin>\", line 2, in <module>\n  File \"/private/tmp/swebench-eval/django__django-15996/repo/django/__init__.py\", line 19, in setup\n    configure_logging(settings.LOGGING_CONFIG, settings.LOGGING)\n                      ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/swebench-eval/django__django-15996/repo/django/conf/__init__.py\", line 92, in __getattr__\n    self._setup(name)\n    ~~~~~~~~~~~^^^^^^\n  File \"/private/tmp/swebench-eval/django__django-15996/repo/django/conf/__init__.py\", line 72, in _setup\n    raise ImproperlyConfigured(\n    ...<4 lines>...\n    )\ndjango.core.exceptions.ImproperlyConfigured: Requested setting LOGGING_CONFIG, but settings are not configured. You must either define the environment variable DJANGO_SETTINGS_MODULE or call settings.configure() before accessing settings."
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9ec52dd46b3b",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_fcfe186e9acc",
+  "proposal_id": "prop_39b91f8e8b9a",
+  "admission_id": "adm_d1614637c00b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:55.471530+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport enum, re\nclass IntFlagEnum(enum.IntFlag):\n    A = 1\n    B = 2\nv = IntFlagEnum.A | IntFlagEnum.B\nprint('single in class', IntFlagEnum.A in IntFlagEnum)\nprint('combo in class', v in IntFlagEnum)\nprint('members map', IntFlagEnum.__members__)\nprint('combo name in members?', v.name in IntFlagEnum.__members__)\nprint('single name in members?', IntFlagEnum.A.name in IntFlagEnum.__members__)\nr = re.UNICODE | re.IGNORECASE\nprint('regex combo name in members?', r.name in type(r).__members__)\nprint('regex combo in class?', r in type(r))\nPY",
+  "exit_code": 0,
+  "output_tail": "single in class True\ncombo in class True\nmembers map {'A': <IntFlagEnum.A: 1>, 'B': <IntFlagEnum.B: 2>}\ncombo name in members? False\nsingle name in members? True\nregex combo name in members? False\nregex combo in class? True"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_182e022e0bab",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_b17c66ad6ce7",
+  "proposal_id": "prop_097a1f6a7703",
+  "admission_id": "adm_13aade255441",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:16.239353+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && grep -n \"ImproperlyConfigured\" /tmp/pytest_out.txt; grep -n \"settings\" /tmp/pytest_out.txt | head",
+  "exit_code": 0,
+  "output_tail": "17:    raise ImproperlyConfigured(\n18:E   django.core.exceptions.ImproperlyConfigured: Requested setting INSTALLED_APPS, but settings are not configured. You must either define the environment variable DJANGO_SETTINGS_MODULE or call settings.configure() before accessing settings.\n13:    settings.INSTALLED_APPS\n18:E   django.core.exceptions.ImproperlyConfigured: Requested setting INSTALLED_APPS, but settings are not configured. You must either define the environment variable DJANGO_SETTINGS_MODULE or call settings.configure() before accessing settings."
+}

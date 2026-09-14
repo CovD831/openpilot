@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_a4d4ef2ede8f",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_5767420d046c",
+  "proposal_id": "prop_c8a7f9a751a8",
+  "admission_id": "adm_0c1d9dec3b30",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:41:43.945423+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && /tmp/swebench-eval/django__django-14608/venv/bin/python -c \"from django.forms.utils import ErrorList; e=ErrorList(error_class='nonform'); e.append('x'); print(e.error_class); print(e.as_ul())\"",
+  "exit_code": 0,
+  "output_tail": "errorlist nonform\n<ul class=\"errorlist nonform\"><li>x</li></ul>"
+}

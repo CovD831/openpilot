@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_8de2d14deb4a",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_b8b7c521febe",
+  "proposal_id": "prop_4848a028a41c",
+  "admission_id": "adm_a9f048302bc1",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:25:51.537099+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && find django/forms/templates/django/forms -maxdepth 2 -type f | sort && echo '--- default' && cat django/forms/templates/django/forms/default.html && echo '--- div' && cat django/forms/templates/django/forms/div.html && echo '--- table' && cat django/forms/templates/django/forms/table.html",
+  "exit_code": 0,
+  "output_tail": "atetime.html\ndjango/forms/templates/django/forms/widgets/text.html\ndjango/forms/templates/django/forms/widgets/textarea.html\ndjango/forms/templates/django/forms/widgets/time.html\ndjango/forms/templates/django/forms/widgets/url.html\n--- default\n{% include \"django/forms/table.html\" %}\n--- div\n{{ errors }}\n{% if errors and not fields %}\n  <div>{% for field in hidden_fields %}{{ field }}{% endfor %}</div>\n{% endif %}\n{% for field, errors in fields %}\n  <div{% with classes=field.css_classes %}{% if classes %} class=\"{{ classes }}\"{% endif %}{% endwith %}>\n    {% if field.use_fieldset %}\n      <fieldset>\n      {% if field.label %}{{ field.legend_tag }}{% endif %}\n    {% else %}\n      {% if field.label %}{{ field.label_tag }}{% endif %}\n    {% endif %}\n    {% if field.help_text %}<div class=\"helptext\">{{ field.help_text|safe }}</div>{% endif %}\n    {{ errors }}\n    {{ field }}\n    {% if field.use_fieldset %}</fieldset>{% endif %}\n    {% if forloop.last %}\n      {% for field in hidden_fields %}{{ field }}{% endfor %}\n    {% endif %}\n</div>\n{% endfor %}\n{% if not fields and not errors %}\n  {% for field in hidden_fields %}{{ field }}{% endfor %}\n{% endif %}\n--- table\n{% if errors %}\n  <tr>\n    <td colspan=\"2\">\n      {{ errors }}\n      {% if not fields %}\n        {% for field in hidden_fields %}{{ field }}{% endfor %}\n      {% endif %}\n    </td>\n  </tr>\n{% endif %}\n{% for field, errors in fields %}\n  <tr{% with classes=field.css_classes %}{% if classes %} class=\"{{ classes }}\"{% endif %}{% endwith %}>\n    <th>{% if field.label %}{{ field.label_tag }}{% endif %}</th>\n    <td>\n      {{ errors }}\n      {{ field }}\n      {% if field.help_text %}\n        <br>\n        <span class=\"helptext\">{{ field.help_text|safe }}</span>\n      {% endif %}\n      {% if forloop.last %}\n        {% for field in hidden_fields %}{{ field }}{% endfor %}\n      {% endif %}\n    </td>\n  </tr>\n{% endfor %}\n{% if not fields and not errors %}\n  {% for field in hidden_fields %}{{ field }}{% endfor %}\n{% endif %}"
+}

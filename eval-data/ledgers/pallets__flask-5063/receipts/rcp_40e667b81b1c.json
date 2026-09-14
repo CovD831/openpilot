@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_40e667b81b1c",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_18aa4f66864c",
+  "proposal_id": "prop_0bf5a7c0d173",
+  "admission_id": "adm_102edb6e5cbf",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:11.857095+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -c \"from werkzeug.routing import Map, Rule; import inspect; print(inspect.getsource(Map.bind))\"",
+  "exit_code": 0,
+  "output_tail": "ne`.  The `server_name` at least is a requirement\n        because the HTTP RFC requires absolute URLs for redirects and so all\n        redirect exceptions raised by Werkzeug will contain the full canonical\n        URL.\n\n        If no path_info is passed to :meth:`match` it will use the default path\n        info passed to bind.  While this doesn't really make sense for\n        manual bind calls, it's useful if you bind a map to a WSGI\n        environment which already contains the path info.\n\n        `subdomain` will default to the `default_subdomain` for this map if\n        no defined. If there is no `default_subdomain` you cannot use the\n        subdomain feature.\n\n        .. versionchanged:: 1.0\n            If ``url_scheme`` is ``ws`` or ``wss``, only WebSocket rules\n            will match.\n\n        .. versionchanged:: 0.15\n            ``path_info`` defaults to ``'/'`` if ``None``.\n\n        .. versionchanged:: 0.8\n            ``query_args`` can be a string.\n\n        .. versionchanged:: 0.7\n            Added ``query_args``.\n        \"\"\"\n        server_name = server_name.lower()\n        if self.host_matching:\n            if subdomain is not None:\n                raise RuntimeError(\"host matching enabled and a subdomain was provided\")\n        elif subdomain is None:\n            subdomain = self.default_subdomain\n        if script_name is None:\n            script_name = \"/\"\n        if path_info is None:\n            path_info = \"/\"\n\n        # Port isn't part of IDNA, and might push a name over the 63 octet limit.\n        server_name, port_sep, port = server_name.partition(\":\")\n\n        try:\n            server_name = server_name.encode(\"idna\").decode(\"ascii\")\n        except UnicodeError as e:\n            raise BadHost() from e\n\n        return MapAdapter(\n            self,\n            f\"{server_name}{port_sep}{port}\",\n            script_name,\n            subdomain,\n            url_scheme,\n            path_info,\n            default_method,\n            query_args,\n        )"
+}

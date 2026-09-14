@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c207aa8017ea",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_4ec2099b010a",
+  "proposal_id": "prop_f3af8fa22871",
+  "admission_id": "adm_528ca211c6f8",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:41.967401+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "find /Users/abab/Library/Caches/pip/http-v2 -type f 2>/dev/null | wc -l; find /Users/abab/Library/Caches/pip/http-v2 -type f 2>/dev/null | head -20",
+  "exit_code": 0,
+  "output_tail": "f3a8d6b7bfacd3796771daa7c54527c4643d7dc4f9.body\n/Users/abab/Library/Caches/pip/http-v2/9/8/5/f/2/985f29fdb9c7e085b571080d779ac1ee5e46e8169cf19496bab440dc.body\n/Users/abab/Library/Caches/pip/http-v2/9/8/5/f/2/985f29fdb9c7e085b571080d779ac1ee5e46e8169cf19496bab440dc\n/Users/abab/Library/Caches/pip/http-v2/9/a/1/7/7/9a177b5c40402d7d57d7ab01d627fee7d0c5ad28d786f5d183e3b41b\n/Users/abab/Library/Caches/pip/http-v2/9/a/1/7/7/9a177b5c40402d7d57d7ab01d627fee7d0c5ad28d786f5d183e3b41b.body\n/Users/abab/Library/Caches/pip/http-v2/9/a/3/a/6/9a3a6f37e64f990e31d7ce9d028b8d535cafb33fd2d614b6b75df906.body\n/Users/abab/Library/Caches/pip/http-v2/9/a/3/a/6/9a3a6f37e64f990e31d7ce9d028b8d535cafb33fd2d614b6b75df906\n/Users/abab/Library/Caches/pip/http-v2/9/c/c/6/9/9cc6939c61442ece13bdcac1a4f63ac9be8b2e7a5a8148e85ca678e2.body\n/Users/abab/Library/Caches/pip/http-v2/9/c/c/6/9/9cc6939c61442ece13bdcac1a4f63ac9be8b2e7a5a8148e85ca678e2\n/Users/abab/Library/Caches/pip/http-v2/9/d/f/1/e/9df1ee6c2e327fe1c6b83e310229ce0dc078eddefce5100826a82a16\n/Users/abab/Library/Caches/pip/http-v2/9/d/f/1/e/9df1ee6c2e327fe1c6b83e310229ce0dc078eddefce5100826a82a16.body\n/Users/abab/Library/Caches/pip/http-v2/9/4/5/2/4/9452417670b2e75527d793717779fce5d54e5f21adb3344c273876fa.body\n/Users/abab/Library/Caches/pip/http-v2/9/4/5/2/4/9452417670b2e75527d793717779fce5d54e5f21adb3344c273876fa\n/Users/abab/Library/Caches/pip/http-v2/9/2/4/7/b/9247be634aa2cc64cfef8122b2d2bc1874944ef1d6372bd28e73de2c.body\n/Users/abab/Library/Caches/pip/http-v2/9/2/4/7/b/9247be634aa2cc64cfef8122b2d2bc1874944ef1d6372bd28e73de2c\n/Users/abab/Library/Caches/pip/http-v2/0/0/4/f/5/004f51e4cdaa64d7951a6294c47f410a2290cde6415bd52c394181fd.body\n/Users/abab/Library/Caches/pip/http-v2/0/0/4/f/5/004f51e4cdaa64d7951a6294c47f410a2290cde6415bd52c394181fd\n/Users/abab/Library/Caches/pip/http-v2/0/7/5/9/3/07593bb905dded4b84aacb1d96c1e64704669d6bab658dcaeab79c36.body\n/Users/abab/Library/Caches/pip/http-v2/0/7/5/9/3/07593bb905dded4b84aacb1d96c1e64704669d6bab658dcaeab79c36"
+}

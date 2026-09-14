@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_a30f02605a47",
+  "run_id": "run_7e683e38d51d4ad78ed186cbde2d5504",
+  "consent_id": "con_40926926dc33",
+  "proposal_id": "prop_9a90c3614c33",
+  "admission_id": "adm_ae6fcea06121",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:38:03.149131+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15789/repo && git diff -- django/utils/html.py tests/utils_tests/test_html.py",
+  "exit_code": 0,
+  "output_tail": "iff --git a/django/utils/html.py b/django/utils/html.py\nindex d0bc97b..007602a 100644\n--- a/django/utils/html.py\n+++ b/django/utils/html.py\n@@ -59,7 +59,7 @@ _json_script_escapes = {\n }\n \n \n-def json_script(value, element_id=None):\n+def json_script(value, element_id=None, encoder=None):\n     \"\"\"\n     Escape all the HTML/XML special characters with their unicode escapes, so\n     value is safe to be output anywhere except for inside a tag attribute. Wrap\n@@ -67,7 +67,9 @@ def json_script(value, element_id=None):\n     \"\"\"\n     from django.core.serializers.json import DjangoJSONEncoder\n \n-    json_str = json.dumps(value, cls=DjangoJSONEncoder).translate(_json_script_escapes)\n+    json_str = json.dumps(value, cls=encoder or DjangoJSONEncoder).translate(\n+        _json_script_escapes\n+    )\n     if element_id:\n         template = '<script id=\"{}\" type=\"application/json\">{}</script>'\n         args = (element_id, mark_safe(json_str))\ndiff --git a/tests/utils_tests/test_html.py b/tests/utils_tests/test_html.py\nindex 22a43fd..61644e3 100644\n--- a/tests/utils_tests/test_html.py\n+++ b/tests/utils_tests/test_html.py\n@@ -1,3 +1,4 @@\n+import json\n import os\n from datetime import datetime\n \n@@ -217,6 +218,21 @@ class TestUtilsHtml(SimpleTestCase):\n             '<script type=\"application/json\">{\"key\": \"value\"}</script>',\n         )\n \n+    def test_json_script_with_custom_encoder(self):\n+        class CustomEncoder(json.JSONEncoder):\n+            def default(self, o):\n+                if isinstance(o, datetime):\n+                    return o.isoformat()\n+                return super().default(o)\n+\n+        value = datetime(2022, 1, 1, 12, 30)\n+        self.assertHTMLEqual(\n+            json_script({\"value\": value}, encoder=CustomEncoder),\n+            '<script type=\"application/json\">'\n+            '{\"value\": \"2022-01-01T12:30:00\"}'\n+            \"</script>\",\n+        )\n+\n     def test_smart_urlquote(self):\n         items = (\n             (\"http://öäü.com/\", \"http://xn--4ca9at.com/\"),"
+}

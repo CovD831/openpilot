@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_373245002dea",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_d27eb498a58b",
+  "proposal_id": "prop_f2ca7e87b7fd",
+  "admission_id": "adm_4e9a64106f52",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:48.844989+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "/tmp/swebench-eval/pallets__flask-5063/venv/bin/python -V",
+  "exit_code": 0,
+  "output_tail": "Python 3.13.12"
+}

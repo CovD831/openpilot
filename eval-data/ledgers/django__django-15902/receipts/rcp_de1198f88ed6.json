@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_de1198f88ed6",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_2cf1410941b3",
+  "proposal_id": "prop_f4e02dcaf4c2",
+  "admission_id": "adm_9de25a50b697",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:29:56.943790+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && rm -f pytest_dep_out.txt",
+  "exit_code": 0,
+  "output_tail": ""
+}

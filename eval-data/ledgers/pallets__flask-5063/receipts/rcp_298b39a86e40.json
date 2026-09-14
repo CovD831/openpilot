@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_298b39a86e40",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_6602e1d8de7b",
+  "proposal_id": "prop_f062e54f9e33",
+  "admission_id": "adm_033cdf120cab",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:51:31.757372+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "pwd; ls -la /private/tmp/swebench-eval/pallets__flask-5063; ls -la /private/tmp/swebench-eval | head",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/Developer/openpilot-l0\ntotal 1352\ndrwxr-xr-x@  5 abab  wheel     160 Sep 14 08:44 .\ndrwxr-xr-x@ 10 abab  wheel     320 Sep 14 08:06 ..\ndrwxr-xr-x@ 26 abab  wheel     832 Sep 14 08:44 repo\n-rw-r--r--@  1 abab  wheel  691901 Sep 14 00:03 src.tar.gz\ndrwxr-xr-x@  7 abab  wheel     224 Sep 14 00:56 venv\ntotal 0\ndrwxr-xr-x@   10 abab  wheel    320 Sep 14 08:06 .\ndrwxrwxrwt  1863 root  wheel  59616 Sep 14 08:51 ..\ndrwxr-xr-x@    6 abab  wheel    192 Sep 14 08:09 pallets__flask-4045\ndrwxr-xr-x@    5 abab  wheel    160 Sep 14 08:44 pallets__flask-5063\ndrwxr-xr-x@    4 abab  wheel    128 Sep 14 00:41 sympy__sympy-15609\ndrwxr-xr-x@    4 abab  wheel    128 Sep 14 00:23 sympy__sympy-16988\ndrwxr-xr-x@    4 abab  wheel    128 Sep 14 00:22 sympy__sympy-18057\ndrwxr-xr-x@    4 abab  wheel    128 Sep 14 00:30 sympy__sympy-20212\ndrwxr-xr-x@    4 abab  wheel    128 Sep 14 00:44 sympy__sympy-21612"
+}

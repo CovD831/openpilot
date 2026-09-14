@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b743e2f88419",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_f33dc7862b80",
+  "proposal_id": "prop_0918edead5ef",
+  "admission_id": "adm_43c6cc68094a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:37:43.504514+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && git log -1 --format='%H%n%B' b10b6d4a 2>&1; echo \"===\"; git cat-file -t b10b6d4a 2>&1; echo \"=== try config ===\"; git show b10b6d4a:src/flask/config.py 2>&1 | sed -n '230,280p'",
+  "exit_code": 0,
+  "output_tail": "b10b6d4af1127fdfb0a74221af0c020ced71fece\nadd text parameter to config.from_file\n\n===\ncommit\n=== try config ==="
+}

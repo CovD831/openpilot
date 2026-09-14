@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_35c11a5cb13d",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_c5966135c0ec",
+  "proposal_id": "prop_bc6baadf7054",
+  "admission_id": "adm_1519b18a7453",
+  "path": "/private/tmp/swebench-eval/django__django-15902/repo/tests/forms_tests/tests/test_formsets.py",
+  "hash_before": "491a7d1fd42344f67af2bd396bfd4bb31c6b0cdf105ca23e4fa06ab6abb8f9cd",
+  "hash_after": "ad8b0f1ddbf44f3c2da3edc09ca09e9830f8cb3859a8591173ff417c30de0fa0",
+  "created_at": "2026-09-14T07:27:48.566146+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_bbced02b068a",
+  "run_id": "run_25882f298f3940fe87467026f9b45d2e",
+  "consent_id": "con_87dc9463bb79",
+  "proposal_id": "prop_ecd35100e30b",
+  "admission_id": "adm_3b1ea715ad8b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:42:20.738856+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "/opt/anaconda3/bin/python -c \"import mpmath, sympy; print(sympy.__version__)\" 2>&1 | head",
+  "exit_code": 0,
+  "output_tail": "1.14.0"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_767a38091e58",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_6e99ee24e128",
+  "proposal_id": "prop_c2b26b56b0b4",
+  "admission_id": "adm_061461591979",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:54:00.885528+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && git status --short && grep -n \"test_subdomain\\|test_host\" tests/test_cli.py | head",
+  "exit_code": 0,
+  "output_tail": "M src/flask/cli.py\n?? .openpilot/"
+}

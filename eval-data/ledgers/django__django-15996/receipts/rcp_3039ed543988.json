@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_3039ed543988",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_975feeb2f406",
+  "proposal_id": "prop_33f58e51a472",
+  "admission_id": "adm_6f4e50aa236c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:33:54.277171+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && git diff",
+  "exit_code": 0,
+  "output_tail": "diff --git a/django/db/migrations/serializer.py b/django/db/migrations/serializer.py\nindex 38da1e6..ba9db30 100644\n--- a/django/db/migrations/serializer.py\n+++ b/django/db/migrations/serializer.py\n@@ -125,6 +125,18 @@ class EnumSerializer(BaseSerializer):\n     def serialize(self):\n         enum_class = self.value.__class__\n         module = enum_class.__module__\n+        if (\n+            issubclass(enum_class, enum.Flag)\n+            and self.value.name not in enum_class.__members__\n+        ):\n+            return (\n+                \" | \".join(\n+                    \"%s.%s[%r]\" % (module, enum_class.__qualname__, member.name)\n+                    for member in enum_class\n+                    if member in self.value\n+                ),\n+                {\"import %s\" % module},\n+            )\n         return (\n             \"%s.%s[%r]\" % (module, enum_class.__qualname__, self.value.name),\n             {\"import %s\" % module},"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_1945307767cc",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_a643802565eb",
+  "proposal_id": "prop_aa36b7c7ee0e",
+  "admission_id": "adm_920d890ed097",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:30:02.204284+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && grep -rn \"management form\" docs/releases/4.1.txt docs/ref/forms/*.txt | head",
+  "exit_code": 0,
+  "output_tail": ""
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_00cf56f5b586",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_f077bd850daa",
+  "proposal_id": "prop_7b3663bec335",
+  "admission_id": "adm_490dd28b3b2e",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:41:01.664750+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && DJANGO_SETTINGS_MODULE=tests.test_sqlite /tmp/swebench-eval/django__django-14608/venv/bin/python -c \"import django; django.setup(); from django.forms.formsets import formset_factory; from django import forms; print('ok')\" 2>&1 | tail -20",
+  "exit_code": 0,
+  "output_tail": "File \"<string>\", line 1, in <module>\n    import django; django.setup(); from django.forms.formsets import formset_factory; from django import forms; print('ok')\n                   ~~~~~~~~~~~~^^\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/__init__.py\", line 16, in setup\n    from django.urls import set_script_prefix\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/urls/__init__.py\", line 1, in <module>\n    from .base import (\n    ...<3 lines>...\n    )\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/urls/base.py\", line 8, in <module>\n    from .exceptions import NoReverseMatch, Resolver404\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/urls/exceptions.py\", line 1, in <module>\n    from django.http import Http404\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/http/__init__.py\", line 2, in <module>\n    from django.http.request import (\n        HttpRequest, QueryDict, RawPostDataException, UnreadablePostError,\n    )\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/http/request.py\", line 1, in <module>\n    import cgi\nModuleNotFoundError: No module named 'cgi'"
+}

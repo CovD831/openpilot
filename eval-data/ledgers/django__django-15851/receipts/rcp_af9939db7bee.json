@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_af9939db7bee",
+  "run_id": "run_d0d16cc3503840c2969376ffd1787431",
+  "consent_id": "con_de945bf926b2",
+  "proposal_id": "prop_7568dce57942",
+  "admission_id": "adm_abc3c6882a5e",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:31:28.758469+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15851/repo && DJANGO_SETTINGS_MODULE=test_sqlite /tmp/swebench-eval/django__django-15851/venv/bin/python -m pytest tests/dbshell/test_postgresql.py -q 2>&1 | head -60",
+  "exit_code": 0,
+  "output_tail": "[test output: 1 of 2 lines dropped — failures and summaries kept]\n9 passed, 1 skipped in 0.33s"
+}

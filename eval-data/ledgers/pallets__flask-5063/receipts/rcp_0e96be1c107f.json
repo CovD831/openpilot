@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_0e96be1c107f",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_c3dc0bf9eb64",
+  "proposal_id": "prop_f06efc1d9b31",
+  "admission_id": "adm_304d684e7aba",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:50:07.911263+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls -la /tmp/swebench-eval/pallets__flask-5063/ && find /tmp/swebench-eval/pallets__flask-5063 -maxdepth 2 -type f | head -50",
+  "exit_code": 0,
+  "output_tail": "total 1352\ndrwxr-xr-x@  5 abab  wheel     160 Sep 14 08:44 .\ndrwxr-xr-x@ 10 abab  wheel     320 Sep 14 08:06 ..\ndrwxr-xr-x@ 26 abab  wheel     832 Sep 14 08:44 repo\n-rw-r--r--@  1 abab  wheel  691901 Sep 14 00:03 src.tar.gz\ndrwxr-xr-x@  7 abab  wheel     224 Sep 14 00:56 venv\n/tmp/swebench-eval/pallets__flask-5063/src.tar.gz\n/tmp/swebench-eval/pallets__flask-5063/venv/pyvenv.cfg\n/tmp/swebench-eval/pallets__flask-5063/venv/.gitignore\n/tmp/swebench-eval/pallets__flask-5063/repo/CODE_OF_CONDUCT.md\n/tmp/swebench-eval/pallets__flask-5063/repo/.flake8\n/tmp/swebench-eval/pallets__flask-5063/repo/CONTRIBUTING.rst\n/tmp/swebench-eval/pallets__flask-5063/repo/.pre-commit-config.yaml\n/tmp/swebench-eval/pallets__flask-5063/repo/pyproject.toml\n/tmp/swebench-eval/pallets__flask-5063/repo/MANIFEST.in\n/tmp/swebench-eval/pallets__flask-5063/repo/.editorconfig\n/tmp/swebench-eval/pallets__flask-5063/repo/.gitignore\n/tmp/swebench-eval/pallets__flask-5063/repo/tox.ini\n/tmp/swebench-eval/pallets__flask-5063/repo/LICENSE.rst\n/tmp/swebench-eval/pallets__flask-5063/repo/README.rst\n/tmp/swebench-eval/pallets__flask-5063/repo/CHANGES.rst\n/tmp/swebench-eval/pallets__flask-5063/repo/.readthedocs.yaml"
+}

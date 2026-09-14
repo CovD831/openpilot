@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_5ffd24bd3066",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_f6e6fd60f4aa",
+  "proposal_id": "prop_1c38897a1a5f",
+  "admission_id": "adm_9590f4c14415",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:28.118836+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && sed -n '1,20p' /tmp/pytest_out.txt",
+  "exit_code": 0,
+  "output_tail": "==================================== ERRORS ====================================\n_______________ ERROR collecting tests/migrations/test_writer.py _______________\ntests/migrations/test_writer.py:39: in <module>\n    from .models import FoodManager, FoodQuerySet\ntests/migrations/models.py:9: in <module>\n    class ModelWithCustomBase(models.Model, metaclass=CustomModelBase):\ndjango/db/models/base.py:127: in __new__\n    app_config = apps.get_containing_app_config(module)\ndjango/apps/registry.py:260: in get_containing_app_config\n    self.check_apps_ready()\ndjango/apps/registry.py:138: in check_apps_ready\n    raise AppRegistryNotReady(\"Apps aren't loaded yet.\")\nE   django.core.exceptions.AppRegistryNotReady: Apps aren't loaded yet.\n=========================== short test summary info ============================\nERROR tests/migrations/test_writer.py - django.core.exceptions.AppRegistryNot...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.32s"
+}

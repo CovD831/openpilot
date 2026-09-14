@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_5fd0a38c5a50",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_4911c27eacb6",
+  "proposal_id": "prop_de878da442f7",
+  "admission_id": "adm_e88eb67d3521",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:41:37.228608+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && ls docs/releases | tail -10 && grep -n \"Forms\" docs/releases/4.0.txt | head -20",
+  "exit_code": 0,
+  "output_tail": "3.2.1.txt\n3.2.2.txt\n3.2.3.txt\n3.2.4.txt\n3.2.5.txt\n3.2.6.txt\n3.2.txt\n4.0.txt\nindex.txt\nsecurity.txt\n212:Forms"
+}

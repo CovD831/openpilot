@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_f5f7a0eabf2c",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_d0e68de854ee",
+  "proposal_id": "prop_7f16f63bfb03",
+  "admission_id": "adm_5854b74f54c6",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:39.694373+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python - <<'PY'\nfrom flask import Flask\nfrom flask.cli import FlaskGroup\nfrom click.testing import CliRunner\n\n# subdomain\napp = Flask(__name__, static_folder=None)\napp.add_url_rule('/a', subdomain='a', endpoint='a')\napp.add_url_rule('/b', subdomain='b', endpoint='b')\ncli = FlaskGroup(create_app=lambda: app)\nr = CliRunner().invoke(cli, ['routes'])\nprint('subdomain exit', r.exit_code)\nprint(r.output)\n\n# host\napp = Flask(__name__, static_folder=None, host_matching=True)\napp.add_url_rule('/a', host='a', endpoint='a')\napp.add_url_rule('/b', host='b', endpoint='b')\ncli = FlaskGroup(create_app=lambda: app)\nr = CliRunner().invoke(cli, ['routes'])\nprint('host exit', r.exit_code)\nprint(r.output)\nPY",
+  "exit_code": 0,
+  "output_tail": "subdomain exit 0\nEndpoint  Methods  Subdomain  Rule\n--------  -------  ---------  ----\na         GET      a          /a  \nb         GET      b          /b  \n\nhost exit 0\nEndpoint  Methods  Host  Rule\n--------  -------  ----  ----\na         GET      a     /a  \nb         GET      b     /b"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_05934d476718",
+  "run_id": "run_7e683e38d51d4ad78ed186cbde2d5504",
+  "consent_id": "con_cae74a2d3756",
+  "proposal_id": "prop_f3dc2378b91d",
+  "admission_id": "adm_c86db5caf3ba",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:37:51.342553+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15789/repo && DJANGO_SETTINGS_MODULE=test_sqlite /tmp/swebench-eval/django__django-15789/venv/bin/python -m pytest tests/template_tests/filter_tests/test_json_script.py -q",
+  "exit_code": 1,
+  "output_tail": "[test output: 58 of 68 lines dropped — failures and summaries kept]\n==================================== ERRORS ====================================\n_________________ ERROR at setup of JsonScriptTests.test_basic _________________\nE       TypeError: 'module' object does not support item assignment\ntests/template_tests/utils.py:34: TypeError\n______________ ERROR at setup of JsonScriptTests.test_without_id _______________\nE       TypeError: 'module' object does not support item assignment\ntests/template_tests/utils.py:34: TypeError\n=========================== short test summary info ============================\nERROR tests/template_tests/filter_tests/test_json_script.py::JsonScriptTests::test_basic\nERROR tests/template_tests/filter_tests/test_json_script.py::JsonScriptTests::test_without_id"
+}

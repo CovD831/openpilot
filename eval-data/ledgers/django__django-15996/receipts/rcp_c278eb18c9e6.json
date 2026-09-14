@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c278eb18c9e6",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_fe2e3527cb1f",
+  "proposal_id": "prop_f5604c3c644e",
+  "admission_id": "adm_d4f648756bfe",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:25:22.559524+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && grep -R \"Flag\" django/db/migrations/serializer.py tests/migrations/test_writer.py",
+  "exit_code": 0,
+  "output_tail": "tests/migrations/test_writer.py:class IntFlagEnum(enum.IntFlag):\ntests/migrations/test_writer.py:            IntFlagEnum.A,\ntests/migrations/test_writer.py:                \"migrations.test_writer.IntFlagEnum['A']\",\ntests/migrations/test_writer.py:            IntFlagEnum.B,\ntests/migrations/test_writer.py:                \"migrations.test_writer.IntFlagEnum['B']\",\ntests/migrations/test_writer.py:            default=IntFlagEnum.A, choices=[(m.value, m) for m in IntFlagEnum]\ntests/migrations/test_writer.py:            \"(1, migrations.test_writer.IntFlagEnum['A']), \"\ntests/migrations/test_writer.py:            \"(2, migrations.test_writer.IntFlagEnum['B'])], \"\ntests/migrations/test_writer.py:            \"default=migrations.test_writer.IntFlagEnum['A'])\",\ntests/migrations/test_writer.py:            \"flags=re.RegexFlag['DOTALL'])\","
+}

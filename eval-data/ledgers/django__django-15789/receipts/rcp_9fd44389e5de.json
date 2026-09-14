@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9fd44389e5de",
+  "run_id": "run_7e683e38d51d4ad78ed186cbde2d5504",
+  "consent_id": "con_1fea6ea23e67",
+  "proposal_id": "prop_59017b15261c",
+  "admission_id": "adm_e6eff9f8c516",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:37:35.833595+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15789/repo && DJANGO_SETTINGS_MODULE=test_sqlite /tmp/swebench-eval/django__django-15789/venv/bin/python -m pytest tests/utils_tests/test_html.py -q",
+  "exit_code": 1,
+  "output_tail": "[test output: 72 of 84 lines dropped — failures and summaries kept]\n=================================== FAILURES ===================================\nE       NameError: name 'datetime' is not defined. Did you forget to import 'datetime'?\ntests/utils_tests/test_html.py:227: NameError\n    self.assertEqual(function(value), output)\nE   AssertionError: 'alert()&h;' != 'alert()h'\nE                   NameError: name 'datetime' is not defined. Did you forget to import 'datetime'?\ntests/utils_tests/test_html.py:128: NameError\n=========================== short test summary info ============================\nFAILED tests/utils_tests/test_html.py::TestUtilsHtml::test_json_script_with_custom_encoder\nFAILED tests/utils_tests/test_html.py::TestUtilsHtml::test_strip_tags - Asser...\nFAILED tests/utils_tests/test_html.py::TestUtilsHtml::test_strip_tags_files\n3 failed, 15 passed in 0.34s"
+}

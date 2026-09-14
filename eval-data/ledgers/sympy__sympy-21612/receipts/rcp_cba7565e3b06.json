@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_cba7565e3b06",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_b6cd8c37460c",
+  "proposal_id": "prop_bfe784eb8836",
+  "admission_id": "adm_d625ca616a86",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:45:22.081701+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21612/repo && ls .pytest_cache; cat .pytest_cache/CACHEDIR.TAG 2>/dev/null; python3 -m pip --version 2>&1 | head -1",
+  "exit_code": 0,
+  "output_tail": "CACHEDIR.TAG\nREADME.md\nv\nSignature: 8a477f597d28d172789f06886806bc55\n# This file is a cache directory tag created by pytest.\n# For information about cache directory tags, see:\n#\thttps://bford.info/cachedir/spec.html\npip 26.0 from /Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/site-packages/pip (python 3.13)"
+}

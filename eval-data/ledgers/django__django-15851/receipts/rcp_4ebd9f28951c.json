@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_4ebd9f28951c",
+  "run_id": "run_d0d16cc3503840c2969376ffd1787431",
+  "consent_id": "con_5418847db90d",
+  "proposal_id": "prop_5c6270f6d521",
+  "admission_id": "adm_ddb0d09619dc",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:31:21.850309+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15851/repo && /tmp/swebench-eval/django__django-15851/venv/bin/python -m pytest tests/dbshell/test_postgresql.py -q --ds=test_sqlite 2>&1 | head -50",
+  "exit_code": 0,
+  "output_tail": "[test output: 8 of 12 lines dropped — failures and summaries kept]\nUsageError: usage: __main__.py [options] [file_or_dir] [file_or_dir] [...]\n__main__.py: error: unrecognized arguments: --ds=test_sqlite\nERROR: usage: __main__.py [options] [file_or_dir] [file_or_dir] [...]\n__main__.py: error: unrecognized arguments: --ds=test_sqlite"
+}

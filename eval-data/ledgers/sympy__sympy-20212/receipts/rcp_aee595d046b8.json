@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_aee595d046b8",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_bfc26e9ec6be",
+  "proposal_id": "prop_e55c4d88bff5",
+  "admission_id": "adm_1b9dc446923c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:32:40.566727+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && grep -n \"is_extended_negative\\|is_extended_positive\\|is_positive\\|is_negative\" sympy/core/power.py | head -60",
+  "exit_code": 0,
+  "output_tail": "nded_positive\n583:                elif (1 - abs(self.base)).is_extended_negative:\n584:                    return self.exp.is_extended_negative\n586:            if self.base.is_finite and self.exp.is_negative:\n592:            if b.is_integer is False and e.is_positive:\n597:            if e.is_nonnegative or e.is_positive:\n599:        if b.is_integer and e.is_negative and (e.is_finite or e.is_integer):\n605:        if e.is_negative and b.is_positive and (b - 1).is_positive:\n607:        if e.is_negative and b.is_negative and (b + 1).is_negative:\n621:            if self.base.is_extended_positive:\n629:            elif self.base.is_extended_negative:\n632:        if real_e and self.exp.is_extended_negative and self.base.is_zero is False:\n689:            if self.base.is_positive:\n700:                        return self.base.is_negative\n709:        if self.exp.is_negative:\n714:            if self.exp.is_positive:\n722:        if self.exp.is_negative:\n741:        if self.base.is_integer and self.exp.is_integer and (self.exp - 1).is_positive:\n749:            ((self.base - 1).is_positive and (self.exp - 1).is_positive or\n750:            (self.base + 1).is_negative and self.exp.is_positive and self.exp.is_even)):\n860:        if isinstance(old, exp) and self.exp.is_extended_real and self.base.is_positive:\n900:        i, p = self.exp.is_integer, self.base.is_positive\n912:        i, p = self.exp.is_integer, self.base.is_positive\n967:                if e.is_positive:\n1276:        if exp.is_negative and base.is_number and base.is_extended_real is False:\n1297:                and fuzzy_not(fuzzy_and([self.exp.is_negative, self.base.is_zero]))):\n1334:            if self.exp.is_positive:\n1421:        neg_exp = exp.is_negative\n1422:        if not neg_exp and not (-exp).is_negative:\n1568:        if not d.is_positive:\n1571:            if not d.is_positive:\n1593:            and f.is_negative and im((b - f).dir(x, cdir)) < 0):\n1617:            and f.is_negative and im((b - f).dir(x, cdir)) < 0):"
+}

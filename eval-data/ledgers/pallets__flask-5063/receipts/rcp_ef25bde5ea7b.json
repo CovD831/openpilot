@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_ef25bde5ea7b",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_438eaac4a60e",
+  "proposal_id": "prop_baad7376e5c8",
+  "admission_id": "adm_2f11bedadcaf",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:32.620215+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls /tmp/swebench-eval && find /tmp/swebench-eval -maxdepth 2 -type d -name '*flask*' 2>/dev/null",
+  "exit_code": 0,
+  "output_tail": "pallets__flask-4045\npallets__flask-5063\nsympy__sympy-15609\nsympy__sympy-16988\nsympy__sympy-18057\nsympy__sympy-20212\nsympy__sympy-21612\nsympy__sympy-21614\n/tmp/swebench-eval/pallets__flask-5063\n/tmp/swebench-eval/pallets__flask-4045"
+}

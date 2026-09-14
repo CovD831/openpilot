@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_22ce5312415e",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_7165c8caace4",
+  "proposal_id": "prop_8f9d7cf747e5",
+  "admission_id": "adm_652748013ed8",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:38:17.252996+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && git show main:CHANGES.rst 2>&1 | sed -n '205,235p'",
+  "exit_code": 0,
+  "output_tail": "-   Calling setup methods on blueprints after registration is an error instead of a\n        warning. :pr:`4997`\n\n-   Importing ``escape`` and ``Markup`` from ``flask`` is deprecated. Import them\n    directly from ``markupsafe`` instead. :pr:`4996`\n-   The ``app.got_first_request`` property is deprecated. :pr:`4997`\n-   The ``locked_cached_property`` decorator is deprecated. Use a lock inside the\n    decorated function if locking is needed. :issue:`4993`\n-   Signals are always available. ``blinker>=1.6.2`` is a required dependency. The\n    ``signals_available`` attribute is deprecated. :issue:`5056`\n-   Signals support ``async`` subscriber functions. :pr:`5049`\n-   Remove uses of locks that could cause requests to block each other very briefly.\n    :issue:`4993`\n-   Use modern packaging metadata with ``pyproject.toml`` instead of ``setup.cfg``.\n    :pr:`4947`\n-   Ensure subdomains are applied with nested blueprints. :issue:`4834`\n-   ``config.from_file`` can use ``text=False`` to indicate that the parser wants a\n    binary file instead. :issue:`4989`\n-   If a blueprint is created with an empty name it raises a ``ValueError``.\n    :issue:`5010`\n-   ``SESSION_COOKIE_DOMAIN`` does not fall back to ``SERVER_NAME``. The default is not\n    to set the domain, which modern browsers interpret as an exact match rather than\n    a subdomain match. Warnings about ``localhost`` and IP addresses are also removed.\n    :issue:`5051`\n-   The ``routes`` command shows each rule's ``subdomain`` or ``host`` when domain\n    matching is in use. :issue:`5004`\n-   Use postponed evaluation of annotations. :pr:`5071`\n\n\nVersion 2.2.5\n-------------"
+}

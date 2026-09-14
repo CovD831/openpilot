@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_3c1cb1b5082d",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_935b41e40e40",
+  "proposal_id": "prop_32e582a4b085",
+  "admission_id": "adm_75f5218ed393",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:38:14.794293+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && echo \"=== CHANGES grep in main ===\"; git show main:CHANGES.rst 2>&1 | grep -n \"text.*config.from_file\\|from_file.*text\\|tomllib\" | head; echo \"=== docs main ===\"; git show main:docs/config.rst 2>&1 | grep -n \"tomllib\\|from_file\\|text\" | head -20",
+  "exit_code": 0,
+  "output_tail": "=== CHANGES grep in main ===\n221:-   ``config.from_file`` can use ``text=False`` to indicate that the parser wants a\n=== docs main ===\n53:.. code-block:: text\n287:    request context.\n304:    web server.  This is used for generating URLs outside the context of a\n316:    Use this scheme for generating external URLs when not in a request context.\n476:      .. code-block:: text\n484:      .. code-block:: text\n492:      .. code-block:: text\n500:      .. code-block:: text\n526:your choice using :meth:`~flask.Config.from_file`. For example to load\n531:    import tomllib\n532:    app.config.from_file(\"config.toml\", load=tomllib.load, text=False)\n539:    app.config.from_file(\"config.json\", load=json.load)\n558:      .. code-block:: text\n567:      .. code-block:: text\n576:      .. code-block:: text\n585:      .. code-block:: text\n616:.. code-block:: text"
+}

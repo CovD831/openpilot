@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_7412b651c504",
+  "run_id": "run_9d33672eb7a54933afbbca8d6d9b2130",
+  "consent_id": "con_06569cbad732",
+  "proposal_id": "prop_b1830d41a4a2",
+  "admission_id": "adm_517338e5783d",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:38:29.092672+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21614/repo && python -m pytest sympy/core/tests/test_kind.py -q",
+  "exit_code": 1,
+  "output_tail": "[stderr]\n/Users/abab/.workbuddy/binaries/python/versions/3.13.12/bin/python: No module named pytest"
+}

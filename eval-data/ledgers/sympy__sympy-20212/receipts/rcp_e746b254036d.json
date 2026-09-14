@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e746b254036d",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_daa61e118505",
+  "proposal_id": "prop_4722b9f93e72",
+  "admission_id": "adm_dd28f5e1879a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:34:52.867500+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && grep -rn \"equal_valued\" sympy | head",
+  "exit_code": 0,
+  "output_tail": ""
+}

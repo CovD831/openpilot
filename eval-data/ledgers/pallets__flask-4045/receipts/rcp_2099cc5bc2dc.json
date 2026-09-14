@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_2099cc5bc2dc",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_e575f0e0b5cf",
+  "proposal_id": "prop_bcd14369ae02",
+  "admission_id": "adm_b5b27291d77c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:11.226027+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && grep -rn \"assert.*dot\\|ValueError\\|pytest.raises\" tests/test_blueprints.py | head -60",
+  "exit_code": 0,
+  "output_tail": "tests/test_blueprints.py:217:        with pytest.raises(TemplateNotFound) as e:\ntests/test_blueprints.py:375:    pytest.raises(\ntests/test_blueprints.py:380:    pytest.raises(\ntests/test_blueprints.py:386:    pytest.raises("
+}

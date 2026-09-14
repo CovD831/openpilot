@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_a82858534680",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_26c51fb9f210",
+  "proposal_id": "prop_92706122c392",
+  "admission_id": "adm_3fd74011314d",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:21.537241+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -c \"from werkzeug.routing import MapAdapter; import inspect; src=inspect.getsource(MapAdapter); \nstart=src.index('    def get_host'); print(src[start:start+700])\"",
+  "exit_code": 0,
+  "output_tail": "def get_host(self, domain_part: str | None) -> str:\n        \"\"\"Figures out the full host name for the given domain part.  The\n        domain part is a subdomain in case host matching is disabled or\n        a full host name.\n        \"\"\"\n        if self.map.host_matching:\n            if domain_part is None:\n                return self.server_name\n\n            return domain_part\n\n        if domain_part is None:\n            subdomain = self.subdomain\n        else:\n            subdomain = domain_part\n\n        if subdomain:\n            return f\"{subdomain}.{self.server_name}\"\n        else:\n            return self.server_name\n\n    def get_default_redirect(\n        self,\n        rule: Rule,"
+}

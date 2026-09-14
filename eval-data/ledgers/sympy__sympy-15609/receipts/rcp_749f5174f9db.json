@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_749f5174f9db",
+  "run_id": "run_25882f298f3940fe87467026f9b45d2e",
+  "consent_id": "con_371e35ce7576",
+  "proposal_id": "prop_e6aaf5ed7a03",
+  "admission_id": "adm_bd6ff3d8c050",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:42:28.872331+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-15609/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-15609/repo /opt/anaconda3/bin/python -c \"\nfrom sympy import symbols, MatrixSymbol, latex\nfrom sympy.printing.latex import LatexPrinter\ni, j, k = symbols('i j k')\nM = MatrixSymbol('M', k, k)\nN = MatrixSymbol('N', k, k)\ne = (M*N)[i, j]\nprint(type(e))\nprint(e.function, type(e.function))\nprint(e.limits)\nfor lim in e.limits:\n    for x in lim:\n        print('lim', repr(x), type(x))\nfor idx in e.function.indices:\n    print('idx', repr(idx), type(idx), 'name?', getattr(idx,'name',None))\np = LatexPrinter()\nfor idx in e.function.indices:\n    print('printed idx', p._print(idx), repr(p._print(idx)))\n\"",
+  "exit_code": 1,
+  "output_tail": "<class 'sympy.concrete.summations.Sum'>\nM[i, _i_1]*N[_i_1, j] <class 'sympy.core.mul.Mul'>\n((_i_1, 0, k - 1),)\nlim _i_1 <class 'sympy.core.symbol.Dummy'>\nlim 0 <class 'sympy.core.numbers.Zero'>\nlim k - 1 <class 'sympy.core.add.Add'>\n\n[stderr]\n/private/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/external/importtools.py:162: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.\n  if StrictVersion(modversion) < StrictVersion(min_module_version):\n/private/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/solvers/diophantine.py:3188: SyntaxWarning: \"is\" with 'int' literal. Did you mean \"==\"?\n  if feasible is 1:  # it's prime and k == 2\nTraceback (most recent call last):\n  File \"<string>\", line 14, in <module>\n    for idx in e.function.indices:\n               ^^^^^^^^^^^^^^^^^^\nAttributeError: 'Mul' object has no attribute 'indices'"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_5abf567fe670",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_02997d3daf80",
+  "proposal_id": "prop_2f180d80cfd4",
+  "admission_id": "adm_559c138b5551",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:40.844296+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "find /Users/abab/Library/Caches/pip/http-v2 -maxdepth 2 -type f 2>/dev/null | head -50; du -sh /Users/abab/Library/Caches/pip/http-v2 2>/dev/null",
+  "exit_code": 0,
+  "output_tail": "9.0M\t/Users/abab/Library/Caches/pip/http-v2"
+}

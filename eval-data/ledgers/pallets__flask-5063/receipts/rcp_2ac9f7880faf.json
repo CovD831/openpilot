@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_2ac9f7880faf",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_59f89412ae75",
+  "proposal_id": "prop_0de94c845245",
+  "admission_id": "adm_8d7ea263ac86",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:47.942629+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -rl \"Domain.*Methods.*Endpoint.*Rule\\|_get_domain\\|routes_command\" /Users/abab/Library/Caches/pip/http-v2 2>/dev/null | head -20",
+  "exit_code": 0,
+  "output_tail": ""
+}

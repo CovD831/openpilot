@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_0d4c83491899",
+  "run_id": "run_25882f298f3940fe87467026f9b45d2e",
+  "consent_id": "con_f8e09e152868",
+  "proposal_id": "prop_c3f4485e9c13",
+  "admission_id": "adm_51697e8b9760",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:42:31.702842+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-15609/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-15609/repo /opt/anaconda3/bin/python -c \"\nfrom sympy import symbols, MatrixSymbol, latex\nfrom sympy.printing.latex import LatexPrinter\ni, j, k = symbols('i j k')\nM = MatrixSymbol('M', k, k)\nN = MatrixSymbol('N', k, k)\ne = (M*N)[i, j]\np = LatexPrinter()\nfor arg in e.function.args:\n    print('arg', repr(arg), type(arg))\n    if hasattr(arg, 'indices'):\n        for idx in arg.indices:\n            print('  idx', repr(idx), type(idx), getattr(idx,'name',None), 'printed', p._print(idx))\n\"",
+  "exit_code": 0,
+  "output_tail": "arg M[i, _i_1] <class 'sympy.matrices.expressions.matexpr.MatrixElement'>\n  idx i <class 'sympy.core.symbol.Symbol'> i printed i\n  idx _i_1 <class 'sympy.core.symbol.Dummy'> i_1 printed i_{1}\narg N[_i_1, j] <class 'sympy.matrices.expressions.matexpr.MatrixElement'>\n  idx _i_1 <class 'sympy.core.symbol.Dummy'> i_1 printed i_{1}\n  idx j <class 'sympy.core.symbol.Symbol'> j printed j\n\n[stderr]\n/private/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/external/importtools.py:162: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.\n  if StrictVersion(modversion) < StrictVersion(min_module_version):\n/private/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/solvers/diophantine.py:3188: SyntaxWarning: \"is\" with 'int' literal. Did you mean \"==\"?\n  if feasible is 1:  # it's prime and k == 2"
+}

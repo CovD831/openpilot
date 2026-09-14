@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e3a5a76d66c5",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_e9c44d142fd4",
+  "proposal_id": "prop_e19af482ec69",
+  "admission_id": "adm_44c1184e0310",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:25:12.372609+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && git log --oneline -5",
+  "exit_code": 0,
+  "output_tail": "1f4df93 base"
+}

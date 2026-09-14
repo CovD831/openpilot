@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_654e12f9124d",
+  "run_id": "run_9d33672eb7a54933afbbca8d6d9b2130",
+  "consent_id": "con_b1c05d4c4db6",
+  "proposal_id": "prop_7dbfe7b3f9d4",
+  "admission_id": "adm_2947061857a9",
+  "path": "/private/tmp/swebench-eval/sympy__sympy-21614/repo/sympy/core/tests/test_kind.py",
+  "hash_before": "7e92373f3f171a2721e1f513b9a129ede1769aba5c36020b76e72e98e5f40e70",
+  "hash_after": "95f3a57b4ebb302b981deff606d50ecb5ac8dc3d296e32896feb3a960429ddc4",
+  "created_at": "2026-09-13T16:38:27.700926+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

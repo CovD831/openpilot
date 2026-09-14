@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_4da5b2f13609",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_506abc0f67ba",
+  "proposal_id": "prop_a0eb776283d4",
+  "admission_id": "adm_6620069d1243",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:31:03.239854+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport enum\nclass F(enum.Flag):\n    NONE = 0\n    A = 1\nprint(F.NONE, repr(F.NONE), F.NONE.name)\nprint(F(0), repr(F(0)), F(0).name)\nprint(F.NONE in F.__members__)\nPY",
+  "exit_code": 0,
+  "output_tail": "F.NONE <F.NONE: 0> NONE\nF.NONE <F.NONE: 0> NONE\nFalse"
+}

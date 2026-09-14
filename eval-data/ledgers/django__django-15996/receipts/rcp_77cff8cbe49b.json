@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_77cff8cbe49b",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_f00d04450461",
+  "proposal_id": "prop_2c8e123381de",
+  "admission_id": "adm_b07502418a80",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:30:02.179778+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo/tests && /tmp/swebench-eval/django__django-15996/venv/bin/python runtests.py migrations.test_writer.WriterTests.test_serialize_enum_flags -v 2 2>&1 | tail -30",
+  "exit_code": 0,
+  "output_tail": "Testing against Django installed in '/private/tmp/swebench-eval/django__django-15996/repo/django' with up to 10 processes\nImporting application migrations\nFound 1 test(s).\nSkipping setup of unused database(s): default, other.\nSystem check identified no issues (0 silenced).\ntest_serialize_enum_flags (migrations.test_writer.WriterTests.test_serialize_enum_flags) ... ok\n\n----------------------------------------------------------------------\nRan 1 test in 0.000s\n\nOK"
+}

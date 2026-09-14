@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b4a1e5311d73",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_9eec968ec819",
+  "proposal_id": "prop_519af60affba",
+  "admission_id": "adm_813e03d19b58",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:26:59.748134+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "python3 - <<'PY'\nimport enum, inspect\nprint(inspect.getsource(enum.Flag._iter_member_))\nprint(inspect.getsource(enum.Flag._decompose)) if hasattr(enum.Flag, '_decompose') else print('no _decompose')\nPY",
+  "exit_code": 0,
+  "output_tail": "@classmethod\n    def _iter_member_by_value_(cls, value):\n        \"\"\"\n        Extract all members from the value in definition (i.e. increasing value) order.\n        \"\"\"\n        for val in _iter_bits_lsb(value & cls._flag_mask_):\n            yield cls._value2member_map_.get(val)\n\nno _decompose"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c7360e16348f",
+  "run_id": "run_d0d16cc3503840c2969376ffd1787431",
+  "consent_id": "con_16556856709f",
+  "proposal_id": "prop_4fedb59ad8d1",
+  "admission_id": "adm_fc88f9255c25",
+  "path": "/private/tmp/swebench-eval/django__django-15851/repo/tests/dbshell/test_postgresql.py",
+  "hash_before": "0ec1e323e38d85866a8f51993e913b6fd0b4be308cc22612b2fe654c357113f4",
+  "hash_after": "6e41b7670d4ed81c8703e029462a242a5d01537b51a54dbfd7451943a05c543a",
+  "created_at": "2026-09-14T07:31:15.848984+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_d6f0483f729c",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_9c0dbcde6b5f",
+  "proposal_id": "prop_4e39d226dfbe",
+  "admission_id": "adm_905895c326ba",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:51.615049+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && grep -n \"filterwarnings\\|pytest\" pyproject.toml tox.ini",
+  "exit_code": 0,
+  "output_tail": "pyproject.toml:55:[tool.pytest.ini_options]\npyproject.toml:57:filterwarnings = [\npyproject.toml:59:    # change in Python 3.12 alpha causes warning from inside pytest\ntox.ini:26:# commands = pytest -v --tb=short --basetemp={envtmpdir} {posargs:tests examples}\ntox.ini:27:commands = pytest -v --tb=short --basetemp={envtmpdir} {posargs:tests}"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_44e096ec1374",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_e74900487212",
+  "proposal_id": "prop_228f69a7c0b8",
+  "admission_id": "adm_037c02bf6062",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:26:57.667232+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "python3 - <<'PY'\nimport enum, inspect\nprint(inspect.getsource(enum.Flag.__repr__))\nprint('---contains---')\nprint(inspect.getsource(enum.Flag.__contains__))\nprint('---iter---')\nprint(inspect.getsource(enum.Flag.__iter__))\nPY",
+  "exit_code": 0,
+  "output_tail": "def __repr__(self):\n        cls_name = self.__class__.__name__\n        v_repr = self.__class__._value_repr_ or repr\n        if self._name_ is None:\n            return \"<%s: %s>\" % (cls_name, v_repr(self._value_))\n        else:\n            return \"<%s.%s: %s>\" % (cls_name, self._name_, v_repr(self._value_))\n\n---contains---\n    def __contains__(self, other):\n        \"\"\"\n        Returns True if self has at least the same flags set as other.\n        \"\"\"\n        if not isinstance(other, self.__class__):\n            raise TypeError(\n                \"unsupported operand type(s) for 'in': %r and %r\" % (\n                    type(other).__qualname__, self.__class__.__qualname__))\n        return other._value_ & self._value_ == other._value_\n\n---iter---\n    def __iter__(self):\n        \"\"\"\n        Returns flags in definition order.\n        \"\"\"\n        yield from self._iter_member_(self._value_)"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_4eeb72e57bad",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_9bfb7b6af9fb",
+  "proposal_id": "prop_485ba98f6805",
+  "admission_id": "adm_793e143d46ab",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:28:10.664506+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && ls -la && find . -maxdepth 2 -name conftest.py -o -name pytest.ini -o -name setup.cfg -o -name pyproject.toml",
+  "exit_code": 0,
+  "output_tail": "eel   1088 Sep 14 15:27 .\ndrwxr-xr-x@   5 abab  wheel    160 Sep 14 15:24 ..\n-rw-r--r--@   1 abab  wheel    806 Aug  2  2022 .editorconfig\n-rw-r--r--@   1 abab  wheel    120 Aug  2  2022 .eslintignore\n-rw-r--r--@   1 abab  wheel   1407 Aug  2  2022 .eslintrc\ndrwxr-xr-x@  12 abab  wheel    384 Sep 14 15:25 .git\n-rw-r--r--@   1 abab  wheel    205 Aug  2  2022 .git-blame-ignore-revs\n-rw-r--r--@   1 abab  wheel    297 Aug  2  2022 .gitattributes\ndrwxr-xr-x@   6 abab  wheel    192 Aug  2  2022 .github\n-rw-r--r--@   1 abab  wheel    353 Aug  2  2022 .gitignore\ndrwxr-xr-x@   5 abab  wheel    160 Sep 14 15:25 .openpilot\n-rw-r--r--@   1 abab  wheel    389 Aug  2  2022 .pre-commit-config.yaml\ndrwxr-xr-x@   6 abab  wheel    192 Sep 14 15:27 .pytest_cache\n-rw-r--r--@   1 abab  wheel    385 Aug  2  2022 .readthedocs.yml\ndrwxr-xr-x@   3 abab  wheel     96 Aug  2  2022 .tx\n-rw-r--r--@   1 abab  wheel  40633 Aug  2  2022 AUTHORS\n-rw-r--r--@   1 abab  wheel   1115 Aug  2  2022 CONTRIBUTING.rst\n-rw-r--r--@   1 abab  wheel    369 Aug  2  2022 Gruntfile.js\n-rw-r--r--@   1 abab  wheel    236 Aug  2  2022 INSTALL\n-rw-r--r--@   1 abab  wheel   1552 Aug  2  2022 LICENSE\n-rw-r--r--@   1 abab  wheel  14383 Aug  2  2022 LICENSE.python\n-rw-r--r--@   1 abab  wheel    276 Aug  2  2022 MANIFEST.in\n-rw-r--r--@   1 abab  wheel   2122 Aug  2  2022 README.rst\ndrwxr-xr-x@  20 abab  wheel    640 Aug  2  2022 django\ndrwxr-xr-x@  22 abab  wheel    704 Aug  2  2022 docs\ndrwxr-xr-x@   5 abab  wheel    160 Aug  2  2022 extras\ndrwxr-xr-x@   5 abab  wheel    160 Aug  2  2022 js_tests\n-rw-r--r--@   1 abab  wheel    363 Aug  2  2022 package.json\n-rw-r--r--@   1 abab  wheel    219 Aug  2  2022 pyproject.toml\ndrwxr-xr-x@   4 abab  wheel    128 Aug  2  2022 scripts\n-rw-r--r--@   1 abab  wheel   2276 Aug  2  2022 setup.cfg\n-rw-r--r--@   1 abab  wheel   1633 Aug  2  2022 setup.py\ndrwxr-xr-x@ 220 abab  wheel   7040 Aug  2  2022 tests\n-rw-r--r--@   1 abab  wheel   1702 Aug  2  2022 tox.ini\n./pyproject.toml\n./setup.cfg"
+}

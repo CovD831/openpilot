@@ -1,0 +1,279 @@
+{
+ "pallets__flask-4992": {
+  "verdict": "success",
+  "run": {
+   "turns": 26,
+   "input_tokens": 14162,
+   "output_tokens": 11913,
+   "cost_usd": 0.0062,
+   "elapsed_s": 140.0
+  }
+ },
+ "pallets__flask-5063": {
+  "instance_id": "pallets__flask-5063",
+  "repo": "pallets/flask",
+  "base": {
+   "failed": 21,
+   "passed": 31,
+   "errors": 4
+  },
+  "run": {
+   "answer_tail": ".admin_home          GET      admin      /home\nstatic                              GET                 /static/<path:filename>\ntest_subdomain_blueprint.test_home  GET      test       /home\n```\n\nNote: for subdomain matching the column shows the subdomain (e.g. `admin`), not the full `admin.test.local`; for host matching it shows the full host. This is the accepted upstream behavior for issue #5063.",
+   "error": "",
+   "elapsed_s": 788.8,
+   "turns": 88,
+   "input_tokens": 45982,
+   "output_tokens": 49266,
+   "cost_usd": 0.4624,
+   "events": {
+    "engine_started": 1,
+    "turn_started": 1,
+    "model_request": 1,
+    "pi_engine_started": 1,
+    "pi_turn_started": 88,
+    "model_response_started": 191,
+    "model_response": 191,
+    "model_response_delta": 45546,
+    "tool_call": 102,
+    "command_proposed": 65,
+    "consent_bound": 67,
+    "command_authorized": 66,
+    "bash_receipt_written": 66,
+    "tool_result": 102,
+    "pi_turn_finished": 88,
+    "patch_proposed": 2,
+    "patch_authorized": 5,
+    "patch_receipt_written": 5,
+    "pi_agent_end": 1,
+    "engine_stopped": 1
+   },
+   "receipts": 71,
+   "run_id": "run_e3e7091bc04244ff842a7e468c9b159d"
+  },
+  "op0": {
+   "failed": 21,
+   "passed": 31,
+   "errors": 4
+  },
+  "verdict": "failed",
+  "cause": "f2p_failing=['tests/test_cli.py::TestRoutes::test_subdomain', 'tests/test_cli.py::TestRoutes::test_host'] regression=False (base 21F/4E vs op0 21F/4E)",
+  "elapsed_s": 791.0
+ },
+ "sympy__sympy-15609": {
+  "instance_id": "sympy__sympy-15609",
+  "repo": "sympy/sympy",
+  "base": {
+   "failed": 7,
+   "passed": 121,
+   "errors": 0
+  },
+  "run": {
+   "answer_tail": "the dummy as `i_{1}`.\n\nVerification:\n- `latex((M*N)[i, j])` now returns `\\sum_{i_{1}=0}^{k - 1} M_{i, i_{1}} N_{i_{1}, j}`.\n- Added a regression assertion in `test_MatrixElement_printing` (`sympy/printing/tests/test_latex.py`).\n- `pytest sympy/printing/tests/test_latex.py -k \"MatrixElement or MatrixSymbol\"` passes (2 passed). The 4 unrelated full-suite failures are pre-existing environment issues.",
+   "error": "",
+   "elapsed_s": 90.8,
+   "turns": 27,
+   "input_tokens": 15723,
+   "output_tokens": 5852,
+   "cost_usd": 0.0573,
+   "events": {
+    "engine_started": 1,
+    "turn_started": 1,
+    "model_request": 1,
+    "pi_engine_started": 1,
+    "pi_turn_started": 27,
+    "model_response_started": 57,
+    "model_response": 57,
+    "model_response_delta": 4733,
+    "tool_call": 29,
+    "tool_result": 29,
+    "pi_turn_finished": 27,
+    "command_proposed": 14,
+    "consent_bound": 16,
+    "command_authorized": 14,
+    "bash_receipt_written": 14,
+    "patch_proposed": 2,
+    "patch_authorized": 2,
+    "patch_receipt_written": 2,
+    "pi_agent_end": 1,
+    "engine_stopped": 1
+   },
+   "receipts": 16,
+   "run_id": "run_25882f298f3940fe87467026f9b45d2e"
+  },
+  "op0": {
+   "failed": 5,
+   "passed": 123,
+   "errors": 0
+  },
+  "verdict": "success",
+  "elapsed_s": 97.9
+ },
+ "sympy__sympy-16988": {
+  "instance_id": "sympy__sympy-16988",
+  "repo": "sympy/sympy",
+  "verdict": "environment",
+  "cause": "F2P unrunnable on base (py3.13 vs old deps): ['sympy/sets/tests/test_sets.py::test_imageset', 'sympy/sets/tests/test_sets.py::test_intersection']",
+  "base": {
+   "failed": 0,
+   "passed": 0,
+   "errors": 2
+  },
+  "elapsed_s": 12.5
+ },
+ "sympy__sympy-18057": {
+  "instance_id": "sympy__sympy-18057",
+  "repo": "sympy/sympy",
+  "verdict": "environment",
+  "cause": "F2P unrunnable on base (py3.13 vs old deps): ['sympy/core/tests/test_expr.py::test_var']",
+  "base": {
+   "failed": 0,
+   "passed": 0,
+   "errors": 1
+  },
+  "elapsed_s": 6.2
+ },
+ "sympy__sympy-20212": {
+  "instance_id": "sympy__sympy-20212",
+  "repo": "sympy/sympy",
+  "base": {
+   "failed": 2,
+   "passed": 33,
+   "errors": 0
+  },
+  "run": {
+   "answer_tail": "rtions in `test_zero` for `0**oo` and `0**-oo`.\n\nVerification (using system Python 3.9 with mpmath, since the repo's default Python 3.13 lacks `distutils`):\n- `0**-oo` now returns `zoo`\n- `0**oo` still returns `0`\n- `0**-2` still returns `zoo`, `0**2` still returns `0`\n- `bin/test sympy/core/tests/test_power.py` → 34 passed\n- `bin/test sympy/core/tests/test_numbers.py` → 98 passed, 1 expected fail",
+   "error": "",
+   "elapsed_s": 155.1,
+   "turns": 51,
+   "input_tokens": 28490,
+   "output_tokens": 10511,
+   "cost_usd": 0.1271,
+   "events": {
+    "engine_started": 1,
+    "turn_started": 1,
+    "model_request": 1,
+    "pi_engine_started": 1,
+    "pi_turn_started": 51,
+    "model_response_started": 111,
+    "model_response": 111,
+    "model_response_delta": 8249,
+    "tool_call": 59,
+    "tool_result": 59,
+    "pi_turn_finished": 51,
+    "command_proposed": 22,
+    "consent_bound": 24,
+    "command_authorized": 22,
+    "bash_receipt_written": 22,
+    "patch_proposed": 2,
+    "patch_authorized": 2,
+    "patch_receipt_written": 2,
+    "pi_agent_end": 1,
+    "engine_stopped": 1
+   },
+   "receipts": 24,
+   "run_id": "run_7b113d76b956400eaf9fae544af64464"
+  },
+  "op0": {
+   "failed": 0,
+   "passed": 35,
+   "errors": 0
+  },
+  "verdict": "success",
+  "elapsed_s": 162.4
+ },
+ "sympy__sympy-21612": {
+  "instance_id": "sympy__sympy-21612",
+  "repo": "sympy/sympy",
+  "base": {
+   "failed": 3,
+   "passed": 98,
+   "errors": 0
+  },
+  "run": {
+   "answer_tail": "ympy.parsing.latex import parse_latex\n>>> parse_latex(r\"\\frac{\\frac{a^3+b}{c}}{\\frac{1}{c^2}}\")\n((a**3 + b)/c)/(1/(c**2))\n```\n\nTests:\n- `sympy/parsing/tests/test_latex.py` — 3 passed, 1 xfailed\n- `sympy/printing/tests/test_str.py` — 99 passed; one unrelated pre-existing failure (`test_SparseMatrix` TypeError from a newer scipy), unaffected by this change.\n\nOnly `sympy/printing/str.py` is modified.",
+   "error": "",
+   "elapsed_s": 262.8,
+   "turns": 56,
+   "input_tokens": 30876,
+   "output_tokens": 18801,
+   "cost_usd": 0.177,
+   "events": {
+    "engine_started": 1,
+    "turn_started": 1,
+    "model_request": 1,
+    "pi_engine_started": 1,
+    "pi_turn_started": 56,
+    "model_response_started": 117,
+    "model_response": 117,
+    "model_response_delta": 16595,
+    "tool_call": 60,
+    "command_proposed": 35,
+    "consent_bound": 35,
+    "command_authorized": 35,
+    "bash_receipt_written": 35,
+    "tool_result": 60,
+    "pi_turn_finished": 56,
+    "pi_agent_end": 1,
+    "engine_stopped": 1
+   },
+   "receipts": 35,
+   "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d"
+  },
+  "op0": {
+   "failed": 1,
+   "passed": 100,
+   "errors": 0
+  },
+  "verdict": "success",
+  "elapsed_s": 269.5
+ },
+ "sympy__sympy-21614": {
+  "instance_id": "sympy__sympy-21614",
+  "repo": "sympy/sympy",
+  "base": {
+   "failed": 2,
+   "passed": 7,
+   "errors": 0
+  },
+  "run": {
+   "answer_tail": "ind` property to `Derivative` that returns `self.expr.kind`, matching how `Integral` derives its kind from its integrand.\n- `sympy/core/tests/test_kind.py`: added `test_Derivative_kind` and the `Derivative` import.\n\nVerified with the user's snippet:\n```\nIntegral(A, x).kind   # MatrixKind(NumberKind)\nDerivative(A, x).kind # MatrixKind(NumberKind)\n```\nand the full `test_kind.py` test functions pass.",
+   "error": "",
+   "elapsed_s": 141.5,
+   "turns": 33,
+   "input_tokens": 14162,
+   "output_tokens": 5255,
+   "cost_usd": 0.058,
+   "events": {
+    "engine_started": 1,
+    "turn_started": 1,
+    "model_request": 1,
+    "pi_engine_started": 1,
+    "pi_turn_started": 33,
+    "model_response_started": 71,
+    "model_response": 71,
+    "model_response_delta": 3728,
+    "tool_call": 37,
+    "tool_result": 37,
+    "pi_turn_finished": 33,
+    "command_proposed": 16,
+    "consent_bound": 18,
+    "command_authorized": 16,
+    "bash_receipt_written": 16,
+    "patch_proposed": 2,
+    "patch_authorized": 4,
+    "patch_receipt_written": 4,
+    "pi_agent_end": 1,
+    "engine_stopped": 1
+   },
+   "receipts": 20,
+   "run_id": "run_9d33672eb7a54933afbbca8d6d9b2130"
+  },
+  "op0": {
+   "failed": 0,
+   "passed": 9,
+   "errors": 0
+  },
+  "verdict": "success",
+  "elapsed_s": 147.3
+ }
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_4829e83f486e",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_9b7d32de3a1a",
+  "proposal_id": "prop_4dda2a02edac",
+  "admission_id": "adm_d4319f57abaf",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:43:57.799628+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && grep -rn \"non_form_errors\" tests/ | grep -v forms_tests | grep -v model_formsets | grep -v inline_formsets | grep -v generic_relations",
+  "exit_code": 0,
+  "output_tail": "Binary file tests/admin_views/__pycache__/tests.cpython-313.pyc matches\ntests/admin_views/tests.py:3317:    def test_non_form_errors(self):\ntests/admin_views/tests.py:3335:    def test_non_form_errors_is_errorlist(self):\ntests/admin_views/tests.py:3349:        non_form_errors = response.context['cl'].formset.non_form_errors()\ntests/admin_views/tests.py:3350:        self.assertIsInstance(non_form_errors, ErrorList)\ntests/admin_views/tests.py:3351:        self.assertEqual(str(non_form_errors), str(ErrorList([\"Grace is not a Zombie\"], error_class='nonform')))"
+}

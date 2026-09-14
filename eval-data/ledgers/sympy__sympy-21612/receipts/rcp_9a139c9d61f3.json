@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9a139c9d61f3",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_b7fb9d3803bd",
+  "proposal_id": "prop_feefc46d9b9e",
+  "admission_id": "adm_8e86383b150b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:48:53.858576+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21612/repo && /opt/anaconda3/bin/python3 -c \"\nfrom sympy import Symbol, Pow, Mul, Add, srepr\nfrom sympy.abc import a,b,c\ne = Mul(Mul(Pow(c,-1, evaluate=False), Add(Pow(a,3), b), evaluate=False), Pow(Pow(Pow(c,2, evaluate=False), -1, evaluate=False), -1, evaluate=False), evaluate=False)\nprint(str(e))\nassert str(e) == '((a**3 + b)/c)/(1/(c**2))', str(e)\nfrom sympy.parsing.latex import parse_latex\np = parse_latex(r'\\frac{\\frac{a^3+b}{c}}{\\frac{1}{c^2}}')\nprint(str(p))\nassert str(p) == '((a**3 + b)/c)/(1/(c**2))'\nprint('OK')\n\" 2>/dev/null",
+  "exit_code": 0,
+  "output_tail": "((a**3 + b)/c)/(1/(c**2))\nANTLR runtime and generated code versions disagree: 4.9.3!=4.7.2\nANTLR runtime and generated code versions disagree: 4.9.3!=4.7.2\n((a**3 + b)/c)/(1/(c**2))\nOK"
+}

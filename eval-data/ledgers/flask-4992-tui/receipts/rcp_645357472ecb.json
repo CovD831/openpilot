@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_645357472ecb",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_b7982b556b1a",
+  "proposal_id": "prop_bde8d00be6e1",
+  "admission_id": "adm_a872f492624b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:39:12.130192+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && python - <<'PY'\nimport importlib.util, os, tempfile, tomllib, json\n\nspec = importlib.util.spec_from_file_location(\"cfg\", \"src/flask/config.py\")\nm = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(m)\n\nd = tempfile.mkdtemp()\nopen(os.path.join(d, \"config.toml\"), \"wb\").write(b'TEST_KEY=\"foo\"\\nSECRET_KEY=\"config\"\\n')\n\nc = m.Config(root_path=d)\nassert c.from_file(\"config.toml\", tomllib.load, text=False) is True\nassert c[\"TEST_KEY\"] == \"foo\" and c[\"SECRET_KEY\"] == \"config\"\nprint(\"from_file text=False + tomllib.load ->\", dict(c))\n\njson.dump({\"TEST_KEY\": \"bar\"}, open(os.path.join(d, \"config.json\"), \"w\"))\nc2 = m.Config(root_path=d)\nc2.from_file(\"config.json\", json.load)\nassert c2[\"TEST_KEY\"] == \"bar\"\nprint(\"default text=True + json.load ->\", dict(c2))\n\ntry:\n    m.Config(root_path=d).from_file(\"config.toml\", tomllib.load)\nexcept TypeError as e:\n    print(\"text=True with tomllib.load raises TypeError as expected\")\nPY",
+  "exit_code": 0,
+  "output_tail": "from_file text=False + tomllib.load -> {'TEST_KEY': 'foo', 'SECRET_KEY': 'config'}\ndefault text=True + json.load -> {'TEST_KEY': 'bar'}\ntext=True with tomllib.load raises TypeError as expected"
+}

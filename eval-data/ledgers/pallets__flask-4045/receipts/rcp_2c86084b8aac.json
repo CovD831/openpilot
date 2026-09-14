@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_2c86084b8aac",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_21a3a4ce1222",
+  "proposal_id": "prop_7f6645e3762f",
+  "admission_id": "adm_9884c8b23ead",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:41.079754+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045 && ls -la && ls repo_tmp/src/flask/blueprints.py 2>/dev/null && grep -n \"may not contain\" repo_tmp/src/flask/blueprints.py 2>/dev/null; grep -n \"self.name = name\" repo_tmp/src/flask/blueprints.py 2>/dev/null | head",
+  "exit_code": 0,
+  "output_tail": "total 1216\ndrwxr-xr-x@  6 abab  wheel     192 Sep 14 09:26 .\ndrwxr-xr-x@ 11 abab  wheel     352 Sep 14 09:23 ..\ndrwxr-xr-x@ 25 abab  wheel     800 Sep 14 09:26 repo\ndrwxr-xr-x@ 23 abab  wheel     736 Sep 14 08:06 repo_tmp\n-rw-r--r--@  1 abab  wheel  621624 Sep 14 08:06 src.tar.gz\ndrwxr-xr-x@  7 abab  wheel     224 Sep 14 08:06 venv\nrepo_tmp/src/flask/blueprints.py\n191:        self.name = name"
+}

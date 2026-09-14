@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b0b791eb204b",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_862db62f8ffa",
+  "proposal_id": "prop_77734a06c91d",
+  "admission_id": "adm_1bed5a8a196f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:32:05.967359+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && find . -iname \"*mpmath*\" 2>/dev/null | head; grep -rn \"mpmath\" setup.py | head",
+  "exit_code": 0,
+  "output_tail": "setup.py:41:min_mpmath_version = '0.19'\nsetup.py:61:    # handle mpmath deps in the hard way:\nsetup.py:64:        import mpmath\nsetup.py:65:        if mpmath.__version__ < LooseVersion(min_mpmath_version):\nsetup.py:68:        print(\"Please install the mpmath package with a version >= %s\"\nsetup.py:69:              % min_mpmath_version)\nsetup.py:468:            'mpmath>=%s' % min_mpmath_version,"
+}

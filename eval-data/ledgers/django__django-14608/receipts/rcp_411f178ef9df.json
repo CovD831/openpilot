@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_411f178ef9df",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_829199f69643",
+  "proposal_id": "prop_fd5609b0f45c",
+  "admission_id": "adm_6ff92d52eb74",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:40:54.958695+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && /tmp/swebench-eval/django__django-14608/venv/bin/python -m pytest tests/forms_tests/tests/test_formsets.py -q -k \"non_form_errors or error_class\" 2>&1 | tail -40",
+  "exit_code": 0,
+  "output_tail": "[test output: 29 of 38 lines dropped — failures and summaries kept]\n==================================== ERRORS ====================================\n__________ ERROR collecting tests/forms_tests/tests/test_formsets.py ___________\nImportError while importing test module '/private/tmp/swebench-eval/django__django-14608/repo/tests/forms_tests/tests/test_formsets.py'.\nE   ModuleNotFoundError: No module named 'cgi'\n=============================== warnings summary ===============================\n=========================== short test summary info ============================\nERROR tests/forms_tests/tests/test_formsets.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 warning, 1 error in 0.15s"
+}

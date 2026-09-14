@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c8425b9a91c3",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_aed8e900e555",
+  "proposal_id": "prop_159d2234435d",
+  "admission_id": "adm_4dd3ccf09fe8",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:29:21.415448+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && ls tests/test_* 2>/dev/null | head; find tests -maxdepth 1 -name \"*.py\" | head -40",
+  "exit_code": 0,
+  "output_tail": "tests/test_sqlite.py\n\ntests/test_client:\n__init__.py\nauth_backends.py\ntest_conditional_content_removal.py\ntest_fakepayload.py\ntests.py\nurls.py\nurls_middleware_urlconf.py\ntests/urls.py\ntests/runtests.py\ntests/test_sqlite.py"
+}

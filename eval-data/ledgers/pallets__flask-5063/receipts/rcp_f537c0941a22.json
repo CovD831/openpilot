@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_f537c0941a22",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_ef750b0f4df3",
+  "proposal_id": "prop_ff8c0badfed7",
+  "admission_id": "adm_fb3d4411032a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:44:22.890182+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -c \"import werkzeug; print(werkzeug.__version__); from werkzeug.routing import Rule, Map; import inspect; print([a for a in dir(Rule) if 'subdomain' in a.lower() or 'host' in a.lower()]); print(inspect.getsource(Rule.__init__))\"",
+  "exit_code": 0,
+  "output_tail": "2.3.8\n[]\n    def __init__(\n        self,\n        string: str,\n        defaults: t.Mapping[str, t.Any] | None = None,\n        subdomain: str | None = None,\n        methods: t.Iterable[str] | None = None,\n        build_only: bool = False,\n        endpoint: str | None = None,\n        strict_slashes: bool | None = None,\n        merge_slashes: bool | None = None,\n        redirect_to: str | t.Callable[..., str] | None = None,\n        alias: bool = False,\n        host: str | None = None,\n        websocket: bool = False,\n    ) -> None:\n        if not string.startswith(\"/\"):\n            raise ValueError(f\"URL rule '{string}' must start with a slash.\")\n\n        self.rule = string\n        self.is_leaf = not string.endswith(\"/\")\n        self.is_branch = string.endswith(\"/\")\n\n        self.map: Map = None  # type: ignore\n        self.strict_slashes = strict_slashes\n        self.merge_slashes = merge_slashes\n        self.subdomain = subdomain\n        self.host = host\n        self.defaults = defaults\n        self.build_only = build_only\n        self.alias = alias\n        self.websocket = websocket\n\n        if methods is not None:\n            if isinstance(methods, str):\n                raise TypeError(\"'methods' should be a list of strings.\")\n\n            methods = {x.upper() for x in methods}\n\n            if \"HEAD\" not in methods and \"GET\" in methods:\n                methods.add(\"HEAD\")\n\n            if websocket and methods - {\"GET\", \"HEAD\", \"OPTIONS\"}:\n                raise ValueError(\n                    \"WebSocket rules can only use 'GET', 'HEAD', and 'OPTIONS' methods.\"\n                )\n\n        self.methods = methods\n        self.endpoint: str = endpoint  # type: ignore\n        self.redirect_to = redirect_to\n\n        if defaults:\n            self.arguments = set(map(str, defaults))\n        else:\n            self.arguments = set()\n\n        self._converters: dict[str, BaseConverter] = {}\n        self._trace: list[tuple[bool, str]] = []\n        self._parts: list[RulePart] = []"
+}

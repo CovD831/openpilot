@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_7897b9e98163",
+  "run_id": "run_9d33672eb7a54933afbbca8d6d9b2130",
+  "consent_id": "con_388bab3cc2f7",
+  "proposal_id": "prop_103ed112b759",
+  "admission_id": "adm_452925d514ea",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:39:49.547412+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21614/repo && /usr/bin/python3 -c \"import test_kind\" 2>&1 | head -20",
+  "exit_code": 0,
+  "output_tail": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nModuleNotFoundError: No module named 'test_kind'"
+}

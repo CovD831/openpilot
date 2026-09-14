@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6affc0212731",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_28c295260a3c",
+  "proposal_id": "prop_b199b7cec79b",
+  "admission_id": "adm_52fb6dd6fc05",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:50:09.561791+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063 && tar tzf src.tar.gz | head -20 && tar tzf src.tar.gz | grep -i \"patch\\|test_cli\\|cli.py\" | head",
+  "exit_code": 0,
+  "output_tail": "flask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.devcontainer/\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.devcontainer/devcontainer.json\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.devcontainer/on-create-command.sh\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.editorconfig\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.flake8\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/ISSUE_TEMPLATE/\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/ISSUE_TEMPLATE/bug-report.md\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/ISSUE_TEMPLATE/config.yml\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/ISSUE_TEMPLATE/feature-request.md\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/SECURITY.md\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/dependabot.yml\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/pull_request_template.md\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/workflows/\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/workflows/lock.yaml\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/workflows/publish.yaml\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.github/workflows/tests.yaml\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.gitignore\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/.pre-commit-config.yaml\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/docs/patterns/appdispatch.rst\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/src/flask/cli.py\nflask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4/tests/test_cli.py"
+}

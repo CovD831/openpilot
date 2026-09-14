@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_5f672d167a7c",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_8a874fdfb0ce",
+  "proposal_id": "prop_bbc50b701363",
+  "admission_id": "adm_4bd848147797",
+  "path": "/private/tmp/swebench-eval/pallets__flask-4045/repo/tests/test_blueprints.py",
+  "hash_before": "d3da10547df3fbec2f3d755ae5c723d9e5b1baf823e747d22d5e5470612bafe2",
+  "hash_after": "d903f6d8df3bce0dcd4e3829a56dfc3663cfa22dbbc9794b11e6bd19604e6abc",
+  "created_at": "2026-09-14T01:27:24.211073+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

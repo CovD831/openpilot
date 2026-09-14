@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_19e93be8e446",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_c25ba68b10d0",
+  "proposal_id": "prop_7371c4a89d79",
+  "admission_id": "adm_77a538f92b80",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:33:28.815730+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && grep -rn \"_exec_constructor_postprocessors\" sympy/core | head; grep -rn \"0\\*\\*oo\\|S.Zero\\*\\*S.Infinity\\|0\\*\\*S.Infinity\" sympy | head",
+  "exit_code": 0,
+  "output_tail": "sympy/core/operations.py:75:            obj = cls._exec_constructor_postprocessors(obj)\nsympy/core/operations.py:88:        obj = cls._exec_constructor_postprocessors(obj)\nsympy/core/basic.py:1784:    def _exec_constructor_postprocessors(cls, obj):\nsympy/core/power.py:333:        obj = cls._exec_constructor_postprocessors(obj)\nsympy/core/power.py:207:    | 0**oo        | 0       | Because for all complex numbers z near        |\nsympy/core/power.py:210:    | 0**-oo       | zoo     | This is not strictly true, as 0**oo may be    |"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_f0d4dd4c51dd",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_62fdfe61323c",
+  "proposal_id": "prop_2e0e3d8cd85d",
+  "admission_id": "adm_5656e7c43e9a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:55.533471+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && cat setup.cfg tox.ini | grep -n -A10 \"pytest\\|filterwarnings\"",
+  "exit_code": 0,
+  "output_tail": "[test output: 24 of 25 lines dropped — failures and summaries kept]\n51-    error"
+}

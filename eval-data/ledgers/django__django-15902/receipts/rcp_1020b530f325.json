@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_1020b530f325",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_b515e5a74fe7",
+  "proposal_id": "prop_fc6e31c0cae7",
+  "admission_id": "adm_65f5f184df86",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:27:53.401631+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && /tmp/swebench-eval/django__django-15902/venv/bin/python -m pytest tests/forms_tests/tests/test_formsets.py -k DeprecationTests -q",
+  "exit_code": 2,
+  "output_tail": "[test output: 11 of 17 lines dropped — failures and summaries kept]\n==================================== ERRORS ====================================\n__________ ERROR collecting tests/forms_tests/tests/test_formsets.py ___________\n=========================== short test summary info ============================\nERROR tests/forms_tests/tests/test_formsets.py - django.core.exceptions.Impro...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.34s"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_cb6c931442d8",
+  "run_id": "run_25882f298f3940fe87467026f9b45d2e",
+  "consent_id": "con_7d5cb74eb5e0",
+  "proposal_id": "prop_14b177afe3c1",
+  "admission_id": "adm_4bb37c7d477c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:43:10.318378+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-15609/repo && git diff -- sympy/printing/latex.py sympy/printing/tests/test_latex.py",
+  "exit_code": 0,
+  "output_tail": "diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py\nindex 9019186..8923ff6 100644\n--- a/sympy/printing/latex.py\n+++ b/sympy/printing/latex.py\n@@ -1438,7 +1438,7 @@ def _print_MatrixBase(self, expr):\n \n     def _print_MatrixElement(self, expr):\n         return self.parenthesize(expr.parent, PRECEDENCE[\"Atom\"], strict=True) \\\n-            + '_{%s, %s}' % (expr.i, expr.j)\n+            + '_{%s, %s}' % (self._print(expr.i), self._print(expr.j))\n \n     def _print_MatrixSlice(self, expr):\n         def latexslice(x):\ndiff --git a/sympy/printing/tests/test_latex.py b/sympy/printing/tests/test_latex.py\nindex 1f9428c..f035f40 100644\n--- a/sympy/printing/tests/test_latex.py\n+++ b/sympy/printing/tests/test_latex.py\n@@ -1738,6 +1738,12 @@ def test_MatrixElement_printing():\n     F = C[0, 0].subs(C, A - B)\n     assert latex(F) == r\"\\left(A - B\\right)_{0, 0}\"\n \n+    i, j, k = symbols(\"i j k\")\n+    M = MatrixSymbol(\"M\", k, k)\n+    N = MatrixSymbol(\"N\", k, k)\n+    assert latex((M*N)[i, j]) == \\\n+        r\"\\sum_{i_{1}=0}^{k - 1} M_{i, i_{1}} N_{i_{1}, j}\"\n+\n \n def test_MatrixSymbol_printing():\n     # test cases for issue #14237"
+}

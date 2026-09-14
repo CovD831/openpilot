@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_26e94f52b0cc",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_28fa14b6f9cc",
+  "proposal_id": "prop_6f265e8eab21",
+  "admission_id": "adm_d248657b92bd",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:46:35.274626+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && find / -path '*flask/cli.py' 2>/dev/null | head -20",
+  "exit_code": 124,
+  "output_tail": "timeout after 60.0s"
+}

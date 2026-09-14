@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_1b2511f4fe75",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_f0a2efaed3a9",
+  "proposal_id": "prop_0675af870d0c",
+  "admission_id": "adm_f10f2feba681",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:19.425154+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && grep -rn \"name_prefix\\|self.name\" src/flask/blueprints.py",
+  "exit_code": 0,
+  "output_tail": "src/flask/blueprints.py:70:        self.name_prefix = self.options.get(\"name_prefix\", \"\")\nsrc/flask/blueprints.py:101:            f\"{self.name_prefix}{self.blueprint.name}.{endpoint}\",\nsrc/flask/blueprints.py:191:        self.name = name\nsrc/flask/blueprints.py:270:        if self.name in app.blueprints:\nsrc/flask/blueprints.py:271:            assert app.blueprints[self.name] is self, (\nsrc/flask/blueprints.py:273:                f\" {self!r} and {app.blueprints[self.name]!r}.\"\nsrc/flask/blueprints.py:274:                f\" Both share the same name {self.name!r}.\"\nsrc/flask/blueprints.py:279:            app.blueprints[self.name] = self\nsrc/flask/blueprints.py:297:                    key = self.name if key is None else f\"{self.name}.{key}\"\nsrc/flask/blueprints.py:302:                key = self.name if key is None else f\"{self.name}.{key}\"\nsrc/flask/blueprints.py:336:                self.cli.name = self.name\nsrc/flask/blueprints.py:350:            bp_options[\"name_prefix\"] = options.get(\"name_prefix\", \"\") + self.name + \".\""
+}

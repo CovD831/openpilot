@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_99cc4c649a4d",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_808969be6460",
+  "proposal_id": "prop_65398cd25f98",
+  "admission_id": "adm_aa13db2a13cf",
+  "path": "/private/tmp/flask-4992/CHANGES.rst",
+  "hash_before": "af31bee40f53d07579065896e1dc04dd88cfca75def00a09641229d20af69b48",
+  "hash_after": "bd4f90765885d264a420309b9f7a25309c6c3e06480c07ae64cb7de20d050a85",
+  "created_at": "2026-09-13T13:38:32.921559+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

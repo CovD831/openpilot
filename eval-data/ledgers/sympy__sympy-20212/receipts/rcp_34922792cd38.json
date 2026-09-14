@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_34922792cd38",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_b2b9c83734cf",
+  "proposal_id": "prop_66bdbdb51f83",
+  "admission_id": "adm_c051204d5b4f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:34:40.372969+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-20212/repo:/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages /Users/abab/.workbuddy/binaries/python/envs/default/bin/python -c \"\nfrom sympy import S, oo, zoo, Float\nfrom sympy.core.power import power\nprint('0**-oo', 0**-oo)\nprint('power(0, -oo)', power(0, -oo))\nprint('Float(0)**-oo', Float(0)**-oo)\nprint('0**oo', 0**oo)\nprint('Float(0)**oo', Float(0)**oo)\nprint('Float(0)**-2', Float(0)**-2)\nprint('Float(0)**2', Float(0)**2)\nprint('0**-2', S(0)**-2)\n\"",
+  "exit_code": 0,
+  "output_tail": "0**-oo zoo\npower(0, -oo) zoo\nFloat(0)**-oo oo\n0**oo 0\nFloat(0)**oo 0\nFloat(0)**-2 oo\nFloat(0)**2 0\n0**-2 zoo"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_73f2accdfe4d",
+  "run_id": "run_be1d49b636634dd3808f3940bc9c5f45",
+  "consent_id": "con_3898f6792193",
+  "proposal_id": "prop_7610a7058d91",
+  "admission_id": "adm_844a017a2624",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:25:40.553874+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls tests && find tests -name 'config.json' -o -name '*.json' | head",
+  "exit_code": 0,
+  "output_tail": "__pycache__\ntest_admission.py\ntest_approval_gate.py\ntest_authorizers.py\ntest_bridge_and_session.py\ntest_budget.py\ntest_capabilities.py\ntest_card_scroll.py\ntest_compaction.py\ntest_metadata.py\ntest_model_error.py\ntest_no_legacy_import.py\ntest_parallel.py\ntest_receipts.py\ntest_recovery.py\ntest_resume.py\ntest_sandbox.py\ntest_skills.py\ntest_tui_keys.py"
+}

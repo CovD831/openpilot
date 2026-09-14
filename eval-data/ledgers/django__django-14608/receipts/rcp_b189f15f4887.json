@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b189f15f4887",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_225c65526af8",
+  "proposal_id": "prop_006cccee35f0",
+  "admission_id": "adm_59dee59137b0",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:43:47.135161+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && /tmp/swebench-eval/django__django-14608/venv/bin/python -c \"\nfrom django.conf import settings\nsettings.configure(USE_I18N=False, SECRET_KEY='x')\nfrom django import forms\nfrom django.forms.formsets import BaseFormSet, formset_factory\n\nclass FavoriteDrinkForm(forms.Form):\n    name = forms.CharField()\n\nclass BaseFavoriteDrinksFormSet(BaseFormSet):\n    def clean(self):\n        seen = []\n        for drink in self.cleaned_data:\n            if drink['name'] in seen:\n                raise forms.ValidationError('You may only specify a drink once.')\n            seen.append(drink['name'])\n\nFavoriteDrinksFormSet = formset_factory(FavoriteDrinkForm, formset=BaseFavoriteDrinksFormSet, extra=3)\ndata = {\n    'drinks-TOTAL_FORMS':'2','drinks-INITIAL_FORMS':'0','drinks-MIN_NUM_FORMS':'0','drinks-MAX_NUM_FORMS':'0',\n    'drinks-0-name':'Gin and Tonic','drinks-1-name':'Gin and Tonic',\n}\nfs = FavoriteDrinksFormSet(data, prefix='drinks')\nassert fs.is_valid() is False\nassert fs.non_form_errors().error_class == 'errorlist nonform', fs.non_form_errors().error_class\nassert str(fs.non_form_errors()) == '<ul class=\"errorlist nonform\"><li>You may only specify a drink once.</li></ul>', str(fs.non_form_errors())\n\nclass ArticleForm(forms.Form):\n    title = forms.CharField()\n    pub_date = forms.DateField()\nArticleFormSet = formset_factory(ArticleForm)\nfs2 = ArticleFormSet({})\nassert fs2.is_valid() is False\nassert fs2.non_form_errors().error_class == 'errorlist nonform', fs2.non_form_errors().error_class\nprint('all assertions passed')\n\"",
+  "exit_code": 1,
+  "output_tail": "[stderr]\n  File \"<string>\", line 26\n    assert str(fs.non_form_errors()) == '<ul class=errorlist\n                                        ^\nSyntaxError: unterminated string literal (detected at line 26)"
+}

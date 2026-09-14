@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_76cb5c7fa12d",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_37a01f215f8c",
+  "proposal_id": "prop_c3bbc3b5d0e5",
+  "admission_id": "adm_2e9186f8ddb7",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:52:58.334350+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "find /Users/abab/Developer/openpilot-l0 -maxdepth 4 \\( -name '*.json' -o -name '*.jsonl' -o -name '*.parquet' -o -name '*.db' -o -name '*.sqlite' \\) 2>/dev/null | head -100",
+  "exit_code": 0,
+  "output_tail": "ot-l0/runs/accept_1788768126/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788702990/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788698950/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788771577/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788853855/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788696067/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788708172/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788703320/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788699892/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788853818/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788693642/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788708297/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788693659/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788699952/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788770924/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788772822/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788700465/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788771497/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788692128/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788771527/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788853802/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788853834/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788701453/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788696097/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788692850/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788770203/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788773240/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788700186/result.json\n/Users/abab/Developer/openpilot-l0/runs/accept_1788698964/result.json"
+}

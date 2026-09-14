@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_18237b12f448",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_c872db659eba",
+  "proposal_id": "prop_7373e89670c3",
+  "admission_id": "adm_a53ea89f7a2f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:39:01.426504+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && echo \"installed version:\" && python -c \"import flask; print(flask.__version__)\" && echo \"=== local src test ===\" && PYTHONPATH=src python - <<'PY'\nimport os, tempfile, tomllib, flask, inspect\nprint(\"flask from:\", flask.__file__)\nprint(inspect.signature(flask.Config.from_file))\nd = tempfile.mkdtemp()\np = os.path.join(d, \"config.toml\")\nopen(p, \"w\").write('TEST_KEY=\"foo\"\\nSECRET_KEY=\"config\"\\n')\napp = flask.Flask(__name__)\napp.config.root_path = d\napp.config.from_file(\"config.toml\", tomllib.load, text=False)\nassert app.secret_key == \"config\" and app.config[\"TEST_KEY\"] == \"foo\"\nprint(\"tomllib text=False OK\")\nimport json\njson.dump({\"TEST_KEY\": \"bar\", \"SECRET_KEY\": \"s\"}, open(os.path.join(d, \"config.json\"), \"w\"))\napp2 = flask.Flask(__name__); app2.config.root_path = d\napp2.config.from_file(\"config.json\", json.load)\nassert app2.config[\"TEST_KEY\"] == \"bar\"\nprint(\"json default OK\")\ntry:\n    app.config.from_file(\"config.toml\", tomllib.load)\nexcept TypeError as e:\n    print(\"text=True with tomllib raises TypeError as expected\")\nPY",
+  "exit_code": 1,
+  "output_tail": "installed version:\n3.1.2\n=== local src test ===\n\n[stderr]\n<string>:1: DeprecationWarning: The '__version__' attribute is deprecated and will be removed in Flask 3.2. Use feature detection or 'importlib.metadata.version(\"flask\")' instead.\nTraceback (most recent call last):\n  File \"<stdin>\", line 1, in <module>\n  File \"/private/tmp/flask-4992/src/flask/__init__.py\", line 2, in <module>\n    from .app import Flask as Flask\n  File \"/private/tmp/flask-4992/src/flask/app.py\", line 28, in <module>\n    from werkzeug.urls import url_quote\nImportError: cannot import name 'url_quote' from 'werkzeug.urls' (/opt/anaconda3/lib/python3.13/site-packages/werkzeug/urls.py)"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_cdfca48cf92b",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_e9bf0f50967c",
+  "proposal_id": "prop_cf11dd15761d",
+  "admission_id": "adm_c9ff013e7cfb",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:26:07.822087+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996 && tar -tzf src.tar.gz | head -50",
+  "exit_code": 0,
+  "output_tail": "g\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/AUTHORS\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/CONTRIBUTING.rst\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/Gruntfile.js\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/INSTALL\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/LICENSE\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/LICENSE.python\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/MANIFEST.in\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/README.rst\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/__init__.py\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/__main__.py\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/apps/\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/apps/__init__.py\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/apps/config.py\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/apps/registry.py\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/__init__.py\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/__init__.py-tpl\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/admin.py-tpl\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/apps.py-tpl\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/migrations/\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/migrations/__init__.py-tpl\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/models.py-tpl\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/tests.py-tpl\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/app_template/views.py-tpl\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/global_settings.py\ndjango-b30c0081d4d8a31ab7dc7f72a4c7099af606ef29/django/conf/locale/"
+}

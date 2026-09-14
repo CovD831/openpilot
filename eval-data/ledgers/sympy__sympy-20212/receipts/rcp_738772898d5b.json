@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_738772898d5b",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_58ce86b66df4",
+  "proposal_id": "prop_3046872f1fdb",
+  "admission_id": "adm_db8c8ce47514",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:33:48.311556+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "find /Applications /Users/abab/.workbuddy /Users/abab/.local /Users/abab/Developer/openpilot-l0 -maxdepth 8 -type d -name mpmath 2>/dev/null | head",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages/mpmath"
+}

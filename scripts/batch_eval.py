@@ -38,7 +38,7 @@ from op0.receipts import ReceiptStore  # noqa: E402
 from op0.session import Session  # noqa: E402
 
 DATASET = Path("/tmp/swebench_lite.json")
-WORKROOT = Path("/tmp/swebench-eval")
+WORKROOT = Path("/Users/abab/Developer/swebench-eval")  # persistent: /tmp gets cleaned by the WorkBuddy session
 REPO_URLS = {
     "sympy/sympy": "https://github.com/sympy/sympy.git",
     "pallets/flask": "https://github.com/pallets/flask.git",
@@ -72,7 +72,12 @@ def run_django_tests(repo: Path, py: Path, refs: list[str]) -> dict:
         [str(py), "tests/runtests.py", *refs, "--settings", "test_sqlite", "-v", "2"],
         capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
     )
-    out = (proc.stdout + proc.stderr)[-8000:]
+    full = (proc.stdout + proc.stderr)
+    # keep EVERY per-test line ("... ok/FAIL/ERROR") — the 8000-char tail
+    # window silently dropped ok-lines of long modules and poisoned verdicts
+    # (observed on django-16527: the F2P line lived above the window)
+    per_test = "\n".join(ln for ln in full.splitlines() if " ... " in ln)
+    out = per_test + "\n" + full[-2000:]
     failed = len(re.findall(r"\.\.\. (FAIL|ERROR)", out))
     ok = len(re.findall(r"\.\.\. ok", out))
     return {"failed": failed, "passed": ok, "errors": 0,
@@ -258,6 +263,13 @@ def evaluate(instance: dict) -> dict:
         base = run_tests(repo, py, f2p_ids)
     else:
         base = run_tests(repo, py, test_files + f2p_ids)
+    if django and ("ModuleNotFoundError" in base["output"] or "ImportError" in base["output"]):
+        # die HERE, before spending the op0 run on an unwritable benchmark
+        record.update(verdict="environment",
+                      cause="py3.13 vs old django deps (base calibration import)")
+        record["base"] = {k: base[k] for k in ("failed", "passed", "errors")}
+        record["elapsed_s"] = round(time.monotonic() - t0, 1)
+        return record
     # environment gate: a FAILING (assertion) F2P test is measurable; a test
     # that COLLECTION-ERRORs on base means this environment cannot run the
     # benchmark at all (py3.13 vs old deps) - that is an environment verdict,
@@ -327,6 +339,7 @@ def evaluate(instance: dict) -> dict:
         return record
     got = run_tests(repo, py, f2p_ids) if django else run_tests(repo, py, test_files + f2p_ids)
     record["op0"] = {k: got[k] for k in ("failed", "passed", "errors")}
+    record["spec_audit_miss"] = (run.get("spec_assumptions", 0) == 0)
     if django and ("ModuleNotFoundError" in got["output"] or "ImportError" in got["output"]):
         # py3.13 removed cgi/distutils - old django lines die at import
         record.update(verdict="environment",
@@ -382,9 +395,11 @@ def main() -> int:
     print(f"\nBATCH: {ok}/{len(results)} success")
     for r in results:
         run = r.get("run") or {}
+        audit = "" if r.get("spec_audit_miss") is None else (
+            " SPEC-MISS" if r.get("spec_audit_miss") else " spec-ok")
         print(f"  {r['instance_id']}: {r['verdict']:12s} "
               f"turns={run.get('turns', '-'):>3} tok={run.get('input_tokens', 0) + run.get('output_tokens', 0):>6,} "
-              f"${run.get('cost_usd', 0):.4f} {run.get('elapsed_s', '-')}s"
+              f"${run.get('cost_usd', 0):.4f} {run.get('elapsed_s', '-')}s{audit}"
               + (f" — {r.get('cause', '')[:80]}" if r.get("cause") else ""))
     return 0
 

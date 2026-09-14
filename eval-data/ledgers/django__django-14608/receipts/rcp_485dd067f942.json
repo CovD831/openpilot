@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_485dd067f942",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_2dda56186473",
+  "proposal_id": "prop_e99e95fc3a0a",
+  "admission_id": "adm_77a72470d222",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:42:40.354642+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && git diff -- django/forms/formsets.py docs/topics/forms/index.txt tests/forms_tests/tests/test_formsets.py",
+  "exit_code": 0,
+  "output_tail": "from field-specific errors and non-field\n+errors. For example, ``{{ formset.non_form_errors }}`` would look like:\n+\n+.. code-block:: html+django\n+\n+    <ul class=\"errorlist nonform\">\n+        <li>Generic validation error</li>\n+    </ul>\n+\n See :doc:`/ref/forms/api` for more on errors, styling, and working with form\n attributes in templates.\n \ndiff --git a/tests/forms_tests/tests/test_formsets.py b/tests/forms_tests/tests/test_formsets.py\nindex 889560a..d401445 100644\n--- a/tests/forms_tests/tests/test_formsets.py\n+++ b/tests/forms_tests/tests/test_formsets.py\n@@ -984,6 +984,28 @@ class FormsFormsetTestCase(SimpleTestCase):\n         self.assertFalse(formset.is_valid())\n         self.assertEqual(formset.non_form_errors(), ['You may only specify a drink once.'])\n \n+    def test_non_form_errors_error_class(self):\n+        data = {\n+            'drinks-TOTAL_FORMS': '2',  # the number of forms rendered\n+            'drinks-INITIAL_FORMS': '0',  # the number of forms with initial data\n+            'drinks-MIN_NUM_FORMS': '0',  # min number of forms\n+            'drinks-MAX_NUM_FORMS': '0',  # max number of forms\n+            'drinks-0-name': 'Gin and Tonic',\n+            'drinks-1-name': 'Gin and Tonic',\n+        }\n+        formset = FavoriteDrinksFormSet(data, prefix='drinks')\n+        self.assertFalse(formset.is_valid())\n+        self.assertEqual(formset.non_form_errors().error_class, 'errorlist nonform')\n+        self.assertHTMLEqual(\n+            str(formset.non_form_errors()),\n+            '<ul class=\"errorlist nonform\"><li>You may only specify a drink once.</li></ul>'\n+        )\n+\n+    def test_non_form_errors_error_class_with_management_form_errors(self):\n+        formset = ArticleFormSet({})\n+        self.assertFalse(formset.is_valid())\n+        self.assertEqual(formset.non_form_errors().error_class, 'errorlist nonform')\n+\n     def test_formset_iteration(self):\n         \"\"\"Formset instances are iterable.\"\"\"\n         ChoiceFormset = formset_factory(Choice, extra=3)"
+}

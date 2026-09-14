@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_2a5763dccef1",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_03c8e10c9077",
+  "proposal_id": "prop_2593128327e0",
+  "admission_id": "adm_7e4deee7a7c1",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:32:28.816028+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python -m black --check django/db/migrations/serializer.py tests/migrations/test_writer.py 2>&1 | head -20",
+  "exit_code": 0,
+  "output_tail": "/tmp/swebench-eval/django__django-15996/venv/bin/python: No module named black"
+}

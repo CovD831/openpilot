@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_2563cfe9bcfc",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_ebe4b370e228",
+  "proposal_id": "prop_16da20febee2",
+  "admission_id": "adm_8557aa2abd6f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:38:54.279361+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && python - <<'PY'\nimport os, tempfile, tomllib, flask\nprint(\"flask from:\", flask.__file__)\n\nd = tempfile.mkdtemp()\np = os.path.join(d, \"config.toml\")\nwith open(p, \"w\") as f:\n    f.write('TEST_KEY=\"foo\"\\nSECRET_KEY=\"config\"\\n')\n\napp = flask.Flask(__name__)\napp.config.root_path = d\napp.config.from_file(\"config.toml\", tomllib.load, text=False)\nassert app.secret_key == \"config\", app.secret_key\nassert app.config[\"TEST_KEY\"] == \"foo\"\nprint(\"tomllib text=False OK\")\n\n# default text mode still works for json\nimport json\njp = os.path.join(d, \"config.json\")\nwith open(jp, \"w\") as f:\n    json.dump({\"TEST_KEY\": \"bar\", \"SECRET_KEY\": \"s\"}, f)\napp2 = flask.Flask(__name__)\napp2.config.root_path = d\napp2.config.from_file(\"config.json\", json.load)\nassert app2.config[\"TEST_KEY\"] == \"bar\"\nprint(\"json default text=True OK\")\nPY",
+  "exit_code": 0,
+  "output_tail": "flask from: /opt/anaconda3/lib/python3.13/site-packages/flask/__init__.py\ntomllib text=False OK\njson default text=True OK"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_1781b1b80799",
+  "run_id": "run_9d33672eb7a54933afbbca8d6d9b2130",
+  "consent_id": "con_6ec5552dda97",
+  "proposal_id": "prop_727d423466d7",
+  "admission_id": "adm_1dabc1d99be9",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:39:43.921945+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "which -a python python3 2>/dev/null; /usr/bin/python3 -c \"import mpmath; print('ok')\" 2>&1 | head",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/.workbuddy/binaries/python/versions/3.13.12/bin/python\n/Users/abab/.workbuddy/binaries/python/envs/default/bin/python\n/opt/anaconda3/bin/python\n/Users/abab/.workbuddy/binaries/python/versions/3.13.12/bin/python3\n/Users/abab/.workbuddy/binaries/python/envs/default/bin/python3\n/opt/anaconda3/bin/python3\n/opt/homebrew/bin/python3\n/opt/homebrew/bin/python3\n/usr/bin/python3\nok"
+}

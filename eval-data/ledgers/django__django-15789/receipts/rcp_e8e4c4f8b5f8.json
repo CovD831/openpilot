@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e8e4c4f8b5f8",
+  "run_id": "run_7e683e38d51d4ad78ed186cbde2d5504",
+  "consent_id": "con_1fea6ea23e67",
+  "proposal_id": "prop_59017b15261c",
+  "admission_id": "adm_e6eff9f8c516",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:37:48.272035+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15789/repo && DJANGO_SETTINGS_MODULE=test_sqlite /tmp/swebench-eval/django__django-15789/venv/bin/python -m pytest tests/utils_tests/test_html.py -q",
+  "exit_code": 1,
+  "output_tail": "[test output: 46 of 52 lines dropped — failures and summaries kept]\n=================================== FAILURES ===================================\n    self.assertEqual(function(value), output)\nE   AssertionError: 'alert()&h;' != 'alert()h'\n=========================== short test summary info ============================\nFAILED tests/utils_tests/test_html.py::TestUtilsHtml::test_strip_tags - Asser...\n1 failed, 17 passed in 0.34s"
+}

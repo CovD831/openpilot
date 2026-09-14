@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_8165a26ceb2f",
+  "run_id": "run_9d33672eb7a54933afbbca8d6d9b2130",
+  "consent_id": "con_42aea52c74ac",
+  "proposal_id": "prop_0fff7e3ddb4b",
+  "admission_id": "adm_2cebc4ea3fda",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:39:46.254130+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21614/repo && /usr/bin/python3 -c \"from sympy import Integral, Derivative, MatrixSymbol; from sympy.abc import x; A = MatrixSymbol('A',2,2); print(Integral(A,x).kind); print(Derivative(A,x).kind); print(Derivative(A,x).expr.kind)\"",
+  "exit_code": 0,
+  "output_tail": "MatrixKind(NumberKind)\nMatrixKind(NumberKind)\nMatrixKind(NumberKind)"
+}

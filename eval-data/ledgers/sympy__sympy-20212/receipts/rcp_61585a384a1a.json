@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_61585a384a1a",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_534a12b74011",
+  "proposal_id": "prop_0066e487bfef",
+  "admission_id": "adm_59fface9a5eb",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:31:58.092917+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "find / -name \"mpmath\" -type d 2>/dev/null | head; find / -name \"mpmath*.whl\" 2>/dev/null | head; find / -path \"*/site-packages/mpmath\" -maxdepth 8 2>/dev/null | head",
+  "exit_code": 124,
+  "output_tail": "timeout after 60.0s"
+}

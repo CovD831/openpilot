@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9933283ae1b8",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_4472cefae7a5",
+  "proposal_id": "prop_6aa1651d0789",
+  "admission_id": "adm_9dd48eadaa3c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:28:43.163537+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && /tmp/swebench-eval/django__django-15902/venv/bin/python tests/runtests.py forms_tests 2>&1 | tail -30",
+  "exit_code": 0,
+  "output_tail": "Destroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nDestroying test database for alias 'default'...\nException ignored in: <sqlite3.Connection object at 0x109893790>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893790>\nException ignored in: <sqlite3.Connection object at 0x1098936a0>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x1098936a0>\nException ignored in: <sqlite3.Connection object at 0x109893880>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893880>\nException ignored in: <sqlite3.Connection object at 0x109893970>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893970>\nException ignored in: <sqlite3.Connection object at 0x109893b50>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893b50>\nException ignored in: <sqlite3.Connection object at 0x109893c40>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893c40>\nException ignored in: <sqlite3.Connection object at 0x109893a60>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893a60>\nException ignored in: <sqlite3.Connection object at 0x109893d30>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893d30>\nException ignored in: <sqlite3.Connection object at 0x109893e20>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893e20>\nException ignored in: <sqlite3.Connection object at 0x109893f10>\nResourceWarning: unclosed database in <sqlite3.Connection object at 0x109893f10>"
+}

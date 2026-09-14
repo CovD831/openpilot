@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_61d9b6a46fc0",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_06e74f193e76",
+  "proposal_id": "prop_04c511ced287",
+  "admission_id": "adm_5a8c4c4c3ba9",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:28:23.606048+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && env | grep -i django; echo '---'; ls tests/forms_tests/",
+  "exit_code": 0,
+  "output_tail": "PWD=/tmp/swebench-eval/django__django-15902/repo\n---\n__init__.py\nfield_tests\njinja2\nmodels.py\ntemplates\ntemplatetags\ntests\nurls.py\nviews.py\nwidget_tests"
+}

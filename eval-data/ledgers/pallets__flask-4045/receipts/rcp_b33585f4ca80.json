@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b33585f4ca80",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_736dd84d2d09",
+  "proposal_id": "prop_43346b4900be",
+  "admission_id": "adm_98ee97c365a2",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:03.510624+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && grep -rn \"endpoint\" src/flask/app.py | head -30",
+  "exit_code": 0,
+  "output_tail": "src/flask/app.py:47:from .scaffold import _endpoint_from_view_func\nsrc/flask/app.py:427:        #: is called with `error`, `endpoint` and `values`.  If a function\nsrc/flask/app.py:515:                endpoint=\"static\",\nsrc/flask/app.py:1036:        endpoint: t.Optional[str] = None,\nsrc/flask/app.py:1041:        if endpoint is None:\nsrc/flask/app.py:1042:            endpoint = _endpoint_from_view_func(view_func)  # type: ignore\nsrc/flask/app.py:1043:        options[\"endpoint\"] = endpoint\nsrc/flask/app.py:1083:            old_func = self.view_functions.get(endpoint)\nsrc/flask/app.py:1087:                    f\" endpoint function: {endpoint}\"\nsrc/flask/app.py:1089:            self.view_functions[endpoint] = view_func\nsrc/flask/app.py:1485:        # otherwise dispatch to the handler for that endpoint\nsrc/flask/app.py:1486:        return self.ensure_sync(self.view_functions[rule.endpoint])(**req.view_args)\nsrc/flask/app.py:1686:                f\"The view function for {request.endpoint!r} did not\"\nsrc/flask/app.py:1777:    def inject_url_defaults(self, endpoint: str, values: dict) -> None:\nsrc/flask/app.py:1778:        \"\"\"Injects the URL defaults for the given endpoint directly into\nsrc/flask/app.py:1785:        if \".\" in endpoint:\nsrc/flask/app.py:1786:            bp = endpoint.rsplit(\".\", 1)[0]\nsrc/flask/app.py:1789:            func(endpoint, values)\nsrc/flask/app.py:1792:        self, error: Exception, endpoint: str, values: dict\nsrc/flask/app.py:1799:                rv = handler(error, endpoint, values)\nsrc/flask/app.py:1832:            func(request.endpoint, request.view_args)"
+}

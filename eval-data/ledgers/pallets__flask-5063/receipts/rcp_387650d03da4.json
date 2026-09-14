@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_387650d03da4",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_eb323c572974",
+  "proposal_id": "prop_3f2991f60282",
+  "admission_id": "adm_41fc6c272a9a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:16.544104+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "python3 - <<'PY'\nimport json\nd=json.load(open('/tmp/swebench_lite.json'))\nr=[x for x in d if x['instance_id']=='pallets__flask-5063'][0]\nopen('/tmp/flask_5063_gold_patch.txt','w').write(r['patch'])\nopen('/tmp/flask_5063_test_patch.txt','w').write(r['test_patch'])\nprint(r['FAIL_TO_PASS'])\nprint(r['PASS_TO_PASS'])\nPY\nwc -l /tmp/flask_5063_gold_patch.txt /tmp/flask_5063_test_patch.txt",
+  "exit_code": 0,
+  "output_tail": "cli.py::test_locate_app[cliapp.factory-create_app2(\\\"foo\\\",\", \"tests/test_cli.py::test_locate_app[cliapp.factory-\", \"tests/test_cli.py::test_locate_app_raises[notanapp.py-None]\", \"tests/test_cli.py::test_locate_app_raises[cliapp/app-None]\", \"tests/test_cli.py::test_locate_app_raises[cliapp.app-notanapp]\", \"tests/test_cli.py::test_locate_app_raises[cliapp.factory-create_app2(\\\"foo\\\")]\", \"tests/test_cli.py::test_locate_app_raises[cliapp.factory-create_app(]\", \"tests/test_cli.py::test_locate_app_raises[cliapp.factory-no_app]\", \"tests/test_cli.py::test_locate_app_raises[cliapp.importerrorapp-None]\", \"tests/test_cli.py::test_locate_app_raises[cliapp.message.txt-None]\", \"tests/test_cli.py::test_locate_app_suppress_raise\", \"tests/test_cli.py::test_get_version\", \"tests/test_cli.py::test_scriptinfo\", \"tests/test_cli.py::test_app_cli_has_app_context\", \"tests/test_cli.py::test_with_appcontext\", \"tests/test_cli.py::test_appgroup_app_context\", \"tests/test_cli.py::test_flaskgroup_app_context\", \"tests/test_cli.py::test_flaskgroup_debug[True]\", \"tests/test_cli.py::test_flaskgroup_debug[False]\", \"tests/test_cli.py::test_flaskgroup_nested\", \"tests/test_cli.py::test_no_command_echo_loading_error\", \"tests/test_cli.py::test_help_echo_loading_error\", \"tests/test_cli.py::test_help_echo_exception\", \"tests/test_cli.py::TestRoutes::test_simple\", \"tests/test_cli.py::TestRoutes::test_sort\", \"tests/test_cli.py::TestRoutes::test_all_methods\", \"tests/test_cli.py::TestRoutes::test_no_routes\", \"tests/test_cli.py::test_load_dotenv\", \"tests/test_cli.py::test_dotenv_path\", \"tests/test_cli.py::test_dotenv_optional\", \"tests/test_cli.py::test_disable_dotenv_from_env\", \"tests/test_cli.py::test_run_cert_path\", \"tests/test_cli.py::test_run_cert_adhoc\", \"tests/test_cli.py::test_run_cert_import\", \"tests/test_cli.py::test_run_cert_no_ssl\", \"tests/test_cli.py::test_cli_blueprints\", \"tests/test_cli.py::test_cli_empty\"]\n     100 /tmp/flask_5063_gold_patch.txt\n      78 /tmp/flask_5063_test_patch.txt\n     178 total"
+}

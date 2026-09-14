@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_7b0473b2c93b",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_28dbb1b223a6",
+  "proposal_id": "prop_8dc3b511537c",
+  "admission_id": "adm_51accb4388af",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:56.923357+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && sed -n '40,70p' setup.cfg",
+  "exit_code": 0,
+  "output_tail": "[options.packages.find]\nwhere = src\n\n[options.entry_points]\nconsole_scripts =\n    flask = flask.cli:main\n\n[tool:pytest]\ntestpaths = tests\nfilterwarnings =\n    error\n\n[coverage:run]\nbranch = True\nsource =\n    flask\n    tests\n\n[coverage:paths]\nsource =\n    src\n    */site-packages\n\n[flake8]\n# B = bugbear\n# E = pycodestyle errors\n# F = flake8 pyflakes\n# W = pycodestyle warnings\n# B9 = bugbear opinions\n# ISC = implicit-str-concat"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_15af75620d2f",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_ef617d34cd1c",
+  "proposal_id": "prop_08d575d9380e",
+  "admission_id": "adm_bcf58cd69cbd",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:31:59.940831+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls /usr/local/lib/python*/site-packages 2>/dev/null; ls ~/Library/Python/*/lib/python/site-packages 2>/dev/null; ls /opt/homebrew/lib/python*/site-packages 2>/dev/null; python -c \"import sys; print(sys.path)\"",
+  "exit_code": 0,
+  "output_tail": ".1.dist-info\npyproject_hooks\npyproject_hooks-1.2.0.dist-info\npython_dateutil-2.9.0.post0.dist-info\npython_docx-1.2.0.dist-info\npython_dotenv-1.2.2.dist-info\npyyaml-6.0.3.dist-info\nreferencing\nreferencing-0.37.0.dist-info\nregex\nregex-2026.2.28.dist-info\nrequests\nrequests-2.32.5.dist-info\nrequests_file\nrequests_file-3.0.1.dist-info\nrequests_oauthlib\nrequests_oauthlib-2.0.0.dist-info\nrich\nrich-14.3.3.dist-info\nrpds\nrpds_py-0.30.0.dist-info\nsafetensors\nsafetensors-0.7.0.dist-info\nschemas\nscikit_learn-1.8.0.dist-info\nscipy\nscipy-1.17.1.dist-info\nsentence_transformers\nsentence_transformers-5.3.0.dist-info\nsetuptools\nsetuptools-70.2.0.dist-info\nsetuptools-82.0.1.dist-info\nshellingham\nshellingham-1.5.4.dist-info\nsix-1.17.0.dist-info\nsix.py\nsklearn\nsympy\nsympy-1.14.0.dist-info\ntenacity\ntenacity-9.1.4.dist-info\nthreadpoolctl-3.6.0.dist-info\nthreadpoolctl.py\ntldextract\ntldextract-5.3.1.dist-info\ntokenizers\ntokenizers-0.22.2.dist-info\ntorch\ntorch-2.10.0.dist-info\ntorchaudio\ntorchaudio-2.10.0.dist-info\ntorchgen\ntorchvision\ntorchvision-0.25.0.dist-info\ntqdm\ntqdm-4.67.3.dist-info\ntransformers\ntransformers-5.3.0.dist-info\ntyper\ntyper-0.24.1.dist-info\ntyping_extensions-4.15.0.dist-info\ntyping_extensions.py\ntyping_inspection\ntyping_inspection-0.4.2.dist-info\nurllib3\nurllib3-2.6.3.dist-info\nuvicorn\nuvicorn-0.42.0.dist-info\nuvloop\nuvloop-0.22.1.dist-info\nwatchfiles\nwatchfiles-1.1.1.dist-info\nwebsocket\nwebsocket_client-1.9.0.dist-info\nwebsockets\nwebsockets-16.0.dist-info\nwheel\nwheel-0.46.3.dist-info\nyaml\nzipp\nzipp-3.23.0.dist-info\n['', '/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/vendor/shim', '/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python313.zip', '/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13', '/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/lib-dynload', '/Users/abab/.local/lib/python3.13/site-packages', '/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/site-packages']"
+}

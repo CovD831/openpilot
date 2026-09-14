@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_a70b92cb4af7",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_d26d67545188",
+  "proposal_id": "prop_407bf0bae71a",
+  "admission_id": "adm_9a41a97b6281",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:30:19.143901+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport re\nprint([m.name for m in re.RegexFlag])\nPY",
+  "exit_code": 0,
+  "output_tail": "['ASCII', 'IGNORECASE', 'LOCALE', 'UNICODE', 'MULTILINE', 'DOTALL', 'VERBOSE', 'DEBUG']"
+}

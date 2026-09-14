@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c71216faf85b",
+  "run_id": "run_c077040623e9483aa8ef65f07c0b5cb6",
+  "consent_id": "con_36a356dfd494",
+  "proposal_id": "prop_72b1d6a66e5b",
+  "admission_id": "adm_86637109fcff",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:40:47.122497+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/django__django-16527/repo && grep -n \"^class \" tests/admin_views/tests.py | awk -F: '$1 < 1802' | tail -5",
+  "exit_code": 0,
+  "output_tail": "298:class AdminViewBasicTest(AdminViewBasicTestCase):\n1501:class AdminCustomTemplateTests(AdminViewBasicTestCase):\n1663:class AdminViewFormUrlTest(TestCase):\n1726:class AdminJavaScriptTest(TestCase):\n1759:class SaveAsTests(TestCase):"
+}

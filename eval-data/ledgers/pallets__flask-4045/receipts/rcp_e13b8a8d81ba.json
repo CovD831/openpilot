@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e13b8a8d81ba",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_99b2932a993c",
+  "proposal_id": "prop_af7512d02e89",
+  "admission_id": "adm_dbcc889da522",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:38.557495+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && /tmp/swebench-eval/pallets__flask-4045/venv/bin/python -c \"import flask; print(flask.__file__); print(flask.Blueprint)\"",
+  "exit_code": 0,
+  "output_tail": "/private/tmp/swebench-eval/pallets__flask-4045/repo_tmp/src/flask/__init__.py\n<class 'flask.blueprints.Blueprint'>"
+}

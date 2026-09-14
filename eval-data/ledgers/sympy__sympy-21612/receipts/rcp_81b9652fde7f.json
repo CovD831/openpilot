@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_81b9652fde7f",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_d8037d426209",
+  "proposal_id": "prop_64f5f36a78ca",
+  "admission_id": "adm_8219673a0b69",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:48:10.001577+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -n \"21612\\|a\\*\\*3 + b\\|frac\" /opt/anaconda3/lib/python3.13/site-packages/sympy/printing/tests/test_str.py | head; grep -n \"a\\*\\*3 + b\\|21612\\|nested\" /opt/anaconda3/lib/python3.13/site-packages/sympy/printing/tests/test_str.py",
+  "exit_code": 1,
+  "output_tail": "962:    F = QQ.frac_field(x, y)"
+}

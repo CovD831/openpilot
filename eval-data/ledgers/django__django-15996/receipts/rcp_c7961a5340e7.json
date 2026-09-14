@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c7961a5340e7",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_e0ad9ba70ca5",
+  "proposal_id": "prop_7fa40ac80112",
+  "admission_id": "adm_0688ee7189ad",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:32.123697+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && find . -maxdepth 3 -name 'conftest.py' -o -name 'pytest.ini' -o -name 'tox.ini' | head; ls tests/migrations | head",
+  "exit_code": 0,
+  "output_tail": "./tox.ini\n__init__.py\ndeprecated_field_migrations\nfaulty_migrations\nmigrations_test_apps\nmodels.py\nrelated_models_app\nrouters.py\ntest_add_many_to_many_field_initial\ntest_auto_now_add\ntest_autodetector.py"
+}

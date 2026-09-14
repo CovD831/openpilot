@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_649b7691b97d",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_02c4080ed22c",
+  "proposal_id": "prop_2d8c513b1d7b",
+  "admission_id": "adm_28e088b809db",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:25:36.459520+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && grep -n \"management_form\" django/forms/formsets.py",
+  "exit_code": 0,
+  "output_tail": "60:        \"missing_management_form\": _(\n145:    def management_form(self):\n177:                self.management_form.cleaned_data[TOTAL_FORM_COUNT], self.absolute_max\n193:            return self.management_form.cleaned_data[INITIAL_FORM_COUNT]\n407:        if not self.management_form.is_valid():\n409:                self.error_messages[\"missing_management_form\"],\n412:                        self.management_form.add_prefix(field_name)\n413:                        for field_name in self.management_form.errors\n416:                code=\"missing_management_form\",\n434:            ) or self.management_form.cleaned_data["
+}

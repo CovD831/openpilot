@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_276d8e105926",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_f6625ad54f21",
+  "proposal_id": "prop_b50c84faa848",
+  "admission_id": "adm_b4d421864c17",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:54:04.484582+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && git diff -- src/flask/cli.py",
+  "exit_code": 0,
+  "output_tail": "t if host_matching else rule.subdomain for rule in rules)\n+    rows = []\n \n-    if sort in (\"endpoint\", \"rule\"):\n-        rules = sorted(rules, key=attrgetter(sort))\n-    elif sort == \"methods\":\n-        rules = sorted(rules, key=lambda rule: sorted(rule.methods))  # type: ignore\n+    for rule in rules:\n+        row = [\n+            rule.endpoint,\n+            \", \".join(sorted((rule.methods or set()) - ignored_methods)),\n+        ]\n \n-    rule_methods = [\n-        \", \".join(sorted(rule.methods - ignored_methods))  # type: ignore\n-        for rule in rules\n-    ]\n+        if has_domain:\n+            row.append((rule.host if host_matching else rule.subdomain) or \"\")\n \n-    headers = (\"Endpoint\", \"Methods\", \"Rule\")\n-    widths = (\n-        max(len(rule.endpoint) for rule in rules),\n-        max(len(methods) for methods in rule_methods),\n-        max(len(rule.rule) for rule in rules),\n-    )\n-    widths = [max(len(h), w) for h, w in zip(headers, widths)]\n-    row = \"{{0:<{0}}}  {{1:<{1}}}  {{2:<{2}}}\".format(*widths)\n+        row.append(rule.rule)\n+        rows.append(row)\n+\n+    headers = [\"Endpoint\", \"Methods\"]\n+    sorts = [\"endpoint\", \"methods\"]\n+\n+    if has_domain:\n+        headers.append(\"Host\" if host_matching else \"Subdomain\")\n+        sorts.append(\"domain\")\n+\n+    headers.append(\"Rule\")\n+    sorts.append(\"rule\")\n+\n+    try:\n+        rows.sort(key=itemgetter(sorts.index(sort)))\n+    except ValueError:\n+        pass\n \n-    click.echo(row.format(*headers).strip())\n-    click.echo(row.format(*(\"-\" * width for width in widths)))\n+    rows.insert(0, headers)\n+    widths = [max(len(row[i]) for row in rows) for i in range(len(headers))]\n+    rows.insert(1, [\"-\" * w for w in widths])\n+    template = \"  \".join(f\"{{{i}:<{w}}}\" for i, w in enumerate(widths))\n \n-    for rule, methods in zip(rules, rule_methods):\n-        click.echo(row.format(rule.endpoint, methods, rule.rule).rstrip())\n+    for row in rows:\n+        click.echo(template.format(*row))\n \n \n cli = FlaskGroup("
+}

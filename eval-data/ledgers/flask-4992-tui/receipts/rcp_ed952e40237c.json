@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_ed952e40237c",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_08690bea29dd",
+  "proposal_id": "prop_fcb364273f15",
+  "admission_id": "adm_af12e8dd3808",
+  "path": "/private/tmp/flask-4992/src/flask/config.py",
+  "hash_before": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92",
+  "hash_after": "584fd038985cd82c1ab2e6e7d9934cbbf99d0b9e25086ef15177567a3040188e",
+  "created_at": "2026-09-13T13:38:21.335557+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

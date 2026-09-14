@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_82b9cf43c6e3",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_8d1146126148",
+  "proposal_id": "prop_02290d6120fb",
+  "admission_id": "adm_cc2d672685db",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:37:34.951927+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && git log --all --oneline -- src/flask/config.py | head -40",
+  "exit_code": 0,
+  "output_tail": "1d610e44 drop support for Python 3.8\n87d5f5b9 update project files (#5457)\n6000e80a address mypy strict findings\n2abb7513 Allow for PathLike types for config file variables\n44ffe6c6 add __future__ annotations\nb10b6d4a add text parameter to config.from_file\n746455d1 Fix misrendered docstring\n41aaaf7f clean up unused function from prefixed_env pr\n4eb5e945 more from_prefixed_env features\n08a283af Allow loading of environment variables into the config\n2bd7aed1 remove deprecated config.from_json\ne18ed45c document return value for config loading methods\n10425fb9 re-add deprecated Config.from_json method\n77237093 Add initial type hints\nf2f027d1 remove unused module docstrings\n2ae740dd f-strings everywhere\n524fd0bc apply pyupgrade\n662c2457 remove _compat module\n1263d3bd remove deprecated code\ne047dd6a Update deprecated for config.from_json\n1feb69d5 Update `versionadded` for `Config.from_file`\naac0f585 clean up config.from_file docs\n829aa65e Support loading configuration from text files\n1351d0a5 Merge branch '1.0.x'\n43483683 apply reorder-python-imports pre-commit config\nca278a86 move to src directory"
+}

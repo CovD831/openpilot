@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_126024e2a2b0",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_159db234d96d",
+  "proposal_id": "prop_374682d43a2b",
+  "admission_id": "adm_cbba39b629ad",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:48:14.013408+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21612/repo && git log --oneline -5 && git blame -L 330,345 sympy/printing/str.py",
+  "exit_code": 0,
+  "output_tail": "5f4cd40 base\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 330)                     isinstance(item, Pow) and\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 331)                     bool(item.exp.as_coeff_Mul()[0] < 0)):\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 332)                 if item.exp is not S.NegativeOne:\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 333)                     b.append(apow(item))\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 334)                 else:\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 335)                     if (len(item.args[0].args) != 1 and\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 336)                             isinstance(item.base, Mul)):\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 337)                         # To avoid situations like #14160\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 338)                         pow_paren.append(item)\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 339)                     b.append(item.base)\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 340)             elif item.is_Rational and item is not S.Infinity:\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 341)                 if item.p != 1:\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 342)                     a.append(Rational(item.p))\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 343)                 if item.q != 1:\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 344)                     b.append(Rational(item.q))\n^5f4cd40 (batch 2026-09-14 00:44:42 +0800 345)             else:"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_75b1f0bb9c9c",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_381b0c53b492",
+  "proposal_id": "prop_4bb34c8cab51",
+  "admission_id": "adm_e1022d9ed6a6",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:30:24.320389+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && grep -n \"def _eval_power\\|inf\\|oo\\|zoo\\|ComplexInfinity\" sympy/core/power.py | head -120",
+  "exit_code": 0,
+  "output_tail": ":                if abs(e).is_infinite:\n360:    def _eval_power(self, other):\n361:        from sympy import arg, exp, floor, im, log, re, sign\n392:                # we need _half(other) with constant floor or\n393:                # floor(S.Half - e*arg(b)/2/pi) == 0\n397:                    # floor arg. is 1/2 + arg(b)/2/pi\n410:                    s = 1  # floor = 0\n412:                    s = 1  # floor = 0\n414:                    s = 1  # floor = 0\n416:                    s = 1  # floor = 0\n418:                    s = exp(2*S.Pi*S.ImaginaryUnit*other*floor(\n426:                #     _half(other) with constant floor or\n427:                #     floor(S.Half - im(e*log(b))/2/pi) == 0\n430:                        floor(S.Half - im(e*log(b))/2/S.Pi))\n453:        with 3 arguments, if powers are not too large wrt base.\n577:                return self.base.is_infinite\n580:            elif self.exp.is_infinite and self.exp.is_extended_real:\n725:            if self.base.is_infinite or self.base.is_nonzero:\n759:            \"\"\"Return (bool, pow, remainder_pow) where, if bool is True, then the\n761:            is valid, otherwise bool will be False.\n771:            not hold then the substitution should not occur so `bool` will be\n926:        i, p = self.exp.is_integer, (self.base.is_complex or self.base.is_infinite)\n990:                return fuzzy_bool(x.is_extended_nonnegative)\n1194:        from sympy.polys.polytools import poly\n1244:            #      x being imaginary there are actually q roots, but\n1287:            return bool(self.base._eval_is_polynomial(syms) and\n1373:        # log(base) is finite and meromorphic when b != 0, zoo.\n1442:        if exp.is_infinite:\n1495:        from sympy import im, I, ceiling, polygamma, limit, logcombine, EulerGamma, exp, nan, zoo, log, factorial, ff, PoleError, O, powdenest, Wild\n1496:        from itertools import product\n1500:        if e.has(S.Infinity, S.NegativeInfinity, S.ComplexInfinity, S.NaN):\n1518:            if b.has(nan, zoo):"
+}

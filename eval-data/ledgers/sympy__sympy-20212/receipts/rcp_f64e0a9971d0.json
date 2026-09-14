@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_f64e0a9971d0",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_b446a68e60d1",
+  "proposal_id": "prop_1c5c0d83c5d0",
+  "admission_id": "adm_5838d8c74c46",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:30:55.759557+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /Users/abab/Developer/openpilot-l0 && python -c \"import sympy, mpmath; print(sympy.__version__, sympy.__file__)\" 2>&1; python -c \"import mpmath; print(mpmath.__file__)\" 2>&1",
+  "exit_code": 1,
+  "output_tail": "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import sympy, mpmath; print(sympy.__version__, sympy.__file__)\n    ^^^^^^^^^^^^^^^^^^^^\nModuleNotFoundError: No module named 'sympy'\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import mpmath; print(mpmath.__file__)\n    ^^^^^^^^^^^^^\nModuleNotFoundError: No module named 'mpmath'"
+}

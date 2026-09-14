@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_a47c140cacd4",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_cae921337149",
+  "proposal_id": "prop_10d2bf93f32c",
+  "admission_id": "adm_6d1894a805b2",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:34:46.780154+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "/Users/abab/.workbuddy/binaries/python/envs/default/bin/python - <<'PY'\nimport inspect, sympy.core.numbers as n\nsrc = inspect.getsource(n.Float._eval_power)\nprint(src)\nPY",
+  "exit_code": 0,
+  "output_tail": "def _eval_power(self, expt):\n        \"\"\"\n        expt is symbolic object but not equal to 0, 1\n\n        (-p)**r -> exp(r*log(-p)) -> exp(r*(log(p) + I*Pi)) ->\n                  -> p**r*(sin(Pi*r) + cos(Pi*r)*I)\n        \"\"\"\n        if equal_valued(self, 0):\n            if expt.is_extended_positive:\n                return self\n            if expt.is_extended_negative:\n                return S.ComplexInfinity\n        if isinstance(expt, Number):\n            if isinstance(expt, Integer):\n                prec = self._prec\n                return Float._new(\n                    mlib.mpf_pow_int(self._mpf_, expt.p, prec, rnd), prec)\n            elif isinstance(expt, Rational) and \\\n                    expt.p == 1 and expt.q % 2 and self.is_negative:\n                return Pow(S.NegativeOne, expt, evaluate=False)*(\n                    -self)._eval_power(expt)\n            expt, prec = expt._as_mpf_op(self._prec)\n            mpfself = self._mpf_\n            try:\n                y = mpf_pow(mpfself, expt, prec, rnd)\n                return Float._new(y, prec)\n            except mlib.ComplexResult:\n                re, im = mlib.mpc_pow(\n                    (mpfself, fzero), (expt, fzero), prec, rnd)\n                return Float._new(re, prec) + \\\n                    Float._new(im, prec)*S.ImaginaryUnit"
+}

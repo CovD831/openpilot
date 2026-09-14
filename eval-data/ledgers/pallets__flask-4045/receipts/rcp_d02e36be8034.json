@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_d02e36be8034",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_472374781b07",
+  "proposal_id": "prop_ecf85b9d5ac4",
+  "admission_id": "adm_acc83216f2c7",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:46.001137+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045 && ls -la repo_tmp | head -3 && readlink repo_tmp || true && readlink repo_tmp/src || true && python3 -c \"import os; print(os.path.realpath('repo_tmp/src/flask/blueprints.py')); print(os.path.realpath('repo/src/flask/blueprints.py'))\"",
+  "exit_code": 0,
+  "output_tail": "total 208\ndrwxr-xr-x@ 23 abab  wheel    736 Sep 14 08:06 .\ndrwxr-xr-x@  6 abab  wheel    192 Sep 14 09:26 ..\n/private/tmp/swebench-eval/pallets__flask-4045/repo_tmp/src/flask/blueprints.py\n/private/tmp/swebench-eval/pallets__flask-4045/repo/src/flask/blueprints.py"
+}

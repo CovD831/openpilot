@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_04627267c077",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_722cb3ff861d",
+  "proposal_id": "prop_02e3d9faa2b1",
+  "admission_id": "adm_27dba96846bc",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:13.046022+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -c \"from werkzeug.routing import MapAdapter; import inspect; print(inspect.getsource(MapAdapter.__init__))\"",
+  "exit_code": 0,
+  "output_tail": "def __init__(\n        self,\n        map: Map,\n        server_name: str,\n        script_name: str,\n        subdomain: str | None,\n        url_scheme: str,\n        path_info: str,\n        default_method: str,\n        query_args: t.Mapping[str, t.Any] | str | None = None,\n    ):\n        self.map = map\n        self.server_name = server_name\n\n        if not script_name.endswith(\"/\"):\n            script_name += \"/\"\n\n        self.script_name = script_name\n        self.subdomain = subdomain\n        self.url_scheme = url_scheme\n        self.path_info = path_info\n        self.default_method = default_method\n        self.query_args = query_args\n        self.websocket = self.url_scheme in {\"ws\", \"wss\"}"
+}

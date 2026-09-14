@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e90808183a19",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_f69d613e7ac0",
+  "proposal_id": "prop_f5bef63f72f6",
+  "admission_id": "adm_4421e0235765",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:08.629965+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -n \"flask_4992\\|swebench\\|instance_id\\|json\" /Users/abab/Developer/openpilot-l0/scripts/batch_eval.py | head -50",
+  "exit_code": 0,
+  "output_tail": "16:Usage: python scripts/batch_eval.py <report.jsonl> <instance_id> [...]\n21:import json\n40:DATASET = Path(\"/tmp/swebench_lite.json\")\n41:WORKROOT = Path(\"/tmp/swebench-eval\")\n47:    \"sympy/sympy\": Path(\"/tmp/swebench-sympy-venv/bin/python\"),\n75:    iid = instance[\"instance_id\"]\n200:    iid = instance[\"instance_id\"]\n201:    record: dict = {\"instance_id\": iid, \"repo\": instance[\"repo\"]}\n209:    f2p = json.loads(instance[\"FAIL_TO_PASS\"])\n315:    dataset = {r[\"instance_id\"]: r for r in json.load(open(DATASET, encoding=\"utf-8\"))}\n323:            record = {\"instance_id\": iid, \"verdict\": \"environment\",\n327:            f.write(json.dumps(record, ensure_ascii=False) + \"\\n\")\n335:        print(f\"  {r['instance_id']}: {r['verdict']:12s} \""
+}

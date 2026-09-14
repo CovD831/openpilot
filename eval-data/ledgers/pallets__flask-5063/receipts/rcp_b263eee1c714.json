@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b263eee1c714",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_350ddf1c57b6",
+  "proposal_id": "prop_2215521d32fc",
+  "admission_id": "adm_5e2db4031fa7",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:44:57.975260+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && timeout 20 /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -m pip download flask==3.0.2 --no-deps -d /tmp/flaskdl 2>&1 | tail -20",
+  "exit_code": 0,
+  "output_tail": "/bin/bash: timeout: command not found"
+}

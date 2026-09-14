@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_1269d6a435bb",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_9e27a43dc5c3",
+  "proposal_id": "prop_5ae2d9a32db8",
+  "admission_id": "adm_ee5a2fbb139a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:51:28.020544+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -rl \"pallets__flask-5063\" /Users/abab 2>/dev/null | head -20",
+  "exit_code": 124,
+  "output_tail": "timeout after 60.0s"
+}

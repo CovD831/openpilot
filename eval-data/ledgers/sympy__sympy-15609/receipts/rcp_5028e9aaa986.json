@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_5028e9aaa986",
+  "run_id": "run_25882f298f3940fe87467026f9b45d2e",
+  "consent_id": "con_cd367c408956",
+  "proposal_id": "prop_cf880ae4939f",
+  "admission_id": "adm_4f23dd84fe9f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:42:47.087286+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-15609/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-15609/repo /opt/anaconda3/bin/python -c \"\nfrom sympy.printing.latex import LatexPrinter\np = LatexPrinter()\nfor x in [0, 1, -1]:\n    print(repr(x), '->', p._print(x))\n\"",
+  "exit_code": 0,
+  "output_tail": "0 -> 0\n1 -> 1\n-1 -> -1\n\n[stderr]\n/private/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/external/importtools.py:162: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.\n  if StrictVersion(modversion) < StrictVersion(min_module_version):\n/private/tmp/swebench-eval/sympy__sympy-15609/repo/sympy/solvers/diophantine.py:3188: SyntaxWarning: \"is\" with 'int' literal. Did you mean \"==\"?\n  if feasible is 1:  # it's prime and k == 2"
+}

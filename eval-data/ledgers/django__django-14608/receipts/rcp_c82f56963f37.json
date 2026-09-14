@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c82f56963f37",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_01e50b1c5266",
+  "proposal_id": "prop_d82405d6a682",
+  "admission_id": "adm_01e17f22d9b1",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:43:41.474583+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && /tmp/swebench-eval/django__django-14608/venv/bin/python -m py_compile django/forms/formsets.py tests/forms_tests/tests/test_formsets.py tests/admin_views/tests.py && echo OK",
+  "exit_code": 0,
+  "output_tail": "OK"
+}

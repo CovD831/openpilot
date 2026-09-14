@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_139b32f790ed",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_03a05aeb6aac",
+  "proposal_id": "prop_93a8d297b952",
+  "admission_id": "adm_734715c762c0",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:37:22.148555+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls -la /private/tmp/flask-4992 2>&1 | head; echo \"===\"; cd /private/tmp/flask-4992 && pwd && ls",
+  "exit_code": 0,
+  "output_tail": "total 240\ndrwxr-xr-x@   25 abab  wheel    800  9月 13 21:36 .\ndrwxrwxrwt  1656 root  wheel  52992  9月 13 21:37 ..\n-rw-r--r--@    1 abab  wheel    217  9月 13 20:36 .editorconfig\n-rw-r--r--@    1 abab  wheel    544  9月 13 20:36 .flake8\ndrwxr-xr-x@   12 abab  wheel    384  9月 13 20:36 .git\ndrwxr-xr-x@    7 abab  wheel    224  9月 13 20:36 .github\n-rw-r--r--@    1 abab  wheel    207  9月 13 20:36 .gitignore\ndrwxr-xr-x@    4 abab  wheel    128  9月 13 21:36 .openpilot\n-rw-r--r--@    1 abab  wheel   1026  9月 13 20:36 .pre-commit-config.yaml\n===\n/private/tmp/flask-4992\nartwork\nCHANGES.rst\nCODE_OF_CONDUCT.md\nCONTRIBUTING.rst\ndocs\nexamples\nLICENSE.rst\nMANIFEST.in\npyproject.toml\nREADME.rst\nrequirements\nsrc\ntests\ntox.ini"
+}

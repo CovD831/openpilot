@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_65febdba82c0",
+  "run_id": "run_9d33672eb7a54933afbbca8d6d9b2130",
+  "consent_id": "con_bcb99cf1b54b",
+  "proposal_id": "prop_613e687a1e1a",
+  "admission_id": "adm_6f3459ac8435",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:39:59.361508+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21614/repo && git diff -- sympy/core/function.py sympy/core/tests/test_kind.py",
+  "exit_code": 0,
+  "output_tail": "diff --git a/sympy/core/function.py b/sympy/core/function.py\nindex 69df976..5865fce 100644\n--- a/sympy/core/function.py\n+++ b/sympy/core/function.py\n@@ -1670,6 +1670,10 @@ def eval(x):\n     def expr(self):\n         return self._args[0]\n \n+    @property\n+    def kind(self):\n+        return self.expr.kind\n+\n     @property\n     def _wrt_variables(self):\n         # return the variables of differentiation without\ndiff --git a/sympy/core/tests/test_kind.py b/sympy/core/tests/test_kind.py\nindex eabf9ad..ba8c5c4 100644\n--- a/sympy/core/tests/test_kind.py\n+++ b/sympy/core/tests/test_kind.py\n@@ -1,4 +1,5 @@\n from sympy.core.add import Add\n+from sympy.core.function import Derivative\n from sympy.core.kind import NumberKind, UndefinedKind\n from sympy.core.mul import Mul\n from sympy.core.numbers import pi, zoo, I, AlgebraicNumber\n@@ -7,7 +8,6 @@\n from sympy.integrals.integrals import Integral\n from sympy.matrices import (Matrix, SparseMatrix, ImmutableMatrix,\n     ImmutableSparseMatrix, MatrixSymbol, MatrixKind, MatMul)\n-\n comm_x = Symbol('x')\n noncomm_x = Symbol('x', commutative=False)\n \n@@ -39,6 +39,11 @@ def test_Integral_kind():\n     assert Integral(comm_x, comm_x).kind is NumberKind\n     assert Integral(A, comm_x).kind is MatrixKind(NumberKind)\n \n+def test_Derivative_kind():\n+    A = MatrixSymbol('A', 2,2)\n+    assert Derivative(comm_x, comm_x).kind is NumberKind\n+    assert Derivative(A, comm_x).kind is MatrixKind(NumberKind)\n+\n def test_Matrix_kind():\n     classes = (Matrix, SparseMatrix, ImmutableMatrix, ImmutableSparseMatrix)\n     for cls in classes:"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b19cb15c3dc0",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_3378d8036ff0",
+  "proposal_id": "prop_5579d1eacc03",
+  "admission_id": "adm_44e488213792",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:32:11.356371+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && grep -n \"NegativeInfinity\\|Infinity\\b\\|class Infinity\" sympy/core/numbers.py | head -50",
+  "exit_code": 0,
+  "output_tail": "Infinity:\n745:                return S.Infinity\n753:            elif other is S.Infinity:\n757:                    return S.Infinity\n759:                    return S.NegativeInfinity\n760:            elif other is S.NegativeInfinity:\n764:                    return S.NegativeInfinity\n766:                    return S.Infinity\n776:            elif other is S.Infinity or other is S.NegativeInfinity:\n1078:                return S.Infinity\n1080:                return S.NegativeInfinity\n1084:            return S.Infinity\n1086:            return S.NegativeInfinity\n1091:        elif num is S.Infinity:\n1093:        elif num is S.NegativeInfinity:\n1162:                    return S.Infinity\n1163:                return S.NegativeInfinity\n1210:            return S.Infinity\n1212:            return S.NegativeInfinity\n1365:                return S.Infinity\n1450:                S.Infinity, S.NegativeInfinity):\n1659:            return S.ComplexInfinity\n1766:                    return S.ComplexInfinity\n1821:            if expt is S.Infinity:  # -oo already caught by test for negative\n1824:                    return S.Infinity\n1827:                    return S.Infinity + S.Infinity*S.ImaginaryUnit\n2327:        if expt is S.Infinity:\n2329:                return S.Infinity\n2331:            return S.Infinity + S.ImaginaryUnit*S.Infinity\n2332:        if expt is S.NegativeInfinity:\n2333:            return Rational(1, self)**S.Infinity\n2629:            return S.ComplexInfinity\n2637:            return S.ComplexInfinity**terms\n2754:            if expt is S.Infinity or expt is S.NegativeInfinity:\n2799:class Infinity(Number, metaclass=Singleton):\n2808:    Infinity is often used not only to define a limit but as a value\n2814:    Infinity is a singleton, and can be accessed by ``S.Infinity``,\n2832:    NegativeInfinity, NaN\n2837:    .. [1] https://en.wikipedia.org/wiki/Infinity\n2870:            if other is S.NegativeInfinity or other is S.NaN:\n2879:            if other is S.Infinity or other is S.NaN:"
+}

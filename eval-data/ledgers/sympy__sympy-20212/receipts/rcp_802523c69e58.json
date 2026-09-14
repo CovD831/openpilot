@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_802523c69e58",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_109c345048c7",
+  "proposal_id": "prop_c47ad987b13c",
+  "admission_id": "adm_25ff1104d7e2",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:33:53.976653+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-20212/repo:/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages /Users/abab/.workbuddy/binaries/python/envs/default/bin/python -c \"import sympy; print(sympy.__version__, sympy.__file__); from sympy import oo, zoo; print(0**-oo); print(0**oo); print(zoo**oo); print((-oo).is_negative, oo.is_positive)\"",
+  "exit_code": 0,
+  "output_tail": "1.7.dev /private/tmp/swebench-eval/sympy__sympy-20212/repo/sympy/__init__.py\n0\n0\n0\nFalse False"
+}

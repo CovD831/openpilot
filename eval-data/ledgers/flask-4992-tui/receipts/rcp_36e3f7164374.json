@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_36e3f7164374",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_71804c82f3f6",
+  "proposal_id": "prop_ec7df20d5cf4",
+  "admission_id": "adm_ffe42b5b527f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:37:15.739033+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "find . -name \"config.json\" -not -path \"*/node_modules/*\" 2>/dev/null; echo \"---\"; ls tests/; echo \"---py---\"; python3 --version; grep -n \"requires-python\" pyproject.toml",
+  "exit_code": 2,
+  "output_tail": "---\n__pycache__\ntest_admission.py\ntest_approval_gate.py\ntest_authorizers.py\ntest_bridge_and_session.py\ntest_budget.py\ntest_capabilities.py\ntest_compaction.py\ntest_metadata.py\ntest_model_error.py\ntest_no_legacy_import.py\ntest_parallel.py\ntest_receipts.py\ntest_recovery.py\ntest_resume.py\ntest_sandbox.py\ntest_skills.py\ntest_tui_keys.py\n---py---\nPython 3.13.9\n\n[stderr]\ngrep: pyproject.toml: No such file or directory"
+}

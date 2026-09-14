@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_ca7be0d47117",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_40ed9b844846",
+  "proposal_id": "prop_7a6da1f7e994",
+  "admission_id": "adm_3d88a9a4cc16",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:33:16.028331+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && grep -rn \"extended_positive\\|_eval_is_positive\\|is_positive\" sympy/core/assumptions.py sympy/core/basic.py sympy/core/expr.py 2>/dev/null | head -40",
+  "exit_code": 0,
+  "output_tail": "se, 'finite': True,\nsympy/core/assumptions.py:224:    'extended_real        ==  extended_negative | zero | extended_positive',\nsympy/core/assumptions.py:226:    'extended_positive    ==  extended_nonnegative & extended_nonzero',\nsympy/core/assumptions.py:228:    'extended_nonpositive ==  extended_real & !extended_positive',\nsympy/core/assumptions.py:238:    'positive       ==  extended_positive & finite',\nsympy/core/basic.py:177:         'extended_nonzero': True, 'extended_positive': True, 'extended_real':\nsympy/core/expr.py:837:    def _eval_is_positive(self):\nsympy/core/expr.py:841:        extended_positive = self.is_extended_positive\nsympy/core/expr.py:843:            return extended_positive\nsympy/core/expr.py:844:        if extended_positive is False:\nsympy/core/expr.py:857:    def _eval_is_extended_positive_negative(self, positive):\nsympy/core/expr.py:892:    def _eval_is_extended_positive(self):\nsympy/core/expr.py:893:        return self._eval_is_extended_positive_negative(positive=True)\nsympy/core/expr.py:896:        return self._eval_is_extended_positive_negative(positive=False)\nsympy/core/expr.py:1146:                    and add_args[0].is_positive\nsympy/core/expr.py:2206:                if c.is_positive:\nsympy/core/expr.py:2211:                elif c.is_positive:\nsympy/core/expr.py:2219:                elif self.is_positive and quotient.is_negative:\nsympy/core/expr.py:2226:                elif self.is_positive and quotient.is_negative:\nsympy/core/expr.py:2233:                elif self.is_positive and quotient.is_negative:\nsympy/core/expr.py:2239:                if quotient.args[0].is_Integer and quotient.args[0].is_positive and quotient.args[1] == self:\nsympy/core/expr.py:2955:        if x.is_positive is x.is_negative is None or x.is_Symbol is not True:\nsympy/core/expr.py:3125:        if x.is_positive is x.is_negative is None:\nsympy/core/expr.py:3317:        if x is None or x0 or dir != '+':  # {see XPOS above} or (x.is_positive == x.is_negative == None):"
+}

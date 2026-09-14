@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_86289585c6ed",
+  "run_id": "run_c077040623e9483aa8ef65f07c0b5cb6",
+  "consent_id": "con_c784d7dabc0f",
+  "proposal_id": "prop_440462f01fa2",
+  "admission_id": "adm_0a0461a06f96",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:41:29.936169+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/django__django-16527/repo && grep -n \"save_as\" tests/admin_views/admin.py",
+  "exit_code": 0,
+  "output_tail": "348:    save_as = True\n446:    save_as = True\n1182:    save_as=True,\n1315:site2.register(Person, save_as_continue=False)"
+}

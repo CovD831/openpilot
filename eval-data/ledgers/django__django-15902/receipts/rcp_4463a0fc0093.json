@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_4463a0fc0093",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_0699e1e732a3",
+  "proposal_id": "prop_6602939142e3",
+  "admission_id": "adm_d977b43167b9",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:26:45.996365+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && /tmp/swebench-eval/django__django-15902/venv/bin/python - <<'PY'\nimport warnings\nimport django\nfrom django.conf import settings\nif not settings.configured:\n    settings.configure(INSTALLED_APPS=['django.contrib.contenttypes','django.contrib.auth'], DATABASES={}, FORM_RENDERER='django.forms.renderers.DjangoTemplates', USE_TZ=True)\ndjango.setup()\nfrom django import forms\nfrom django.forms.formsets import formset_factory, ManagementForm\n\nclass F(forms.Form):\n    name = forms.CharField()\n\nFS = formset_factory(F)\nfs = FS()\nwith warnings.catch_warnings(record=True) as w:\n    warnings.simplefilter('always')\n    print(str(fs.management_form))\n    for x in w:\n        print('WARN', x.category.__name__, str(x.message)[:60])\nPY",
+  "exit_code": 0,
+  "output_tail": "<input type=\"hidden\" name=\"form-TOTAL_FORMS\" value=\"1\" id=\"id_form-TOTAL_FORMS\"><input type=\"hidden\" name=\"form-INITIAL_FORMS\" value=\"0\" id=\"id_form-INITIAL_FORMS\"><input type=\"hidden\" name=\"form-MIN_NUM_FORMS\" value=\"0\" id=\"id_form-MIN_NUM_FORMS\"><input type=\"hidden\" name=\"form-MAX_NUM_FORMS\" value=\"1000\" id=\"id_form-MAX_NUM_FORMS\">\nWARN RemovedInDjango50Warning The \"default.html\" templates for forms and formsets will be"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_efc8fd8e009e",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_6e38f28fa746",
+  "proposal_id": "prop_ea823871f78b",
+  "admission_id": "adm_951727d43c40",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:47:00.297224+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21612/repo && /opt/anaconda3/bin/python3 -c \"\nfrom sympy import Symbol, Integer, Pow, Mul, Add, srepr\nfrom sympy.printing.str import StrPrinter\nfrom sympy.printing.precedence import precedence\na,b,c = Symbol('a'),Symbol('b'),Symbol('c')\ninner_top = Mul(Add(Pow(a,3), b), Pow(c,-1, evaluate=False), evaluate=False)\ninner_bot = Pow(Pow(c,2, evaluate=False), -1, evaluate=False)\nouter = Mul(inner_top, Pow(inner_bot, -1, evaluate=False), evaluate=False)\nprinter = StrPrinter()\nprint('prec outer', precedence(outer))\nprint('prec inner_top', precedence(inner_top))\nprint('prec inner_bot', precedence(inner_bot))\nprint('print inner_bot', printer._print(inner_bot))\nprint('paren inner_bot', printer.parenthesize(inner_bot, precedence(outer)))\nprint('paren inner_top', printer.parenthesize(inner_top, precedence(outer)))\n\" 2>/dev/null",
+  "exit_code": 0,
+  "output_tail": "prec outer 50\nprec inner_top 50\nprec inner_bot 60\nprint inner_bot 1/(c**2)\nparen inner_bot 1/(c**2)\nparen inner_top ((a**3 + b)/c)"
+}

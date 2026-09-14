@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_18f234542255",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_e6e5537d5a26",
+  "proposal_id": "prop_c25f2f3e67c6",
+  "admission_id": "adm_8e83cf86a3cd",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:30:18.372926+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "pwd; ls",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/Developer/openpilot-l0\nBATCH_REPORT.md\nCHECKPOINT_PLAN.md\nCOMPACTION_PLAN.md\nCode\nREADME.md\nREAL_TASK_REPORT.md\nSKILL_STANDARD_RESEARCH.md\nSUBAGENT_PLAN.md\nTOKEN_REDUCTION_RESEARCH.md\nVALIDATION_PLAN.md\naccept_l0.py\nevidence\nruns\nscripts\ntests\ntmp"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_ad0de8953d8b",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_76407ec79429",
+  "proposal_id": "prop_b2d61ef1f4ca",
+  "admission_id": "adm_ca59fa5b3bbf",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:35.350195+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -m pytest tests/test_cli.py::TestRoutes -q",
+  "exit_code": 0,
+  "output_tail": "[test output: 1 of 2 lines dropped — failures and summaries kept]\n4 passed in 0.03s"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6f16e03336c2",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_8e4c5c453e6a",
+  "proposal_id": "prop_ef403b42407e",
+  "admission_id": "adm_56c578c7a0db",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:27:03.335962+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && find django/forms/jinja2/django/forms -maxdepth 2 -type f | sort",
+  "exit_code": 0,
+  "output_tail": "jango/forms/jinja2/django/forms/formsets/default.html\ndjango/forms/jinja2/django/forms/formsets/div.html\ndjango/forms/jinja2/django/forms/formsets/p.html\ndjango/forms/jinja2/django/forms/formsets/table.html\ndjango/forms/jinja2/django/forms/formsets/ul.html\ndjango/forms/jinja2/django/forms/label.html\ndjango/forms/jinja2/django/forms/p.html\ndjango/forms/jinja2/django/forms/table.html\ndjango/forms/jinja2/django/forms/ul.html\ndjango/forms/jinja2/django/forms/widgets/attrs.html\ndjango/forms/jinja2/django/forms/widgets/checkbox.html\ndjango/forms/jinja2/django/forms/widgets/checkbox_option.html\ndjango/forms/jinja2/django/forms/widgets/checkbox_select.html\ndjango/forms/jinja2/django/forms/widgets/clearable_file_input.html\ndjango/forms/jinja2/django/forms/widgets/date.html\ndjango/forms/jinja2/django/forms/widgets/datetime.html\ndjango/forms/jinja2/django/forms/widgets/email.html\ndjango/forms/jinja2/django/forms/widgets/file.html\ndjango/forms/jinja2/django/forms/widgets/hidden.html\ndjango/forms/jinja2/django/forms/widgets/input.html\ndjango/forms/jinja2/django/forms/widgets/input_option.html\ndjango/forms/jinja2/django/forms/widgets/multiple_hidden.html\ndjango/forms/jinja2/django/forms/widgets/multiple_input.html\ndjango/forms/jinja2/django/forms/widgets/multiwidget.html\ndjango/forms/jinja2/django/forms/widgets/number.html\ndjango/forms/jinja2/django/forms/widgets/password.html\ndjango/forms/jinja2/django/forms/widgets/radio.html\ndjango/forms/jinja2/django/forms/widgets/radio_option.html\ndjango/forms/jinja2/django/forms/widgets/select.html\ndjango/forms/jinja2/django/forms/widgets/select_date.html\ndjango/forms/jinja2/django/forms/widgets/select_option.html\ndjango/forms/jinja2/django/forms/widgets/splitdatetime.html\ndjango/forms/jinja2/django/forms/widgets/splithiddendatetime.html\ndjango/forms/jinja2/django/forms/widgets/text.html\ndjango/forms/jinja2/django/forms/widgets/textarea.html\ndjango/forms/jinja2/django/forms/widgets/time.html\ndjango/forms/jinja2/django/forms/widgets/url.html"
+}

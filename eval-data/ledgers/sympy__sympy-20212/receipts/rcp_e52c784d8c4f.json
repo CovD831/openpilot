@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e52c784d8c4f",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_839f66e797b0",
+  "proposal_id": "prop_4c45e96b657a",
+  "admission_id": "adm_7b1bfb2f511b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:32:03.555855+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "python -c \"import sys; print([p for p in sys.path])\"; ls /Users/abab/.local/lib/python3.13/site-packages 2>/dev/null | head -50",
+  "exit_code": 0,
+  "output_tail": "['', '/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/cli/vendor/shim', '/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python313.zip', '/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13', '/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/lib-dynload', '/Users/abab/.local/lib/python3.13/site-packages', '/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/site-packages']\ncitecheck\ncitecheck-0.3.0.dist-info"
+}

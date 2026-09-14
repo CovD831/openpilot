@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_0aefd7d73d69",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_bfc3d4ec11fa",
+  "proposal_id": "prop_e12fc66579b9",
+  "admission_id": "adm_ffae6a851df8",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:28:17.239575+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && find tests -maxdepth 2 -name \"*.py\" | grep -i settings | head; ls tests/ | head -60",
+  "exit_code": 0,
+  "output_tail": "tests/flatpages_tests/settings.py\ntests/auth_tests/settings.py\ntests/requests/test_data_upload_settings.py\ntests/admin_scripts/configured_dynamic_settings_manage.py\ntests/admin_scripts/configured_settings_manage.py\ntests/staticfiles_tests/settings.py\ntests/project_template/test_settings.py\ntests/postgres_tests/integration_settings.py\ntests/settings_tests/__init__.py\ntests/settings_tests/tests.py\nREADME.rst\nabsolute_url_overrides\nadmin_autodiscover\nadmin_changelist\nadmin_checks\nadmin_custom_urls\nadmin_default_site\nadmin_docs\nadmin_filters\nadmin_inlines\nadmin_ordering\nadmin_registration\nadmin_scripts\nadmin_utils\nadmin_views\nadmin_widgets\naggregation\naggregation_regress\nannotations\napp_loading\napps\nasgi\nasync\nasync_queryset\nauth_tests\nbackends\nbase\nbash_completion\nbasic\nbuiltin_server\nbulk_create\ncache\ncheck_framework\nconditional_processing\nconstraints\ncontenttypes_tests\ncontext_processors\ncsrf_tests\ncustom_columns\ncustom_lookups\ncustom_managers\ncustom_methods\ncustom_migration_operations\ncustom_pk\ndatatypes\ndates\ndatetimes\ndb_functions\ndb_typecasts\ndb_utils\ndbshell\ndecorators\ndefer\ndefer_regress\ndelete\ndelete_regress\ndeprecation\ndispatch\ndistinct_on_fields\nempty"
+}

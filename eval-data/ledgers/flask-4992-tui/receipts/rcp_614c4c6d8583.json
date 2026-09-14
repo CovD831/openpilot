@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_614c4c6d8583",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_bacbafac1395",
+  "proposal_id": "prop_76f95a2b2e3e",
+  "admission_id": "adm_92b4744ecad7",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:37:39.161035+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && git show b10b6d4a --stat && echo \"=========\" && git show b10b6d4a",
+  "exit_code": 128,
+  "output_tail": "[stderr]\nfatal: unable to access 'https://github.com/pallets/flask.git/': Could not resolve host: github.com\nfatal: could not fetch 8159ea452e7dd1e21c3aa7891711cb3386bbe23d from promisor remote"
+}

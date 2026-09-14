@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_eaaa03a8de56",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_633fd7107093",
+  "proposal_id": "prop_41feb95a3361",
+  "admission_id": "adm_9d0ae44e9490",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:26:45.558071+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "python3 - <<'PY'\nimport enum, inspect\nprint(enum.__file__)\nsrc = open(enum.__file__).read()\nprint('_decompose' in src)\nimport re\nfor m in re.finditer(r'decompose', src):\n    print(src[m.start()-200:m.start()+200])\n    print('---')\nPY",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/.workbuddy/binaries/python/versions/3.13.12/lib/python3.13/enum.py\nFalse"
+}

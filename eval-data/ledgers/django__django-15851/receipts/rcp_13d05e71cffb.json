@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_13d05e71cffb",
+  "run_id": "run_d0d16cc3503840c2969376ffd1787431",
+  "consent_id": "con_70f1f8910f5b",
+  "proposal_id": "prop_aa0104e936ab",
+  "admission_id": "adm_3fc4aa3a87fc",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:31:18.408708+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15851/repo && /tmp/swebench-eval/django__django-15851/venv/bin/python -m pytest tests/dbshell/test_postgresql.py -q",
+  "exit_code": 2,
+  "output_tail": "[test output: 27 of 34 lines dropped — failures and summaries kept]\n==================================== ERRORS ====================================\n______________ ERROR collecting tests/dbshell/test_postgresql.py _______________\nE   AttributeError: '_thread._local' object has no attribute 'default'\n=========================== short test summary info ============================\nERROR tests/dbshell/test_postgresql.py - django.core.exceptions.ImproperlyCon...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.29s"
+}

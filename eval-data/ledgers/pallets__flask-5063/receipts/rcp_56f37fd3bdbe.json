@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_56f37fd3bdbe",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_c0d9e4da57fa",
+  "proposal_id": "prop_bb25a4de6c74",
+  "admission_id": "adm_be8121374862",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:58.418933+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && git apply /tmp/flask_5063_test_patch.txt && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -m pytest tests/test_cli.py::TestRoutes::test_subdomain tests/test_cli.py::TestRoutes::test_host -q; git checkout -- tests/test_cli.py",
+  "exit_code": 0,
+  "output_tail": "[test output: 1 of 2 lines dropped — failures and summaries kept]\n2 passed in 0.02s"
+}

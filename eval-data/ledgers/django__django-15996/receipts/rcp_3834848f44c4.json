@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_3834848f44c4",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_15ede7cd4d32",
+  "proposal_id": "prop_b36937379152",
+  "admission_id": "adm_4a4186b2c2e6",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:25:50.580927+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && grep -R \"IntFlagEnum\" -n . --exclude-dir=.git; grep -R \"RegexFlag\\[\" -n . --exclude-dir=.git | head -50",
+  "exit_code": 0,
+  "output_tail": "Call\",\"id\":\"call_00_SLRabcodwKG3Qsj8SAAG2805\",\"name\":\"openpilot_bash\",\"arguments\":{\"command\":\"cd /tmp/swebench-eval/django__django-15996/repo && grep -R \\\"Flag\\\" django/db/migrations/serializer.py tests/migrations/test_writer.py\"}}],\"api\":\"openai-completions\",\"provider\":\"deepseek\",\"model\":\"deepseek-v4-pro\",\"usage\":{\"input\":61,\"output\":113,\"cacheRead\":13568,\"cacheWrite\":0,\"reasoning\":26,\"totalTokens\":13742,\"cost\":{\"input\":8.052000000000001e-05,\"output\":0.00044748000000000005,\"cacheRead\":0.000596992,\"cacheWrite\":0,\"total\":0.001124992}},\"stopReason\":\"toolUse\",\"timestamp\":1789352720679,\"responseId\":\"0924d628-4a8c-43ca-a551-481eb1620dce\",\"rawStopReason\":\"tool_calls\"},\"toolResults\":[{\"role\":\"toolResult\",\"toolCallId\":\"call_00_SLRabcodwKG3Qsj8SAAG2805\",\"toolName\":\"openpilot_bash\",\"content\":[{\"type\":\"text\",\"text\":\"exit 0\\ntests/migrations/test_writer.py:class IntFlagEnum(enum.IntFlag):\\ntests/migrations/test_writer.py:            IntFlagEnum.A,\\ntests/migrations/test_writer.py:                \\\"migrations.test_writer.IntFlagEnum['A']\\\",\\ntests/migrations/test_writer.py:            IntFlagEnum.B,\\ntests/migrations/test_writer.py:                \\\"migrations.test_writer.IntFlagEnum['B']\\\",\\ntests/migrations/test_writer.py:            default=IntFlagEnum.A, choices=[(m.value, m) for m in IntFlagEnum]\\ntests/migrations/test_writer.py:            \\\"(1, migrations.test_writer.IntFlagEnum['A']), \\\"\\ntests/migrations/test_writer.py:            \\\"(2, migrations.test_writer.IntFlagEnum['B'])], \\\"\\ntests/migrations/test_writer.py:            \\\"default=migrations.test_writer.IntFlagEnum['A'])\\\",\\ntests/migrations/test_writer.py:            \\\"flags=re.RegexFlag['DOTALL'])\\\",\"}],\"details\":{\"gateway\":\"openpilot\",\"success\":true},\"isError\":false,\"timestamp\":1789352722560}]},\"producer\":\"pi\",\"call_id\":\"\",\"idempotency_key\":\"run_a8c9dae320bc46599fdc30fb0f943821:4976\",\"timestamp\":\"2026-09-14T02:25:22.560417+00:00\"}\n./tests/migrations/test_writer.py:664:            \"flags=re.RegexFlag['DOTALL'])\","
+}

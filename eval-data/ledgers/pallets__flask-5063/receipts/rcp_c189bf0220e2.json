@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c189bf0220e2",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_f7841746b287",
+  "proposal_id": "prop_d6787b3e7089",
+  "admission_id": "adm_535a6daf4538",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:02.183864+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && grep -n \"routes\\|Domain\\|subdomain\" CHANGES.rst | head -40 && sed -n '600,720p' CHANGES.rst",
+  "exit_code": 0,
+  "output_tail": "hile opening the session at the beginning of the\n    request are handled by the app's error handlers. :pr:`2254`\n-   Blueprints gained ``Blueprint.json_encoder`` and\n    ``Blueprint.json_decoder`` attributes to override the app's\n    encoder and decoder. :pr:`1898`\n-   ``Flask.make_response`` raises ``TypeError`` instead of\n    ``ValueError`` for bad response types. The error messages have been\n    improved to describe why the type is invalid. :pr:`2256`\n-   Add ``routes`` CLI command to output routes registered on the\n    application. :pr:`2259`\n-   Show warning when session cookie domain is a bare hostname or an IP\n    address, as these may not behave properly in some browsers, such as\n    Chrome. :pr:`2282`\n-   Allow IP address as exact session cookie domain. :pr:`2282`\n-   ``SESSION_COOKIE_DOMAIN`` is set if it is detected through\n    ``SERVER_NAME``. :pr:`2282`\n-   Auto-detect zero-argument app factory called ``create_app`` or\n    ``make_app`` from ``FLASK_APP``. :pr:`2297`\n-   Factory functions are not required to take a ``script_info``\n    parameter to work with the ``flask`` command. If they take a single\n    parameter or a parameter named ``script_info``, the ``ScriptInfo``\n    object will be passed. :pr:`2319`\n-   ``FLASK_APP`` can be set to an app factory, with arguments if\n    needed, for example ``FLASK_APP=myproject.app:create_app('dev')``.\n    :pr:`2326`\n-   ``FLASK_APP`` can point to local packages that are not installed in\n    editable mode, although ``pip install -e`` is still preferred.\n    :pr:`2414`\n-   The ``View`` class attribute\n    ``View.provide_automatic_options`` is set in ``View.as_view``, to be\n    detected by ``Flask.add_url_rule``. :pr:`2316`\n-   Error handling will try handlers registered for ``blueprint, code``,\n    ``app, code``, ``blueprint, exception``, ``app, exception``.\n    :pr:`2314`\n-   ``Cookie`` is added to the response's ``Vary`` header if the session\n    is accessed at all during the request (and not deleted). :pr:`2288`"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_5ca122fa4f8f",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_0381629eaac7",
+  "proposal_id": "prop_e1c60125a2b3",
+  "admission_id": "adm_a1bb422f8e40",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:47:01.769186+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && curl -L --max-time 10 -sS -o /tmp/flaskcli.py -w \"%{http_code}\\n\" https://raw.githubusercontent.com/pallets/flask/2.3.0/src/flask/cli.py 2>&1; wc -c /tmp/flaskcli.py 2>/dev/null",
+  "exit_code": 1,
+  "output_tail": "curl: (6) Could not resolve host: raw.githubusercontent.com\n000"
+}

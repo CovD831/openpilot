@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_362aac34409b",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_6a8eb0012aee",
+  "proposal_id": "prop_448a3ead3c3b",
+  "admission_id": "adm_803e0a3cc86a",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:37:31.485484+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && find .openpilot -type f | head -50; echo \"===\"; git branch -a; echo \"===\"; git log --all --oneline | head -20",
+  "exit_code": 0,
+  "output_tail": ".openpilot/receipts/rcp_02e8a02bc414.json\n.openpilot/receipts/rcp_3016a7ff83aa.json\n.openpilot/receipts/rcp_139b32f790ed.json\n.openpilot/receipts/rcp_36e3f7164374.json\n.openpilot/receipts/rcp_e5e3f5ad0733.json\n.openpilot/trajectory/run_55d138a712854931bc80e3bac365a9d1.jsonl\n===\n* (HEAD detached at 4c288bc9)\n  main\n  remotes/origin/HEAD -> origin/main\n  remotes/origin/automatic-options\n  remotes/origin/main\n  remotes/origin/stable\n  remotes/origin/workflow\n===\nd73fa1cd fix docs ref\nd318b683 explain seek\n2a8a38b0 support query in methodview\na82e9428 automatic options as separate route\nd8eaaba8 add `app.query` route decorator (#6133)\n89992954 add app.query route decorator\n3596b1ab add entry\n05e9c6bd Fix `.partition(\":\")` usage on potential IPv6 addresses (#6096)\n7203feab Fix IPv6 server name parsing\nde8429ff Fix IPv6 session transactions\n514fc6b3 Merge branch 'stable'\n81798b40 fix typos\n8b4fd5d1 use header properties\n6a2f545b Merge branch 'stable'\n30d1c5d6 test Python 3.15\nff6fa22f update dependencies\n548994ea Replace the use of private `monkeypatch` fixture API (#6095)\n5ce121dd Replace the use of private `monkeypatch` fixture API\n8285adf5 update dev dependencies\n36e4a824 Any for  CertParamType type"
+}

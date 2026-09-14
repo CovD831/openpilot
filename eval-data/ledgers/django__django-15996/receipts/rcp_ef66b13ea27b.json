@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_ef66b13ea27b",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_dd8d497ce845",
+  "proposal_id": "prop_9b11e6e12c9f",
+  "admission_id": "adm_af99974d6755",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:28:23.917389+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nline = \"        if issubclass(enum_class, enum.Flag) and self.value.name not in enum_class.__members__:\"\nprint(len(line))\nPY",
+  "exit_code": 0,
+  "output_tail": "95"
+}

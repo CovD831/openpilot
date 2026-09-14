@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9a60d3f0ff79",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_d80d7ea55a93",
+  "proposal_id": "prop_7a409343ab1d",
+  "admission_id": "adm_41472016d35b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:52:56.141495+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -rls \"pallets__flask-5063\" /Users/abab/Developer/openpilot-l0 /Users/abab/Developer/openpilot-evidence-runtime-completion /Users/abab/Developer/openpilot-user-error-tuning /private/tmp /tmp/swebench-eval 2>/dev/null | head -50",
+  "exit_code": 124,
+  "output_tail": "timeout after 60.0s"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_694daeafc899",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_cbd02b85439b",
+  "proposal_id": "prop_4d023af7a0d2",
+  "admission_id": "adm_e17cc0b45b46",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:44:30.377442+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && grep -n \"url_map\" src/flask/app.py | head -40 && grep -n \"url_map\" src/flask/scaffold.py",
+  "exit_code": 1,
+  "output_tail": "181:    :param host_matching: set ``url_map.host_matching`` attribute.\n345:    url_map_class = Map\n489:        #:    app.url_map.converters['list'] = ListConverter\n490:        self.url_map = self.url_map_class()\n492:        self.url_map.host_matching = host_matching\n1068:        self.url_map.add(rule)\n1896:                subdomain = self.url_map.default_subdomain or None\n1900:            return self.url_map.bind_to_environ(\n1908:            return self.url_map.bind("
+}

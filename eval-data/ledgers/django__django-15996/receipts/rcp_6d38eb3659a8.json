@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6d38eb3659a8",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_a0afb92e140c",
+  "proposal_id": "prop_334495618e89",
+  "admission_id": "adm_18ebd90f3d4e",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:29:42.056286+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "find /tmp /Users/abab/.cache/pip -name 'serializer.py' -path '*django*' 2>/dev/null | head -20; find /Users/abab -maxdepth 5 -name 'serializer.py' -path '*django*' 2>/dev/null | head -20",
+  "exit_code": 0,
+  "output_tail": ""
+}

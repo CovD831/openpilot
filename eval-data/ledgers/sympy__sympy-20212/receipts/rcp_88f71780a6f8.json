@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_88f71780a6f8",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_9e15f0ce0ebc",
+  "proposal_id": "prop_262af90f4f33",
+  "admission_id": "adm_85606eb9068b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:30:21.547514+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && pwd && ls && python -c \"import sympy; print(sympy.__version__)\"",
+  "exit_code": 1,
+  "output_tail": "/private/tmp/swebench-eval/sympy__sympy-20212/repo\nAUTHORS\nCODEOWNERS\nCODE_OF_CONDUCT.md\nCONTRIBUTING.md\nLICENSE\nMANIFEST.in\nPULL_REQUEST_TEMPLATE.md\nREADME.md\nasv.conf.travis.json\nbin\ncodecov.yml\nconftest.py\ncoveragerc_travis\ndata\ndoc\nexamples\ngithub_deploy_key.enc\nisympy.py\npytest.ini\nrelease\nsetup.cfg\nsetup.py\nsetupegg.py\nsympy\n\n[stderr]\nTraceback (most recent call last):\n  File \"/private/tmp/swebench-eval/sympy__sympy-20212/repo/sympy/__init__.py\", line 22, in <module>\n    import mpmath\nModuleNotFoundError: No module named 'mpmath'\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import sympy; print(sympy.__version__)\n    ^^^^^^^^^^^^\n  File \"/private/tmp/swebench-eval/sympy__sympy-20212/repo/sympy/__init__.py\", line 24, in <module>\n    raise ImportError(\"SymPy now depends on mpmath as an external library. \"\n    \"See https://docs.sympy.org/latest/install.html#mpmath for more information.\")\nImportError: SymPy now depends on mpmath as an external library. See https://docs.sympy.org/latest/install.html#mpmath for more information."
+}

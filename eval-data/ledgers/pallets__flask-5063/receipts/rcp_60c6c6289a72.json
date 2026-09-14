@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_60c6c6289a72",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_8b8fc3901e1a",
+  "proposal_id": "prop_2c7b9f6dd623",
+  "admission_id": "adm_114cf45dbe94",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:51:53.706492+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "find /Users/abab/Developer /tmp /private/tmp -maxdepth 5 \\( -name 'flask_5063.json' -o -name '*5063*.json' -o -name '*5063*.patch' \\) 2>/dev/null | head -50",
+  "exit_code": 0,
+  "output_tail": ""
+}

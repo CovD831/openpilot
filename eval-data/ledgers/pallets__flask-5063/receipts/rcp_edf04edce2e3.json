@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_edf04edce2e3",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_f89278b2444c",
+  "proposal_id": "prop_82a23f51f1fd",
+  "admission_id": "adm_96669bda3f91",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:50:18.816545+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls /tmp",
+  "exit_code": 0,
+  "output_tail": ".txt\nt1cf\nt2.err\nt2.out\nt2.sh\nt4-work-dir.txt\ntc-t1-3.txt\ntc-t1-any.txt\ntc-t3-3.txt\ntc-t3.txt\ntemplate_SKILL.md\ntest-render.html\ntest-resolve.mjs\ntest-weekly.mjs\ntest-weekly2.mjs\ntest_allmethods.py\ntest_flask233.py\ntest_out.txt\ntest_routes.py\ntest_routes2.py\ntest_subdomain_allmethods.py\ntheme.txt\ntk-host.log\ntk2-front.log\ntk2-host.log\ntk3-front.log\ntk3-host.log\ntk4-front.log\ntk4-host.log\ntk5-front.log\ntk5-host.log\ntl.txt\ntl2.txt\ntl3.txt\ntl4.txt\ntls-lan-evidence-1789140027.json\ntls-test\ntls-token-evidence.json\ntlstest\ntoolcalls_dump.json\ntrace_pids\ntree-web.yml\ntree.yml\ntree2.yml\ntree3.yml\ntree_state.png\nui-chat.py\nui-chat2.py\nui-server.log\nui-shots\nui-skeleton-first.SKILL.md.bak\nui-strings.json\nunified.png\nunified2.png\nup.txt\nusage.js\nv.txt\nv4-2.png\nv4-3.png\nv4-4.png\nv4-5.png\nv4-6.png\nv4-dark-1.png\nv4-dark.html\nv4-l.png\nv4.log\nv4m-ask.html\nv4m-ask.png\nv4m-cx.html\nv4m-cx.png\nv4m-p.html\nv4m-p.png\nv5-1.png\nv5-2.png\nv5-dark.html\nv5-dark.png\nv5.log\nv5m-ask.html\nv5m-ask.png\nv5m-g0.html\nv5m-g0.png\nv5m-g2.html\nv5m-g2.png\nv5m-p.html\nv5m-p.png\nv6-1.png\nv6-2.png\nv6-dark-1.png\nv6-dark.html\nv6.log\nv6m-ask.html\nv6m-ask.png\nv6m-no.dom.html\nv6m-no.html\nv6m-no.png\nv6m-p.html\nv6m-p.png\nv6m-yes.dom.html\nv6m-yes.html\nv6m-yes.png\nv7.log\nvd1.log\nvd2.log\nvd3.log\nvd4.log\nverify-dump-t3.txt\nverify-index.orig\nverify-runtime.orig\nverify-t3.txt\nverify.log\nverify2.log\nverify3.log\nvf.png\nvf2.png\nvibecraft-squad\nvoice-report.txt\nvp1.log\nvp2.log\nvp3.log\nvp4.log\nvp5.log\nvp6.log\nvp7.log\nw.log\nwb-ext-debug.log\nwb-home.html\nwb-strays\nwb2-harness\nwb2-idx\nwb2-partner-preview\nwb2-preview\nwb2-untracked-bak\nwb2api-login-state-global.json\nwb2api-new\nwb2api-price-index\nwb2api-strays\nwb2test\nwbai.html\nweekly-test\nwheels\nwork-mode-block.js\nworkbuddy-sandbox-center-52473cb9a8dde075.lock\nworkbuddy-sandbox-center-52473cb9a8dde075.sock\nworkbuddy-sandbox-center-cc2c2246c14b8ae6.lock\nwrap.html\nwrap.js\nwrap2.html\nwrap3.html\nwrap4.html\nwrites.txt\nwz1\nwz2\nx1.html\nx1.log\nx2.log\ny1.log\ny2.log\nz.txt\nz1.log\nz2.log\nzett.txt"
+}

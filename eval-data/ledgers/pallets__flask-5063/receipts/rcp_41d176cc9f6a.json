@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_41d176cc9f6a",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_d449dc704c36",
+  "proposal_id": "prop_e0ab5357a2b6",
+  "admission_id": "adm_7c726b42ddb8",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:34.715898+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -n \"def routes_command\\|headers = (\\|_get_domain\\|get_domain\" /tmp/swebench-eval/pallets__flask-4045/repo/src/flask/cli.py 2>/dev/null; sed -n '988,1040p' /tmp/swebench-eval/pallets__flask-4045/repo/src/flask/cli.py 2>/dev/null",
+  "exit_code": 0,
+  "output_tail": "925:def routes_command(sort: str, all_methods: bool) -> None:\n945:    headers = (\"Endpoint\", \"Methods\", \"Rule\")\n        )\n    # TODO omit sys.argv once https://github.com/pallets/click/issues/536 is fixed\n    cli.main(args=sys.argv[1:])\n\n\nif __name__ == \"__main__\":\n    main()"
+}

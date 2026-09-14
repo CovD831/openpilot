@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9baad7398379",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_edd846554984",
+  "proposal_id": "prop_87087d8e4c6a",
+  "admission_id": "adm_abd31f050d15",
+  "path": "/private/tmp/swebench-eval/django__django-15996/repo/django/db/migrations/serializer.py",
+  "hash_before": "3334ef21089f33d2557d57107a4dc034e0812022227fb70f5a3c74df86245be4",
+  "hash_after": "dbecfcfcf47c61dd9729a58afabb38f6894e1acde2538af8a4b4e23e68f5d96d",
+  "created_at": "2026-09-14T02:28:10.849684+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

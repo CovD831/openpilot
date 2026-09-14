@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_73151f17fbcd",
+  "run_id": "run_c077040623e9483aa8ef65f07c0b5cb6",
+  "consent_id": "con_5a1ea3e48179",
+  "proposal_id": "prop_97577cd4c559",
+  "admission_id": "adm_75cb28b9c751",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:41:28.240110+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/django__django-16527/repo && grep -n \"class ArticleAdmin\" -A25 tests/admin_views/admin.py | head -40",
+  "exit_code": 0,
+  "output_tail": "187:class ArticleAdminWithExtraUrl(admin.ModelAdmin):\n188-    def get_urls(self):\n189-        urlpatterns = super().get_urls()\n190-        urlpatterns.append(\n191-            path(\n192-                \"extra.json\",\n193-                self.admin_site.admin_view(self.extra_json),\n194-                name=\"article_extra_json\",\n195-            )\n196-        )\n197-        return urlpatterns\n198-\n199-    def extra_json(self, request):\n200-        return JsonResponse({})\n201-\n202-\n203:class ArticleAdmin(ArticleAdminWithExtraUrl):\n204-    list_display = (\n205-        \"content\",\n206-        \"date\",\n207-        callable_year,\n208-        \"model_year\",\n209-        \"modeladmin_year\",\n210-        \"model_year_reversed\",\n211-        \"section\",\n212-        lambda obj: obj.title,\n213-        \"order_by_expression\",\n214-        \"model_property_year\",\n215-        \"model_month\",\n216-        \"order_by_f_expression\",\n217-        \"order_by_orderby_expression\",\n218-    )\n219-    list_editable = (\"section\",)\n220-    list_filter = (\"date\", \"section\")\n221-    autocomplete_fields = (\"section\",)\n222-    view_on_site = False\n223-    form = ArticleForm\n224-    fieldsets = (\n225-        (\n226-            \"Some fields\","
+}

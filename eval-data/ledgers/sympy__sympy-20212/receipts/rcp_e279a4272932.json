@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_e279a4272932",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_5dd221c1d8a6",
+  "proposal_id": "prop_6262aacb7952",
+  "admission_id": "adm_76b8cd2a268c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:34:12.904896+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-20212/repo:/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages /Users/abab/.workbuddy/binaries/python/envs/default/bin/python -c \"\nfrom sympy import S, oo, zoo, I, nan, Symbol\nprint('S(0)**-2', S(0)**-2)\nprint('S(0)**2', S(0)**2)\nprint('S(0)**oo', S(0)**oo)\nprint('S(0)**-oo', S(0)**-oo)\n\"",
+  "exit_code": 0,
+  "output_tail": "S(0)**-2 zoo\nS(0)**2 0\nS(0)**oo 0\nS(0)**-oo 0"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_bab9227ab2b1",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_756b9b5c7534",
+  "proposal_id": "prop_2a75aa11ca04",
+  "admission_id": "adm_6184bfc056dc",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:41:50.649942+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && /tmp/swebench-eval/django__django-14608/venv/bin/python -c \"\nfrom django import forms\nfrom django.forms.formsets import BaseFormSet, formset_factory\nclass F(forms.Form):\n    name = forms.CharField()\nclass B(BaseFormSet):\n    def clean(self):\n        raise forms.ValidationError('This is a non-form error')\nFS = formset_factory(F, formset=B)\ndata = {'form-TOTAL_FORMS':'1','form-INITIAL_FORMS':'0','form-0-name':'x'}\nfs = FS(data)\nprint(fs.is_valid())\nprint(fs.non_form_errors().error_class)\nprint(fs.non_form_errors().as_ul())\n\"",
+  "exit_code": 1,
+  "output_tail": "File \"/private/tmp/swebench-eval/django__django-14608/repo/django/forms/formsets.py\", line 342, in full_clean\n    if not self.management_form.is_valid():\n           ^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/utils/functional.py\", line 48, in __get__\n    res = instance.__dict__[self.name] = self.func(instance)\n                                         ~~~~~~~~~^^^^^^^^^^\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/forms/formsets.py\", line 112, in management_form\n    form = ManagementForm(self.data, auto_id=self.auto_id, prefix=self.prefix)\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/forms/formsets.py\", line 42, in __init__\n    super().__init__(*args, **kwargs)\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/forms/forms.py\", line 76, in __init__\n    self.label_suffix = label_suffix if label_suffix is not None else _(':')\n                                                                      ~^^^^^\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/utils/translation/__init__.py\", line 74, in gettext\n    return _trans.gettext(message)\n           ^^^^^^^^^^^^^^\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/utils/translation/__init__.py\", line 50, in __getattr__\n    if settings.USE_I18N:\n       ^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/conf/__init__.py\", line 69, in __getattr__\n    self._setup(name)\n    ~~~~~~~~~~~^^^^^^\n  File \"/private/tmp/swebench-eval/django__django-14608/repo/django/conf/__init__.py\", line 50, in _setup\n    raise ImproperlyConfigured(\n    ...<3 lines>...\n        % (desc, ENVIRONMENT_VARIABLE))\ndjango.core.exceptions.ImproperlyConfigured: Requested setting USE_I18N, but settings are not configured. You must either define the environment variable DJANGO_SETTINGS_MODULE or call settings.configure() before accessing settings."
+}

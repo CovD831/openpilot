@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_abd7b8f8f234",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_f7deb72918de",
+  "proposal_id": "prop_040fcbabcf8c",
+  "admission_id": "adm_15bd13ca484f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:29:04.537199+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && git diff -- django/forms/formsets.py tests/forms_tests/tests/test_formsets.py",
+  "exit_code": 0,
+  "output_tail": "diff --git a/django/forms/formsets.py b/django/forms/formsets.py\nindex 3adbc69..18c70bc 100644\n--- a/django/forms/formsets.py\n+++ b/django/forms/formsets.py\n@@ -31,6 +31,7 @@ class ManagementForm(Form):\n     new forms via JavaScript, you should increment the count field of this form\n     as well.\n     \"\"\"\n+    template_name = \"django/forms/div.html\"\n \n     TOTAL_FORMS = IntegerField(widget=HiddenInput)\n     INITIAL_FORMS = IntegerField(widget=HiddenInput)\ndiff --git a/tests/forms_tests/tests/test_formsets.py b/tests/forms_tests/tests/test_formsets.py\nindex 96a2189..2ab6479 100644\n--- a/tests/forms_tests/tests/test_formsets.py\n+++ b/tests/forms_tests/tests/test_formsets.py\n@@ -1,7 +1,7 @@\n import datetime\n+import warnings\n from collections import Counter\n from unittest import mock\n-\n from django.core.exceptions import ValidationError\n from django.forms import (\n     BaseForm,\n@@ -1910,3 +1910,14 @@ class DeprecationTests(SimpleTestCase):\n             ChoiceFormSet = formset_factory(Choice)\n             formset = ChoiceFormSet()\n             str(formset)\n+\n+    def test_no_warning_for_management_form(self):\n+        with isolate_lru_cache(get_default_renderer), self.settings(\n+            FORM_RENDERER=\"django.forms.renderers.DjangoTemplates\"\n+        ):\n+            ChoiceFormSet = formset_factory(Choice)\n+            formset = ChoiceFormSet()\n+            with warnings.catch_warnings(record=True) as w:\n+                warnings.simplefilter(\"always\")\n+                str(formset.management_form)\n+            self.assertEqual(len(w), 0)"
+}

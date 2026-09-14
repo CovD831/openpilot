@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_137553420a07",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_7e358b1c9c7c",
+  "proposal_id": "prop_3ff126d0e836",
+  "admission_id": "adm_976449c2c94c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:18.932590+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && ls tests | head -30; find . -maxdepth 2 -name 'runtests.py' -o -name 'test_sqlite.py' -o -name 'settings.py' | head",
+  "exit_code": 0,
+  "output_tail": "README.rst\nabsolute_url_overrides\nadmin_autodiscover\nadmin_changelist\nadmin_checks\nadmin_custom_urls\nadmin_default_site\nadmin_docs\nadmin_filters\nadmin_inlines\nadmin_ordering\nadmin_registration\nadmin_scripts\nadmin_utils\nadmin_views\nadmin_widgets\naggregation\naggregation_regress\nannotations\napp_loading\napps\nasgi\nasync\nasync_queryset\nauth_tests\nbackends\nbase\nbash_completion\nbasic\nbuiltin_server\n./tests/runtests.py\n./tests/test_sqlite.py"
+}

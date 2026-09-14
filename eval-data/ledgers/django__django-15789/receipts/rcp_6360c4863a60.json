@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6360c4863a60",
+  "run_id": "run_7e683e38d51d4ad78ed186cbde2d5504",
+  "consent_id": "con_8e4a8855395e",
+  "proposal_id": "prop_573feac54c64",
+  "admission_id": "adm_fab176076d52",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:37:26.119532+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15789/repo && /tmp/swebench-eval/django__django-15789/venv/bin/python -m pytest tests/utils_tests/test_html.py::TestUtilsHtml::test_json_script -q -x",
+  "exit_code": 1,
+  "output_tail": "[test output: 56 of 61 lines dropped — failures and summaries kept]\n==================================== ERRORS ====================================\n_______________ ERROR at setup of TestUtilsHtml.test_json_script _______________\n=========================== short test summary info ============================\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_json_script - djang...\n1 error in 0.29s"
+}

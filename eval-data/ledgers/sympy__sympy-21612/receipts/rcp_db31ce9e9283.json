@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_db31ce9e9283",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_459783af78f1",
+  "proposal_id": "prop_11278d14b44f",
+  "admission_id": "adm_53c1f3762556",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:48:57.678975+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -n \"isinstance(item.base\" /opt/anaconda3/lib/python3.13/site-packages/sympy/printing/str.py /opt/anaconda3/lib/python3.13/site-packages/sympy/printing/codeprinter.py /opt/anaconda3/lib/python3.13/site-packages/sympy/printing/julia.py /opt/anaconda3/lib/python3.13/site-packages/sympy/printing/octave.py",
+  "exit_code": 0,
+  "output_tail": "/opt/anaconda3/lib/python3.13/site-packages/sympy/printing/str.py:351:                            isinstance(item.base, (Mul, Pow))):\n/opt/anaconda3/lib/python3.13/site-packages/sympy/printing/codeprinter.py:578:                    if len(item.args[0].args) != 1 and isinstance(item.base, Mul):   # To avoid situations like #14160\n/opt/anaconda3/lib/python3.13/site-packages/sympy/printing/julia.py:151:                    if len(item.args[0].args) != 1 and isinstance(item.base, Mul):   # To avoid situations like #14160\n/opt/anaconda3/lib/python3.13/site-packages/sympy/printing/octave.py:169:                    if len(item.args[0].args) != 1 and isinstance(item.base, Mul):   # To avoid situations like #14160"
+}

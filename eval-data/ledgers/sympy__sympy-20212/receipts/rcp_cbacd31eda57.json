@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_cbacd31eda57",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_75a6c8517ebf",
+  "proposal_id": "prop_20041dfd5056",
+  "admission_id": "adm_7f3fff3e3762",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:35:28.738562+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-20212/repo:/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages /Users/abab/.workbuddy/binaries/python/envs/default/bin/python -c \"\nfrom sympy import Float, S\nprint('Float(0)**2', Float(0)**2, 'is S.Zero', Float(0)**2 is S.Zero)\nprint('Float(0)**-2', Float(0)**-2)\nprint('Float(0)**oo', Float(0)**oo)\n\"",
+  "exit_code": 1,
+  "output_tail": "Float(0)**2 0 is S.Zero True\nFloat(0)**-2 oo\n\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 5, in <module>\n    print('Float(0)**oo', Float(0)**oo)\n                                    ^^\nNameError: name 'oo' is not defined"
+}

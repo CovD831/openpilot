@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_ac072f91beee",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_e99cccf4393d",
+  "proposal_id": "prop_084d324e0ab5",
+  "admission_id": "adm_f7fd8c4b0b28",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:34:18.768936+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "/Users/abab/.workbuddy/binaries/python/envs/default/bin/python - <<'PY'\nimport inspect, sympy.core.numbers as n\nsrc = inspect.getsource(n.Zero._eval_power)\nprint(src)\nPY",
+  "exit_code": 0,
+  "output_tail": "def _eval_power(self, expt):\n        if expt.is_extended_positive:\n            return self\n        if expt.is_extended_negative:\n            return S.ComplexInfinity\n        if expt.is_extended_real is False:\n            return S.NaN\n        if expt.is_zero:\n            return S.One\n\n        # infinities are already handled with pos and neg\n        # tests above; now throw away leading numbers on Mul\n        # exponent since 0**-x = zoo**x even when x == 0\n        coeff, terms = expt.as_coeff_Mul()\n        if coeff.is_negative:\n            return S.ComplexInfinity**terms\n        if coeff is not S.One:  # there is a Number to discard\n            return self**terms"
+}

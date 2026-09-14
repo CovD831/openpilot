@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9cb61c3561ee",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_51b8624e367d",
+  "proposal_id": "prop_8d657c47c1be",
+  "admission_id": "adm_2def0c5dc75c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:33:50.640097+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "/Users/abab/.workbuddy/binaries/python/envs/default/bin/python -c \"import sympy; print(sympy.__version__)\" 2>&1; ls /Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages | grep -i sympy",
+  "exit_code": 0,
+  "output_tail": "1.14.0\nisympy.py\nsympy\nsympy-1.14.0.dist-info"
+}

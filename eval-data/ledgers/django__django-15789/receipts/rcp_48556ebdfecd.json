@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_48556ebdfecd",
+  "run_id": "run_7e683e38d51d4ad78ed186cbde2d5504",
+  "consent_id": "con_b5339ed13911",
+  "proposal_id": "prop_8c158c8ded67",
+  "admission_id": "adm_bccefb9f3108",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:37:31.069520+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cat /tmp/testout.txt",
+  "exit_code": 0,
+  "output_tail": "ls.ConnectionHandler object at 0x10a94fa10>\nsettings = None\n\n    def configure_settings(self, settings):\n        if settings is None:\n>           settings = getattr(django_settings, self.settings_name)\n\ndjango/utils/connection.py:50: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <LazySettings [Unevaluated]>, name = 'DATABASES'\n\n    def __getattr__(self, name):\n        \"\"\"Return the value of a setting and cache it in self.__dict__.\"\"\"\n        if (_wrapped := self._wrapped) is empty:\n>           self._setup(name)\n\ndjango/conf/__init__.py:92: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <LazySettings [Unevaluated]>, name = 'DATABASES'\n\n    def _setup(self, name=None):\n        \"\"\"\n        Load the settings module pointed to by the environment variable. This\n        is used the first time settings are needed, if the user hasn't\n        configured settings manually.\n        \"\"\"\n        settings_module = os.environ.get(ENVIRONMENT_VARIABLE)\n        if not settings_module:\n            desc = (\"setting %s\" % name) if name else \"settings\"\n>           raise ImproperlyConfigured(\n                \"Requested %s, but settings are not configured. \"\n                \"You must either define the environment variable %s \"\n                \"or call settings.configure() before accessing settings.\"\n                % (desc, ENVIRONMENT_VARIABLE)\n            )\nE           django.core.exceptions.ImproperlyConfigured: Requested setting DATABASES, but settings are not configured. You must either define the environment variable DJANGO_SETTINGS_MODULE or call settings.configure() before accessing settings.\n\ndjango/conf/__init__.py:72: ImproperlyConfigured\n=========================== short test summary info ============================\nERROR tests/utils_tests/test_html.py::TestUtilsHtml::test_json_script - djang...\n!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!\n1 error in 0.27s"
+}

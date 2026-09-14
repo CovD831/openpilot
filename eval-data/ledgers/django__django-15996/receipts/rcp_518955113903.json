@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_518955113903",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_e6c32d5ae9d0",
+  "proposal_id": "prop_39c526931230",
+  "admission_id": "adm_99ce6b2d088e",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:25:00.174635+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport enum\nclass F(enum.Flag):\n    A=1\n    B=2\n    AB=3\nv = F.A | F.B\nprint('v', v, v.name)\nfor m in F:\n    print(m, m.name, m.value, 'm in v', m in v, 'v&m==m', (v & m) == m)\nPY",
+  "exit_code": 0,
+  "output_tail": "v F.AB AB\nF.A A 1 m in v True v&m==m True\nF.B B 2 m in v True v&m==m True"
+}

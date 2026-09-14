@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_dfb293648944",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_4aaf60fba3d6",
+  "proposal_id": "prop_fc91d5db0f1c",
+  "admission_id": "adm_59f80eb78f73",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:41:46.969910+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && /tmp/swebench-eval/django__django-14608/venv/bin/python -c \"from django.forms.formsets import formset_factory; print('import ok')\" 2>&1 | tail -20",
+  "exit_code": 0,
+  "output_tail": "import ok"
+}

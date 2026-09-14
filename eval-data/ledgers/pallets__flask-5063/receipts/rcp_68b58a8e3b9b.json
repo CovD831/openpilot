@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_68b58a8e3b9b",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_2babb7a0e790",
+  "proposal_id": "prop_2c86efbd6e19",
+  "admission_id": "adm_7f90519be002",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:44:41.326179+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && git log --oneline --all | head && grep -n \"routes\" CHANGES.rst | head -20 && grep -n \"Domain\" CHANGES.rst | head",
+  "exit_code": 0,
+  "output_tail": "073b511 base\n635:-   Fix error with ``flask routes`` command when there are no routes.\n693:-   Add ``routes`` CLI command to output routes registered on the"
+}

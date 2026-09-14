@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_768bcd06c418",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_037e99a53194",
+  "proposal_id": "prop_45404f986b4b",
+  "admission_id": "adm_9c25dd1887fd",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:30:40.427281+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && grep -Rni \"enum.*flag\\|flag.*enum\\|RegexFlag\" docs django tests --include='*.py' --include='*.txt' --include='*.rst' | head -50",
+  "exit_code": 0,
+  "output_tail": "django/db/migrations/serializer.py:129:            issubclass(enum_class, enum.Flag)\ntests/migrations/test_writer.py:83:class IntFlagEnum(enum.IntFlag):\ntests/migrations/test_writer.py:390:    def test_serialize_enum_flags(self):\ntests/migrations/test_writer.py:392:            IntFlagEnum.A,\ntests/migrations/test_writer.py:394:                \"migrations.test_writer.IntFlagEnum['A']\",\ntests/migrations/test_writer.py:399:            IntFlagEnum.B,\ntests/migrations/test_writer.py:401:                \"migrations.test_writer.IntFlagEnum['B']\",\ntests/migrations/test_writer.py:406:            default=IntFlagEnum.A, choices=[(m.value, m) for m in IntFlagEnum]\ntests/migrations/test_writer.py:412:            \"(1, migrations.test_writer.IntFlagEnum['A']), \"\ntests/migrations/test_writer.py:413:            \"(2, migrations.test_writer.IntFlagEnum['B'])], \"\ntests/migrations/test_writer.py:414:            \"default=migrations.test_writer.IntFlagEnum['A'])\",\ntests/migrations/test_writer.py:417:            IntFlagEnum.A | IntFlagEnum.B,\ntests/migrations/test_writer.py:419:                \"migrations.test_writer.IntFlagEnum['A'] | \"\ntests/migrations/test_writer.py:420:                \"migrations.test_writer.IntFlagEnum['B']\",\ntests/migrations/test_writer.py:672:            \"flags=re.RegexFlag['DOTALL'])\","
+}

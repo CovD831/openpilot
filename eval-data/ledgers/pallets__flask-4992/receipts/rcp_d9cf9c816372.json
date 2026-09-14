@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_d9cf9c816372",
+  "run_id": "run_be1d49b636634dd3808f3940bc9c5f45",
+  "consent_id": "con_faf694572a32",
+  "proposal_id": "prop_86c71c5b8cad",
+  "admission_id": "adm_98f5494280b2",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:26:35.308540+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/pallets__flask-4992/repo && PYTHONPATH=src python -c \"import flask, inspect; print(flask.__file__); print(inspect.signature(flask.Config.from_file))\"",
+  "exit_code": 1,
+  "output_tail": "[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import flask, inspect; print(flask.__file__); print(inspect.signature(flask.Config.from_file))\n    ^^^^^^^^^^^^^^^^^^^^^\n  File \"/private/tmp/swebench-eval/pallets__flask-4992/repo/src/flask/__init__.py\", line 1, in <module>\n    from . import json as json\n  File \"/private/tmp/swebench-eval/pallets__flask-4992/repo/src/flask/json/__init__.py\", line 6, in <module>\n    from ..globals import current_app\n  File \"/private/tmp/swebench-eval/pallets__flask-4992/repo/src/flask/globals.py\", line 4, in <module>\n    from werkzeug.local import LocalProxy\nModuleNotFoundError: No module named 'werkzeug'"
+}

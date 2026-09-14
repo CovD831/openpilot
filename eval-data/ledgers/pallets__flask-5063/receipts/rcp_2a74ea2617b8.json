@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_2a74ea2617b8",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_9468e35fca93",
+  "proposal_id": "prop_694824eb1c50",
+  "admission_id": "adm_1ac27bbd4250",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:50:16.410094+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls -la /tmp | grep flask; echo ---; find /tmp -maxdepth 2 -iname '*5063*' 2>/dev/null | head; echo ---; find /tmp -maxdepth 2 -iname '*4992*' 2>/dev/null | head",
+  "exit_code": 0,
+  "output_tail": "---\n---"
+}

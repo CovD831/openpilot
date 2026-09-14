@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_86f818dadb23",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_9bd7f343d465",
+  "proposal_id": "prop_c1b949fc640d",
+  "admission_id": "adm_b6d72fa9170f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:26:06.200769+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls -la /tmp/swebench-eval/django__django-15996/; find /tmp/swebench-eval/django__django-15996 -maxdepth 2 -type f -not -path '*/repo/*' -not -path '*/venv/*' 2>/dev/null | head -50",
+  "exit_code": 0,
+  "output_tail": "total 19464\ndrwxr-xr-x@  5 abab  wheel      160 Sep 14 10:23 .\ndrwxr-xr-x@ 14 abab  wheel      448 Sep 14 09:53 ..\ndrwxr-xr-x@ 33 abab  wheel     1056 Sep 14 10:24 repo\n-rw-r--r--@  1 abab  wheel  9965348 Sep 14 09:50 src.tar.gz\ndrwxr-xr-x@  7 abab  wheel      224 Sep 14 09:50 venv\n/tmp/swebench-eval/django__django-15996/src.tar.gz"
+}

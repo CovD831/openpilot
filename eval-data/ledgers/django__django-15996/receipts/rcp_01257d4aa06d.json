@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_01257d4aa06d",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_0dd869b88749",
+  "proposal_id": "prop_13769826192b",
+  "admission_id": "adm_2e7a538b3526",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:33:16.275543+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo/tests && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport django\nfrom django.conf import settings\nif not settings.configured:\n    settings.configure(INSTALLED_APPS=[], DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3'}}, SECRET_KEY='x')\ndjango.setup()\nfrom django.db import models\nfrom django.db.migrations.writer import MigrationWriter\nfrom migrations.test_writer import IntFlagEnum\nfield = models.IntegerField(default=IntFlagEnum.A | IntFlagEnum.B, choices=[(m.value, m) for m in IntFlagEnum])\nprint(MigrationWriter.serialize(field)[0])\nPY",
+  "exit_code": 1,
+  "output_tail": "[stderr]\nTraceback (most recent call last):\n  File \"<stdin>\", line 8, in <module>\n  File \"/private/tmp/swebench-eval/django__django-15996/repo/tests/migrations/test_writer.py\", line 39, in <module>\n    from .models import FoodManager, FoodQuerySet\n  File \"/private/tmp/swebench-eval/django__django-15996/repo/tests/migrations/models.py\", line 9, in <module>\n    class ModelWithCustomBase(models.Model, metaclass=CustomModelBase):\n        pass\n  File \"/private/tmp/swebench-eval/django__django-15996/repo/django/db/models/base.py\", line 132, in __new__\n    raise RuntimeError(\n    ...<3 lines>...\n    )\nRuntimeError: Model class migrations.models.ModelWithCustomBase doesn't declare an explicit app_label and isn't in an application in INSTALLED_APPS."
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_3ff4389687c2",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_70f1037272d5",
+  "proposal_id": "prop_f10aa7266057",
+  "admission_id": "adm_f4ae1aafed7f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:49:45.749023+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "file /Users/abab/Library/Caches/pip/http-v2/9/8/5/f/2/985f29fdb9c7e085b571080d779ac1ee5e46e8169cf19496bab440dc.body; head -c 300 /Users/abab/Library/Caches/pip/http-v2/9/8/5/f/2/985f29fdb9c7e085b571080d779ac1ee5e46e8169cf19496bab440dc.body; echo; file /Users/abab/Library/Caches/pip/http-v2/2/c/2/2/f/2c22f62f5c030605945f708dc42a53dc174af63b8486463f83009994.body; head -c 300 /Users/abab/Library/Caches/pip/http-v2/2/c/2/2/f/2c22f62f5c030605945f708dc42a53dc174af63b8486463f83009994.body",
+  "exit_code": 0,
+  "output_tail": "/Users/abab/Library/Caches/pip/http-v2/9/8/5/f/2/985f29fdb9c7e085b571080d779ac1ee5e46e8169cf19496bab440dc.body: Python script text executable, ASCII text\nMetadata-Version: 2.1\nName: Werkzeug\nVersion: 2.3.8\nSummary: The comprehensive WSGI web application library.\nMaintainer-email: Pallets <contact@palletsprojects.com>\nRequires-Python: >=3.8\nDescription-Content-Type: text/x-rst\nClassifier: Development Status :: 5 - Production/Stable\nClassifier: Environ\n/Users/abab/Library/Caches/pip/http-v2/2/c/2/2/f/2c22f62f5c030605945f708dc42a53dc174af63b8486463f83009994.body: Python script text executable, ASCII text\nMetadata-Version: 2.4\nName: Werkzeug\nVersion: 3.1.8\nSummary: The comprehensive WSGI web application library.\nMaintainer-email: Pallets <contact@palletsprojects.com>\nRequires-Python: >=3.9\nDescription-Content-Type: text/markdown\nLicense-Expression: BSD-3-Clause\nClassifier: Development Status :: 5 - P"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b83da11c7985",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_1d17cc964f68",
+  "proposal_id": "prop_3e290bfaee07",
+  "admission_id": "adm_d5db811d23c5",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:41:53.892771+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && /tmp/swebench-eval/django__django-14608/venv/bin/python -c \"\nfrom django.conf import settings\nsettings.configure(USE_I18N=False)\nfrom django import forms\nfrom django.forms.formsets import BaseFormSet, formset_factory\nclass F(forms.Form):\n    name = forms.CharField()\nclass B(BaseFormSet):\n    def clean(self):\n        raise forms.ValidationError('This is a non-form error')\nFS = formset_factory(F, formset=B)\ndata = {'form-TOTAL_FORMS':'1','form-INITIAL_FORMS':'0','form-0-name':'x'}\nfs = FS(data)\nprint(fs.is_valid())\nprint(fs.non_form_errors().error_class)\nprint(fs.non_form_errors().as_ul())\nfs2 = FS({})\nprint(fs2.is_valid())\nprint(fs2.non_form_errors().error_class)\nprint(fs2.non_form_errors().as_ul())\n\"",
+  "exit_code": 0,
+  "output_tail": "False\nerrorlist nonform\n<ul class=\"errorlist nonform\"><li>This is a non-form error</li></ul>\nFalse\nerrorlist nonform\n<ul class=\"errorlist nonform\"><li>This is a non-form error</li></ul>"
+}

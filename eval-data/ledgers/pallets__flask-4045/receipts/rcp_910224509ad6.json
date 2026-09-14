@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_910224509ad6",
+  "run_id": "run_781e11346d824e928a83533a97b73994",
+  "consent_id": "con_109f84189400",
+  "proposal_id": "prop_3cc0ab092aa8",
+  "admission_id": "adm_3ec1348e246c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:27:19.411754+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-4045/repo && grep -rn \"myapp.frontend\\|dotted\" docs src tests | head -40",
+  "exit_code": 0,
+  "output_tail": "docs/cli.rst:59:directory, a Python file or dotted import path, and an optional variable\ntests/test_blueprints.py:256:def test_dotted_names(app, client):\ntests/test_blueprints.py:257:    frontend = flask.Blueprint(\"myapp.frontend\", __name__)\ntests/test_blueprints.py:270:        return flask.url_for(\"myapp.frontend.frontend_index\")\ntests/test_blueprints.py:280:def test_dotted_names_from_app(app, client):\ntests/test_cli.py:169:        # dotted name"
+}

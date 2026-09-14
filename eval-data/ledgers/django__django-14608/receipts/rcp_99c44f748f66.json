@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_99c44f748f66",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_cde95f46dd8a",
+  "proposal_id": "prop_ab27a6763a9f",
+  "admission_id": "adm_c3b324274f18",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:43:32.043399+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && grep -n \"render\\|non_form_errors\\|errorlist\" docs/topics/forms/formsets.txt | head -40",
+  "exit_code": 0,
+  "output_tail": "41:Iterating over a formset will render the forms in the order they were\n152:    >>> formset.non_form_errors()\n258:itself. When rendering a formset in a template, you can include all\n259:the management data by rendering ``{{ my_formset.management_form }}``\n310:    >>> formset.non_form_errors()\n318:    >>> formset.non_form_errors()\n361:    >>> formset.non_form_errors()\n365:have been called. The errors will be found using the ``non_form_errors()``\n401:    >>> formset.non_form_errors()\n441:    >>> formset.non_form_errors()\n700:In the rendered HTML, formsets include a prefix on each field's name. By\n729:    from django.shortcuts import render\n741:        return render(request, 'manage_articles.html', {'formset': formset})\n769:.. _manually-rendered-can-delete-and-can-order:\n771:Manually rendered ``can_delete`` and ``can_order``\n774:If you manually render fields in the template, you can render\n794:possible to render it with ``{{ form.ORDER }}``.\n808:    from django.shortcuts import render\n823:        return render(request, 'manage_articles.html', {\n828:You would then render the formsets as normal. It is important to point out\n830:it is rendered and processed correctly."
+}

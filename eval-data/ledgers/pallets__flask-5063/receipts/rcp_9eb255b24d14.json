@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9eb255b24d14",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_6726c0d20f28",
+  "proposal_id": "prop_35e315fd81e1",
+  "admission_id": "adm_fc0f116d269d",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:53:10.561098+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls -la /tmp/swebench_lite.json 2>/dev/null && python3 -c \"import json; d=json.load(open('/tmp/swebench_lite.json')); print(len(d) if isinstance(d,list) else list(d)[:5]); print([r.get('instance_id') for r in (d if isinstance(d,list) else []) if 'flask-5063' in r.get('instance_id','')])\"",
+  "exit_code": 0,
+  "output_tail": "-rw-r--r--@ 1 abab  wheel  3690605 Sep 13 20:26 /tmp/swebench_lite.json\n300\n['pallets__flask-5063']"
+}

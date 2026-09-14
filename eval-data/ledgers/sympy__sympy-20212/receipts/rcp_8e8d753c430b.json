@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_8e8d753c430b",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_4a96a290a885",
+  "proposal_id": "prop_7cf16b2b2762",
+  "admission_id": "adm_f4fb34503ff0",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:30:11.565538+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "python -c \"import sympy; print(sympy.__version__); print(sympy.Pow(0, -sympy.oo)); print(sympy.Pow(0, -sympy.oo) == sympy.zoo)\"",
+  "exit_code": 1,
+  "output_tail": "[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import sympy; print(sympy.__version__); print(sympy.Pow(0, -sympy.oo)); print(sympy.Pow(0, -sympy.oo) == sympy.zoo)\n    ^^^^^^^^^^^^\nModuleNotFoundError: No module named 'sympy'"
+}

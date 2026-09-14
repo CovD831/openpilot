@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6ecf793152bb",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_d1f423c6e0f1",
+  "proposal_id": "prop_f3dc2894c9e9",
+  "admission_id": "adm_cd3ac6c003d5",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:33:19.114376+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport enum\nfrom django.db import models\nfrom django.db.migrations.writer import MigrationWriter\nclass IntFlagEnum(enum.IntFlag):\n    A = 1\n    B = 2\nfield = models.IntegerField(default=IntFlagEnum.A | IntFlagEnum.B, choices=[(m.value, m) for m in IntFlagEnum])\nprint(MigrationWriter.serialize(field)[0])\nPY",
+  "exit_code": 0,
+  "output_tail": "models.IntegerField(choices=[(1, __main__.IntFlagEnum['A']), (2, __main__.IntFlagEnum['B'])], default=__main__.IntFlagEnum['A'] | __main__.IntFlagEnum['B'])"
+}

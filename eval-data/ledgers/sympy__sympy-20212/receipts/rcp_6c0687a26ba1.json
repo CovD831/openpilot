@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6c0687a26ba1",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_31b8eece902e",
+  "proposal_id": "prop_23f3b1271540",
+  "admission_id": "adm_5915f24e0fd7",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:34:28.370234+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "/Users/abab/.workbuddy/binaries/python/envs/default/bin/python - <<'PY'\nimport inspect\nimport sympy.core.tests.test_power as tp\nsrc = inspect.getsource(tp.test_zero)\nprint(src)\nPY",
+  "exit_code": 0,
+  "output_tail": "def test_zero():\n    assert 0**x != 0\n    assert 0**(2*x) == 0**x\n    assert 0**(1.0*x) == 0**x\n    assert 0**(2.0*x) == 0**x\n    assert (0**(2 - x)).as_base_exp() == (0, 2 - x)\n    assert 0**(x - 2) != S.Infinity**(2 - x)\n    assert 0**(2*x*y) == 0**(x*y)\n    assert 0**(-2*x*y) == S.ComplexInfinity**(x*y)\n    assert Float(0)**2 is not S.Zero\n    assert Float(0)**2 == 0.0\n    assert Float(0)**-2 is zoo\n    assert Float(0)**oo is S.Zero\n\n    #Test issue 19572\n    assert 0 ** -oo is zoo\n    assert power(0, -oo) is zoo\n    assert Float(0)**-oo is zoo"
+}

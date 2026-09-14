@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_472378e1f518",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_fdbed14bf701",
+  "proposal_id": "prop_20d5c9895b37",
+  "admission_id": "adm_e69c94f4fe2c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:46:18.372847+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21612/repo && /opt/anaconda3/bin/python3 -c \"\nfrom sympy.parsing.latex import parse_latex\ne = parse_latex(r'\\frac{\\frac{a^3+b}{c}}{\\frac{1}{c^2}}')\nprint(repr(e))\nprint(e)\nfrom sympy import srepr\nprint(srepr(e))\n\"",
+  "exit_code": 0,
+  "output_tail": "ANTLR runtime and generated code versions disagree: 4.9.3!=4.7.2\nANTLR runtime and generated code versions disagree: 4.9.3!=4.7.2\n((a**3 + b)/c)/1/(c**2)\n((a**3 + b)/c)/1/(c**2)\nMul(Mul(Pow(Symbol('c'), Integer(-1)), Add(Pow(Symbol('a'), Integer(3)), Symbol('b'))), Pow(Pow(Pow(Symbol('c'), Integer(2)), Integer(-1)), Integer(-1)))\n\n[stderr]\n/private/tmp/swebench-eval/sympy__sympy-21612/repo/sympy/external/importtools.py:158: DeprecationWarning: distutils Version classes are deprecated. Use packaging.version instead.\n  if LooseVersion(modversion) < LooseVersion(min_module_version):\n/private/tmp/swebench-eval/sympy__sympy-21612/repo/sympy/physics/quantum/matrixutils.py:43: DeprecationWarning: Please import `spmatrix` from the `scipy.sparse` namespace; the `scipy.sparse.base` namespace is deprecated and will be removed in SciPy 2.0.0.\n  scipy_sparse_matrix = sparse.base.spmatrix  # type: ignore"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_9b8ab5a9e757",
+  "run_id": "run_2080371e91e34595989fd25059c84b13",
+  "consent_id": "con_1c4bf868d3f1",
+  "proposal_id": "prop_88a414cd50e6",
+  "admission_id": "adm_1df3bb6c1698",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:43:52.467179+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-14608/repo && /tmp/swebench-eval/django__django-14608/venv/bin/python - <<'PY'\nfrom django.conf import settings\nsettings.configure(USE_I18N=False, SECRET_KEY='x')\nfrom django import forms\nfrom django.forms.formsets import BaseFormSet, formset_factory\n\nclass FavoriteDrinkForm(forms.Form):\n    name = forms.CharField()\n\nclass BaseFavoriteDrinksFormSet(BaseFormSet):\n    def clean(self):\n        seen = []\n        for drink in self.cleaned_data:\n            if drink['name'] in seen:\n                raise forms.ValidationError('You may only specify a drink once.')\n            seen.append(drink['name'])\n\nFavoriteDrinksFormSet = formset_factory(FavoriteDrinkForm, formset=BaseFavoriteDrinksFormSet, extra=3)\ndata = {\n    'drinks-TOTAL_FORMS': '2', 'drinks-INITIAL_FORMS': '0',\n    'drinks-MIN_NUM_FORMS': '0', 'drinks-MAX_NUM_FORMS': '0',\n    'drinks-0-name': 'Gin and Tonic', 'drinks-1-name': 'Gin and Tonic',\n}\nfs = FavoriteDrinksFormSet(data, prefix='drinks')\nassert fs.is_valid() is False\nassert fs.non_form_errors().error_class == 'errorlist nonform', fs.non_form_errors().error_class\nexpected = '<ul class=\"errorlist nonform\"><li>You may only specify a drink once.</li></ul>'\nassert str(fs.non_form_errors()) == expected, str(fs.non_form_errors())\n\nclass ArticleForm(forms.Form):\n    title = forms.CharField()\n    pub_date = forms.DateField()\nArticleFormSet = formset_factory(ArticleForm)\nfs2 = ArticleFormSet({})\nassert fs2.is_valid() is False\nassert fs2.non_form_errors().error_class == 'errorlist nonform', fs2.non_form_errors().error_class\nprint('all assertions passed')\nPY",
+  "exit_code": 0,
+  "output_tail": "all assertions passed"
+}

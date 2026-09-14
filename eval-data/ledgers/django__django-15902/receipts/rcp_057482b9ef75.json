@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_057482b9ef75",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_601e96533ed6",
+  "proposal_id": "prop_508ced268e1b",
+  "admission_id": "adm_0623df4847eb",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:29:15.603695+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && /tmp/swebench-eval/django__django-15902/venv/bin/python tests/runtests.py forms_tests -k DeprecationTests 2>&1 | grep -E \"^(Ran|OK|FAILED|ERROR|FAIL:)\"",
+  "exit_code": 0,
+  "output_tail": "Ran 5 tests in 0.518s\nOK"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_5a5bf9735eeb",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_60def335495a",
+  "proposal_id": "prop_1cb0cf599e44",
+  "admission_id": "adm_eaecddda29f9",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:20.233171+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -c \"from werkzeug.routing import MapAdapter; import inspect; src=inspect.getsource(MapAdapter); import re; \nfor m in re.finditer(r'.*host.*', src): print(m.group(0))\"",
+  "exit_code": 0,
+  "output_tail": "if not self.map.host_matching and self.subdomain is not None:\n    def get_host(self, domain_part: str | None) -> str:\n        \"\"\"Figures out the full host name for the given domain part.  The\n        domain part is a subdomain in case host matching is disabled or\n        a full host name.\n        if self.map.host_matching:\n        host = self.get_host(domain_part)\n        return urlunsplit((scheme, host, path, query_str, None))\n        # Check all for first match with matching host. If no matching\n        # host is found, go with first result.\n                    if self.map.host_matching:\n        host = self.get_host(domain_part)\n            (self.map.host_matching and host == self.server_name)\n            or (not self.map.host_matching and domain_part == self.subdomain)\n        return f\"{scheme}//{host}{self.script_name[:-1]}/{path.lstrip('/')}\""
+}

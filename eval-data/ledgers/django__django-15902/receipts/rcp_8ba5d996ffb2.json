@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_8ba5d996ffb2",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_a069344ff920",
+  "proposal_id": "prop_914a0222174b",
+  "admission_id": "adm_d9f67eaea464",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:25:55.634845+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && grep -n \"template_name\" django/forms/forms.py django/forms/formsets.py",
+  "exit_code": 0,
+  "output_tail": "django/forms/forms.py:69:    template_name_div = \"django/forms/div.html\"\ndjango/forms/forms.py:70:    template_name_p = \"django/forms/p.html\"\ndjango/forms/forms.py:71:    template_name_table = \"django/forms/table.html\"\ndjango/forms/forms.py:72:    template_name_ul = \"django/forms/ul.html\"\ndjango/forms/forms.py:73:    template_name_label = \"django/forms/label.html\"\ndjango/forms/forms.py:320:    def template_name(self):\ndjango/forms/forms.py:321:        return self.renderer.form_template_name\ndjango/forms/formsets.py:76:    template_name_div = \"django/forms/formsets/div.html\"\ndjango/forms/formsets.py:77:    template_name_p = \"django/forms/formsets/p.html\"\ndjango/forms/formsets.py:78:    template_name_table = \"django/forms/formsets/table.html\"\ndjango/forms/formsets.py:79:    template_name_ul = \"django/forms/formsets/ul.html\"\ndjango/forms/formsets.py:522:    def template_name(self):\ndjango/forms/formsets.py:523:        return self.renderer.formset_template_name"
+}

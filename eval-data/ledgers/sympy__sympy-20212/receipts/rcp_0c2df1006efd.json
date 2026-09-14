@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_0c2df1006efd",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_fc04941649a0",
+  "proposal_id": "prop_6fad196f2b82",
+  "admission_id": "adm_b6f5d21a1cee",
+  "path": "/private/tmp/swebench-eval/sympy__sympy-20212/repo/sympy/core/tests/test_power.py",
+  "hash_before": "8fa48601937c32a6df4a08c0e40aaef7b579301beb59291e48130502fb2af7e2",
+  "hash_after": "8737025de0d99dc79ec3cab88e6f4b3d059d2bbeaf62e28dbb4b4bc6e47d2480",
+  "created_at": "2026-09-14T01:37:00.736243+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

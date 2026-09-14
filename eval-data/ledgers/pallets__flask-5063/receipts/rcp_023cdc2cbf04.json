@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_023cdc2cbf04",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_a6b45cb513ce",
+  "proposal_id": "prop_06b24eb69e7b",
+  "admission_id": "adm_8608b47d030f",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:50:21.057436+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "ls -d /tmp/flask* 2>/dev/null; ls -d /tmp/*4992* 2>/dev/null; ls -d /tmp/*5063* 2>/dev/null",
+  "exit_code": 1,
+  "output_tail": "/tmp/flask-182ce3dd15dfa3537391c3efaf9c3ff407d134d4\n/tmp/flask-4992\n/tmp/flask-4992-goal.txt\n/tmp/flask-4992-op0.patch\n/tmp/flask-4992-test.patch\n/tmp/flask-4992-venv\n/tmp/flask_4045.json\n/tmp/flask_4992.json\n/tmp/flaskdl\n/tmp/flaskenv\n/tmp/flask-4992\n/tmp/flask-4992-goal.txt\n/tmp/flask-4992-op0.patch\n/tmp/flask-4992-test.patch\n/tmp/flask-4992-venv\n/tmp/flask_4992.json\n/tmp/run-flask-4992.command"
+}

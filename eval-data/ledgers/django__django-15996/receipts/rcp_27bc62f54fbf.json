@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_27bc62f54fbf",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_f24043fe92ef",
+  "proposal_id": "prop_0f9c65b89074",
+  "admission_id": "adm_911f22e1b376",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:08.001601+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python -m pytest tests/migrations/test_writer.py -k \"enum\" -q 2>&1 | head -30",
+  "exit_code": 0,
+  "output_tail": "[test output: 15 of 21 lines dropped — failures and summaries kept]\n==================================== ERRORS ====================================\n_______________ ERROR collecting tests/migrations/test_writer.py _______________\n=========================== short test summary info ============================\nERROR tests/migrations/test_writer.py - django.core.exceptions.ImproperlyConf...\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n1 error in 0.34s"
+}

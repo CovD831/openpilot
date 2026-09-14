@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_228ad4ed2ca4",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_b57cdb31833c",
+  "proposal_id": "prop_b5804acba5b3",
+  "admission_id": "adm_0989583c2865",
+  "path": "/private/tmp/swebench-eval/django__django-15996/repo/tests/migrations/test_writer.py",
+  "hash_before": "72d3be365cb89bd6076822005e416be1e9e4acaffe79bc45b573426a9fd6d78c",
+  "hash_after": "8f56920af43c8b93c0637512646f850619d3ab4814b7d8cbcf9f1ddd8ad96ad2",
+  "created_at": "2026-09-14T02:29:59.330332+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

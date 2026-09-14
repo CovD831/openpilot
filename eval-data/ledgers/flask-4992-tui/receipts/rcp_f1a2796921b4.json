@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_f1a2796921b4",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_5977837bb00f",
+  "proposal_id": "prop_2ef0a16881c8",
+  "admission_id": "adm_1688ef44d914",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:37:54.463834+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && echo \"=== main config ===\"; git show main:src/flask/config.py 2>&1 | sed -n '230,300p'; echo \"=== log test_config ===\"; git log --all --oneline -- tests/test_config.py | head -20",
+  "exit_code": 0,
+  "output_tail": "ig.toml\", load=tomllib.load, text=False)\n\n        :param filename: The path to the data file. This can be an\n            absolute path or relative to the config root path.\n        :param load: A callable that takes a file handle and returns a\n            mapping of loaded data from the file.\n        :type load: ``Callable[[Reader], Mapping]`` where ``Reader``\n            implements a ``read`` method.\n        :param silent: Ignore the file if it doesn't exist.\n        :param text: Open the file in text or binary mode.\n        :return: ``True`` if the file was loaded successfully.\n\n        .. versionchanged:: 2.3\n            The ``text`` parameter was added.\n\n        .. versionadded:: 2.0\n        \"\"\"\n        filename = os.path.join(self.root_path, filename)\n\n        try:\n            with open(filename, \"r\" if text else \"rb\") as f:\n                obj = load(f)\n        except OSError as e:\n            if silent and e.errno in (errno.ENOENT, errno.EISDIR):\n                return False\n\n            e.strerror = f\"Unable to load configuration file ({e.strerror})\"\n            raise\n=== log test_config ===\n0a00e1b6 use tmp_path instead of tmpdir\nb10b6d4a add text parameter to config.from_file\nbfdd3711 deprecate config attributes\n3ecebcdf Add test config.from_mapping method: ignoring items with non-upper keys\nef6c2b9e clean up pytest.raises tests\ne75d5753 windows env vars are uppercase\n4eb5e945 more from_prefixed_env features\n08a283af Allow loading of environment variables into the config\nf2f027d1 remove unused module docstrings\n2ae740dd f-strings everywhere\n524fd0bc apply pyupgrade\n662c2457 remove _compat module\n829aa65e Support loading configuration from text files\n1351d0a5 Merge branch '1.0.x'\ne666f7a6 standardize license and copyright\n53c893b6 fix string concats left over by black\n43483683 apply reorder-python-imports pre-commit config\nb46f5942 address flake8 issues\n025589ee Reformat with black\n310fbfcf revert copyright year to project start add copyright header to files"
+}

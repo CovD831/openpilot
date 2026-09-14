@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_8bd2fd0c45f4",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_4a8811b29d02",
+  "proposal_id": "prop_386632e3ef03",
+  "admission_id": "adm_d7246a497ae6",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:29:41.309618+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && DJANGO_SETTINGS_MODULE=tests.test_sqlite /tmp/swebench-eval/django__django-15902/venv/bin/python -m pytest tests/forms_tests/tests/test_formsets.py::DeprecationTests -q -p no:cacheprovider > pytest_dep_out.txt 2>&1; wc -l pytest_dep_out.txt",
+  "exit_code": 0,
+  "output_tail": "143 pytest_dep_out.txt"
+}

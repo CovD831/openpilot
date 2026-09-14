@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_b5ea3bcf1370",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_6980ed19431f",
+  "proposal_id": "prop_7b815580c0bf",
+  "admission_id": "adm_e501b04f2f7d",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:28:12.484499+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && cat pyproject.toml && cat setup.cfg | head -60",
+  "exit_code": 0,
+  "output_tail": "tax_error.py'\n[metadata]\nname = Django\nversion = attr: django.__version__\nurl = https://www.djangoproject.com/\nauthor = Django Software Foundation\nauthor_email = foundation@djangoproject.com\ndescription = A high-level Python web framework that encourages rapid development and clean, pragmatic design.\nlong_description = file: README.rst\nlicense = BSD-3-Clause\nclassifiers =\n    Development Status :: 2 - Pre-Alpha\n    Environment :: Web Environment\n    Framework :: Django\n    Intended Audience :: Developers\n    License :: OSI Approved :: BSD License\n    Operating System :: OS Independent\n    Programming Language :: Python\n    Programming Language :: Python :: 3\n    Programming Language :: Python :: 3 :: Only\n    Programming Language :: Python :: 3.8\n    Programming Language :: Python :: 3.9\n    Programming Language :: Python :: 3.10\n    Topic :: Internet :: WWW/HTTP\n    Topic :: Internet :: WWW/HTTP :: Dynamic Content\n    Topic :: Internet :: WWW/HTTP :: WSGI\n    Topic :: Software Development :: Libraries :: Application Frameworks\n    Topic :: Software Development :: Libraries :: Python Modules\nproject_urls =\n    Documentation = https://docs.djangoproject.com/\n    Release notes = https://docs.djangoproject.com/en/stable/releases/\n    Funding = https://www.djangoproject.com/fundraising/\n    Source = https://github.com/django/django\n    Tracker = https://code.djangoproject.com/\n\n[options]\npython_requires = >=3.8\npackages = find:\ninclude_package_data = true\nzip_safe = false\ninstall_requires =\n    asgiref >= 3.5.2\n    backports.zoneinfo; python_version<\"3.9\"\n    sqlparse >= 0.2.2\n    tzdata; sys_platform == 'win32'\n\n[options.entry_points]\nconsole_scripts =\n    django-admin = django.core.management:execute_from_command_line\n\n[options.extras_require]\nargon2 = argon2-cffi >= 19.1.0\nbcrypt = bcrypt\n\n[bdist_rpm]\ndoc_files = docs extras AUTHORS INSTALL LICENSE README.rst\ninstall_script = scripts/rpm-install.sh\n\n[flake8]\nexclude = build,.git,.tox,./tests/.env\nextend-ignore = E203"
+}

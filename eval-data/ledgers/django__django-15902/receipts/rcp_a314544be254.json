@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_a314544be254",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_ff183eed58e9",
+  "proposal_id": "prop_6eaa3cf5d916",
+  "admission_id": "adm_3c5c06481643",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:30:38.842830+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && /tmp/swebench-eval/django__django-15902/venv/bin/python -m pip show Django 2>/dev/null | head -6",
+  "exit_code": 0,
+  "output_tail": "Name: Django\nVersion: 4.2.dev20260914072156\nSummary: A high-level Python web framework that encourages rapid development and clean, pragmatic design.\nHome-page: https://www.djangoproject.com/\nAuthor: Django Software Foundation\nAuthor-email: foundation@djangoproject.com"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_7a144f8be014",
+  "run_id": "run_be1d49b636634dd3808f3940bc9c5f45",
+  "consent_id": "con_237bd7f9a936",
+  "proposal_id": "prop_5a44c1c9ccb8",
+  "admission_id": "adm_a58cb406257f",
+  "path": "/private/tmp/swebench-eval/pallets__flask-4992/repo/src/flask/config.py",
+  "hash_before": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92",
+  "hash_after": "de618c47f98cda46d997de98597350e875963dfd0029c7b346a6d9b6cb98a695",
+  "created_at": "2026-09-14T01:26:08.046393+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "patch",
+  "command": "",
+  "exit_code": null,
+  "output_tail": ""
+}

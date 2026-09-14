@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_3ed7cdfa1543",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_75e0e45813f7",
+  "proposal_id": "prop_b0d14ab7128c",
+  "admission_id": "adm_758b30c8334b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:27:36.415225+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && grep -rn \"catch_warnings(record=True)\" tests/forms_tests/ | head; grep -rn \"assertWarnsMessage\" tests/forms_tests/tests/test_forms.py | head",
+  "exit_code": 0,
+  "output_tail": ""
+}

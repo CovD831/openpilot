@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_c3404b320772",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_3609d18e0c66",
+  "proposal_id": "prop_11f2bf9f5cac",
+  "admission_id": "adm_7cdf9dfbbcab",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:26:17.902583+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && grep -n \"management_form\\|TOTAL_FORMS\\|hidden\" tests/forms_tests/tests/test_formsets.py | head -60",
+  "exit_code": 0,
+  "output_tail": "         \"choices-TOTAL_FORMS\": \"3\",  # the number of forms rendered\n895:            \"choices-TOTAL_FORMS\": \"4\",  # the number of forms rendered\n947:                \"form-TOTAL_FORMS\": 1,\n963:            \"drinks-TOTAL_FORMS\": \"2\",  # the number of forms rendered\n1111:            \"form-TOTAL_FORMS\": 2001,\n1125:            \"form-TOTAL_FORMS\": \"2001\",\n1137:        data[\"form-TOTAL_FORMS\"] = \"3001\"\n1148:            \"form-TOTAL_FORMS\": \"1001\",\n1191:    def test_management_form_field_names(self):\n1203:    def test_management_form_prefix(self):\n1206:        self.assertEqual(formset.management_form.prefix, \"form\")\n1208:            \"form-TOTAL_FORMS\": \"2\",\n1214:        self.assertEqual(formset.management_form.prefix, \"form\")\n1216:        self.assertEqual(formset.management_form.prefix, \"form\")\n1220:            \"drinks-TOTAL_FORMS\": \"2\",  # the number of forms rendered\n1284:            \"form-TOTAL_FORMS\": \"1\",\n1311:            \"choices-TOTAL_FORMS\": \"1\",  # number of forms rendered\n1332:                    \"choices-TOTAL_FORMS\": \"4\",\n1364:                    \"choices-TOTAL_FORMS\": \"4\",\n1396:            \"choices-TOTAL_FORMS\": \"1\",\n1408:            \"check-TOTAL_FORMS\": \"2\",\n1437:            \"choices-TOTAL_FORMS\": \"2\",  # the number of forms rendered\n1491:                \"form-TOTAL_FORMS\": \"3\",\n1537:            \"choices-TOTAL_FORMS\": \"2\",\n1549:        self.assertEqual(formset.management_form.renderer, renderer)\n1619:            \"choices-TOTAL_FORMS\": \"1\",\n1627:        self.management_form_html = (\n1628:            '<input type=\"hidden\" name=\"choices-TOTAL_FORMS\" value=\"1\">'\n1629:            '<input type=\"hidden\" name=\"choices-INITIAL_FORMS\" value=\"0\">'\n1630:            '<input type=\"hidden\" name=\"choices-MIN_NUM_FORMS\" value=\"0\">'\n1631:            '<input type=\"hidden\" name=\"choices-MAX_NUM_FORMS\" value=\"0\">'\n1637:            self.management_form_html\n1649:            self.management_form_html\n1660:            self.management_form_html\n1672:            self.management_form_html"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_f977a4c7763d",
+  "run_id": "run_be1d49b636634dd3808f3940bc9c5f45",
+  "consent_id": "con_1a8fb50e4fff",
+  "proposal_id": "prop_c04ae2b43bac",
+  "admission_id": "adm_14543ab63e02",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:26:33.728912+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/pallets__flask-4992/repo && python -c \"import flask, inspect; print(flask.__file__); print(inspect.signature(flask.Config.from_file))\"",
+  "exit_code": 1,
+  "output_tail": "[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    import flask, inspect; print(flask.__file__); print(inspect.signature(flask.Config.from_file))\n    ^^^^^^^^^^^^^^^^^^^^^\nModuleNotFoundError: No module named 'flask'"
+}

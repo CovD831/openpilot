@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_343c02fedfbb",
+  "run_id": "run_d0d16cc3503840c2969376ffd1787431",
+  "consent_id": "con_94354e469812",
+  "proposal_id": "prop_896f1e6c9ed8",
+  "admission_id": "adm_86d4ad69ea70",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:31:24.920465+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15851/repo && ls tests && find . -maxdepth 2 -name 'conftest.py' -o -name 'pytest.ini' -o -name 'setup.cfg' -o -name 'tox.ini' 2>/dev/null",
+  "exit_code": 0,
+  "output_tail": "_object\nforms_tests\nfrom_db_value\ngeneric_inline_admin\ngeneric_relations\ngeneric_relations_regress\ngeneric_views\nget_earliest_or_latest\nget_object_or_404\nget_or_create\ngis_tests\nhandlers\nhttpwrappers\nhumanize_tests\ni18n\nimport_error_package\nindexes\ninline_formsets\ninspectdb\nintrospection\ninvalid_models_tests\nknown_related_objects\nlogging_tests\nlookup\nm2m_and_m2o\nm2m_intermediary\nm2m_multiple\nm2m_recursive\nm2m_regress\nm2m_signals\nm2m_through\nm2m_through_regress\nm2o_recursive\nmail\nmanagers_regress\nmany_to_many\nmany_to_one\nmany_to_one_null\nmax_lengths\nmessages_tests\nmiddleware\nmiddleware_exceptions\nmigrate_signals\nmigration_test_data_persistence\nmigrations\nmigrations2\nmodel_enums\nmodel_fields\nmodel_forms\nmodel_formsets\nmodel_formsets_regress\nmodel_indexes\nmodel_inheritance\nmodel_inheritance_regress\nmodel_meta\nmodel_options\nmodel_package\nmodel_regress\nmodel_utils\nmodeladmin\nmultiple_database\nmutually_referential\nnested_foreign_keys\nno_models\nnull_fk\nnull_fk_ordering\nnull_queries\none_to_one\nor_lookups\norder_with_respect_to\nordering\npagination\npostgres_tests\nprefetch_related\nproject_template\nproperties\nproxy_model_inheritance\nproxy_models\nqueries\nqueryset_pickle\nraw_query\nredirects_tests\nrequests\nrequirements\nreserved_names\nresolve_url\nresponses\nreverse_lookup\nruntests.py\nsave_delete_hooks\nschema\nselect_for_update\nselect_related\nselect_related_onetoone\nselect_related_regress\nserializers\nservers\nsessions_tests\nsettings_tests\nshell\nshortcuts\nsignals\nsigned_cookies_tests\nsigning\nsitemaps_tests\nsites_framework\nsites_tests\nstaticfiles_tests\nstr\nstring_lookup\nswappable_models\nsyndication_tests\ntemplate_backends\ntemplate_loader\ntemplate_tests\ntemplates\ntest_client\ntest_client_regress\ntest_exceptions\ntest_runner\ntest_runner_apps\ntest_sqlite.py\ntest_utils\ntimezones\ntransaction_hooks\ntransactions\nunmanaged_models\nupdate\nupdate_only_fields\nurlpatterns\nurlpatterns_reverse\nurls.py\nuser_commands\nutils_tests\nvalidation\nvalidators\nversion\nview_tests\nwsgi\nxor_lookups\n./tox.ini\n./setup.cfg"
+}

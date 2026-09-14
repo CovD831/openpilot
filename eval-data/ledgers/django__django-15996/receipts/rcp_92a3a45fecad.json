@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_92a3a45fecad",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_dd060ef94aea",
+  "proposal_id": "prop_c973d224c320",
+  "admission_id": "adm_304040e03fd9",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:21.588309+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && cat tests/test_sqlite.py | head -40; ls tests/migrations/*.py | head; cat pyproject.toml 2>/dev/null | grep -A20 pytest; cat setup.cfg 2>/dev/null | grep -A20 pytest; cat tox.ini 2>/dev/null | grep -A20 pytest",
+  "exit_code": 1,
+  "output_tail": "# This is an example test settings file for use with the Django test suite.\n#\n# The 'sqlite3' backend requires only the ENGINE setting (an in-\n# memory database will be used). All other backends will require a\n# NAME and potentially authentication information. See the\n# following section in the docs for more information:\n#\n# https://docs.djangoproject.com/en/dev/internals/contributing/writing-code/unit-tests/\n#\n# The different databases that Django supports behave differently in certain\n# situations, so it is recommended to run the test suite against as many\n# database backends as possible.  You may want to create a separate settings\n# file for each of the backends you test against.\n\nDATABASES = {\n    \"default\": {\n        \"ENGINE\": \"django.db.backends.sqlite3\",\n    },\n    \"other\": {\n        \"ENGINE\": \"django.db.backends.sqlite3\",\n    },\n}\n\nSECRET_KEY = \"django_tests_secret_key\"\n\n# Use a fast hasher to speed up tests.\nPASSWORD_HASHERS = [\n    \"django.contrib.auth.hashers.MD5PasswordHasher\",\n]\n\nDEFAULT_AUTO_FIELD = \"django.db.models.AutoField\"\n\nUSE_TZ = False\ntests/migrations/__init__.py\ntests/migrations/models.py\ntests/migrations/routers.py\ntests/migrations/test_autodetector.py\ntests/migrations/test_base.py\ntests/migrations/test_commands.py\ntests/migrations/test_deprecated_fields.py\ntests/migrations/test_exceptions.py\ntests/migrations/test_executor.py\ntests/migrations/test_graph.py"
+}

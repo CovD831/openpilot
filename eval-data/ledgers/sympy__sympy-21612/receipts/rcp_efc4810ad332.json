@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_efc4810ad332",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_82d2ed59b4b2",
+  "proposal_id": "prop_da1d74e7769c",
+  "admission_id": "adm_eda191114017",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:46:48.823686+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21612/repo && /opt/anaconda3/bin/python3 -c \"\nfrom sympy import Symbol, Integer, Pow, Mul, Add, srepr, S\na,b,c = Symbol('a'),Symbol('b'),Symbol('c')\ninner_top = Mul(Add(Pow(a,3), b), Pow(c,-1, evaluate=False), evaluate=False)\ninner_bot = Pow(Pow(c,2, evaluate=False), -1, evaluate=False)\nouter = Mul(inner_top, Pow(inner_bot, -1, evaluate=False), evaluate=False)\nprint('args', outer.args)\nprint('as_ordered_factors', outer.as_ordered_factors())\nfor item in outer.as_ordered_factors():\n    print('item', item, srepr(item), 'is_Pow', isinstance(item, Pow), 'exp', getattr(item,'exp',None))\n    if isinstance(item, Pow):\n        print('  base', item.base, srepr(item.base), 'is_Mul', isinstance(item.base, Mul))\n\" 2>/dev/null",
+  "exit_code": 0,
+  "output_tail": "args ((a**3 + b)/c, 1/(1/(c**2)))\nas_ordered_factors [(a**3 + b)/c, 1/(1/(c**2))]\nitem (a**3 + b)/c Mul(Pow(Symbol('c'), Integer(-1)), Add(Pow(Symbol('a'), Integer(3)), Symbol('b'))) is_Pow False exp None\nitem 1/(1/(c**2)) Pow(Pow(Pow(Symbol('c'), Integer(2)), Integer(-1)), Integer(-1)) is_Pow True exp -1\n  base 1/(c**2) Pow(Pow(Symbol('c'), Integer(2)), Integer(-1)) is_Mul False"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_34c77d57f6b6",
+  "run_id": "run_25882f298f3940fe87467026f9b45d2e",
+  "consent_id": "con_3bcdab2c825b",
+  "proposal_id": "prop_65cda236499b",
+  "admission_id": "adm_4edcfe915f76",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:43:04.586612+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-15609/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-15609/repo /opt/anaconda3/bin/python -m pytest sympy/printing/tests/test_latex.py -q 2>&1 | tail -30",
+  "exit_code": 0,
+  "output_tail": "[test output: 24 of 30 lines dropped — failures and summaries kept]\n=========================== short test summary info ============================\nFAILED sympy/printing/tests/test_latex.py::test_latex_symbols_failing - sympy...\nFAILED sympy/printing/tests/test_latex.py::test_builtin_without_args_mismatched_names\nFAILED sympy/printing/tests/test_latex.py::test_issue_8470 - ValueError: iden...\nFAILED sympy/printing/tests/test_latex.py::test_issue_13559 - ValueError: ide...\n4 failed, 123 passed, 15 warnings in 0.97s"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_fddcaca220fd",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_645d43ce0717",
+  "proposal_id": "prop_6a8554ea65de",
+  "admission_id": "adm_f360e5713652",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:14.781780+00:00",
+  "validation_command": "",
+  "validation_status": "pending",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -c \"from werkzeug.routing import Rule; import inspect; print([m for m in dir(Rule) if 'host' in m or 'subdomain' in m or 'match' in m]); print(inspect.getsource(Rule.match_compare_key))\"",
+  "exit_code": 1,
+  "output_tail": "[]\n\n[stderr]\nTraceback (most recent call last):\n  File \"<string>\", line 1, in <module>\n    from werkzeug.routing import Rule; import inspect; print([m for m in dir(Rule) if 'host' in m or 'subdomain' in m or 'match' in m]); print(inspect.getsource(Rule.match_compare_key))\n                                                                                                                                                                 ^^^^^^^^^^^^^^^^^^^^^^\nAttributeError: type object 'Rule' has no attribute 'match_compare_key'. Did you mean: 'build_compare_key'?"
+}

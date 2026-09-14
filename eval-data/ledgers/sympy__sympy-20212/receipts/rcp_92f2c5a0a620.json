@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_92f2c5a0a620",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_4588f3a40b13",
+  "proposal_id": "prop_2491b055e5f6",
+  "admission_id": "adm_2095363b596d",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:37:17.403317+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && git diff -- sympy/core/numbers.py sympy/core/tests/test_power.py",
+  "exit_code": 0,
+  "output_tail": "diff --git a/sympy/core/numbers.py b/sympy/core/numbers.py\nindex 2c50002..5edcd9a 100644\n--- a/sympy/core/numbers.py\n+++ b/sympy/core/numbers.py\n@@ -1359,10 +1359,10 @@ def _eval_power(self, expt):\n                   -> p**r*(sin(Pi*r) + cos(Pi*r)*I)\n         \"\"\"\n         if self == 0:\n-            if expt.is_positive:\n+            if expt.is_extended_positive:\n                 return S.Zero\n-            if expt.is_negative:\n-                return S.Infinity\n+            if expt.is_extended_negative:\n+                return S.ComplexInfinity\n         if isinstance(expt, Number):\n             if isinstance(expt, Integer):\n                 prec = self._prec\n@@ -2623,15 +2623,18 @@ def __neg__():\n         return S.Zero\n \n     def _eval_power(self, expt):\n-        if expt.is_positive:\n+        if expt.is_extended_positive:\n             return self\n-        if expt.is_negative:\n+        if expt.is_extended_negative:\n             return S.ComplexInfinity\n         if expt.is_extended_real is False:\n             return S.NaN\n+        if expt.is_zero:\n+            return S.One\n+\n         # infinities are already handled with pos and neg\n         # tests above; now throw away leading numbers on Mul\n-        # exponent\n+        # exponent since 0**-x = zoo**x even when x == 0\n         coeff, terms = expt.as_coeff_Mul()\n         if coeff.is_negative:\n             return S.ComplexInfinity**terms\ndiff --git a/sympy/core/tests/test_power.py b/sympy/core/tests/test_power.py\nindex 413fbd4..e196fdc 100644\n--- a/sympy/core/tests/test_power.py\n+++ b/sympy/core/tests/test_power.py\n@@ -266,6 +266,11 @@ def test_zero():\n     assert 0**(2*x*y) == 0**(x*y)\n     assert 0**(-2*x*y) == S.ComplexInfinity**(x*y)\n \n+    # Test issue 19572\n+    assert 0 ** -oo is zoo\n+    assert power(0, -oo) is zoo\n+    assert Float(0)**-oo is zoo\n+\n \n def test_pow_as_base_exp():\n     x = Symbol('x')"
+}

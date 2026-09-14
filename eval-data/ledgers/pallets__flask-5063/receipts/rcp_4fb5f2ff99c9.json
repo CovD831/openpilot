@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_4fb5f2ff99c9",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_cbccbaea376f",
+  "proposal_id": "prop_43ee685ed61c",
+  "admission_id": "adm_d9cba12e36f3",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:44:27.263649+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && ls src/flask && grep -rn \"subdomain\" src/flask | head -50",
+  "exit_code": 0,
+  "output_tail": " bp_options[\"subdomain\"] = bp_subdomain\nsrc/flask/blueprints.py:389:            elif state.subdomain is not None:\nsrc/flask/blueprints.py:390:                bp_options[\"subdomain\"] = state.subdomain\nsrc/flask/app.py:167:       The ``subdomain_matching`` parameter was added. Subdomain\nsrc/flask/app.py:183:    :param subdomain_matching: consider the subdomain relative to\nsrc/flask/app.py:374:        subdomain_matching: bool = False,\nsrc/flask/app.py:493:        self.subdomain_matching = subdomain_matching\nsrc/flask/app.py:995:        :param subdomain: Blueprint routes will match on this subdomain.\nsrc/flask/app.py:1888:            :data:`SERVER_NAME` no longer implicitly enables subdomain\nsrc/flask/app.py:1889:            matching. Use :attr:`subdomain_matching` instead.\nsrc/flask/app.py:1892:            # If subdomain matching is disabled (the default), use the\nsrc/flask/app.py:1893:            # default subdomain in all cases. This should be the default\nsrc/flask/app.py:1895:            if not self.subdomain_matching:\nsrc/flask/app.py:1896:                subdomain = self.url_map.default_subdomain or None\nsrc/flask/app.py:1898:                subdomain = None\nsrc/flask/app.py:1903:                subdomain=subdomain,\nsrc/flask/app.py:2152:            :data:`PREFERRED_URL_SCHEME`, ``subdomain``,\nsrc/flask/app.py:2154:        :param subdomain: Subdomain name to append to\nsrc/flask/testing.py:30:        :data:`PREFERRED_URL_SCHEME`, ``subdomain``,\nsrc/flask/testing.py:32:    :param subdomain: Subdomain name to append to :data:`SERVER_NAME`.\nsrc/flask/testing.py:49:        subdomain: t.Optional[str] = None,\nsrc/flask/testing.py:54:        assert not (base_url or subdomain or url_scheme) or (\nsrc/flask/testing.py:57:            subdomain or url_scheme\nsrc/flask/testing.py:58:        ), 'Cannot pass \"subdomain\" or \"url_scheme\" with \"base_url\".'\nsrc/flask/testing.py:64:            if subdomain:\nsrc/flask/testing.py:65:                http_host = f\"{subdomain}.{http_host}\""
+}

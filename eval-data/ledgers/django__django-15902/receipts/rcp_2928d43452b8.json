@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_2928d43452b8",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_23017ee2e1e2",
+  "proposal_id": "prop_8e4038c89227",
+  "admission_id": "adm_742d478e6e04",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:28:52.367359+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && /tmp/swebench-eval/django__django-15902/venv/bin/python - <<'PY'\nimport warnings, django\nfrom django.conf import settings\nif not settings.configured:\n    settings.configure(INSTALLED_APPS=[], DATABASES={}, FORM_RENDERER='django.forms.renderers.DjangoTemplates', USE_TZ=True)\ndjango.setup()\nfrom django import forms\nfrom django.forms.formsets import formset_factory\nclass F(forms.Form):\n    name=forms.CharField()\nFS=formset_factory(F)\nfor data in [None, {'form-TOTAL_FORMS':'1','form-INITIAL_FORMS':'0','form-MIN_NUM_FORMS':'0','form-MAX_NUM_FORMS':'1000','form-0-name':'x'}]:\n    fs=FS(data)\n    with warnings.catch_warnings(record=True) as w:\n        warnings.simplefilter('always')\n        s=str(fs.management_form)\n    print('bound' if data else 'unbound', 'warnings', len(w), 'out', s[:80])\nPY",
+  "exit_code": 0,
+  "output_tail": "unbound warnings 0 out <input type=\"hidden\" name=\"form-TOTAL_FORMS\" value=\"1\" id=\"id_form-TOTAL_FORMS\">\nbound warnings 0 out <input type=\"hidden\" name=\"form-TOTAL_FORMS\" value=\"1\" id=\"id_form-TOTAL_FORMS\">"
+}

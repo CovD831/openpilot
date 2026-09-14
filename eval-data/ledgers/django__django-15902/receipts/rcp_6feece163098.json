@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_6feece163098",
+  "run_id": "run_ba3a4520ed784bffa0dac3b1ac3a91ac",
+  "consent_id": "con_0be38cf7879f",
+  "proposal_id": "prop_31f1ce31d486",
+  "admission_id": "adm_2ce936fc7680",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:27:32.986154+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15902/repo && grep -rn \"def assertWarnsMessage\" django/test/ tests/ | head",
+  "exit_code": 0,
+  "output_tail": "django/test/testcases.py:919:    def assertWarnsMessage(self, expected_warning, expected_message, *args, **kwargs):"
+}

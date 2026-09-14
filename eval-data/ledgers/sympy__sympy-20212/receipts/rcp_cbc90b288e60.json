@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_cbc90b288e60",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_0a78f8c52519",
+  "proposal_id": "prop_b38d26a6eee0",
+  "admission_id": "adm_11ac764458b3",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:30:16.859760+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "grep -n \"oo\\|inf\\|zoo\\|_eval\" sympy/core/power.py | head -80",
+  "exit_code": 0,
+  "output_tail": "[stderr]\ngrep: sympy/core/power.py: No such file or directory"
+}

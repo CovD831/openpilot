@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_644e3d73c33f",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_891ef2cd0f1a",
+  "proposal_id": "prop_6348c1f1bf98",
+  "admission_id": "adm_13dd2d9415a1",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:27:34.143336+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && cat tox.ini | head -60",
+  "exit_code": 0,
+  "output_tail": "# Tox (https://tox.readthedocs.io/) is a tool for running tests in multiple\n# virtualenvs. This configuration file helps to run the test suite on all\n# supported Python versions. To use it, \"python -m pip install tox\" and\n# then run \"tox\" from this directory.\n\n[tox]\nminversion = 3.18\nskipsdist = true\nenvlist =\n    py3\n    black\n    flake8 >= 3.7.0\n    docs\n    isort >= 5.1.0\n\n# Add environment to use the default python3 installation\n[testenv:py3]\nbasepython = python3\n\n[testenv]\nusedevelop = true\n# OBJC_DISABLE_INITIALIZE_FORK_SAFETY fixes hung tests for MacOS users. (#30806)\npassenv = DJANGO_SETTINGS_MODULE PYTHONPATH HOME DISPLAY OBJC_DISABLE_INITIALIZE_FORK_SAFETY\nsetenv =\n    PYTHONDONTWRITEBYTECODE=1\ndeps =\n    py{3,38,39,310}: -rtests/requirements/py3.txt\n    postgres: -rtests/requirements/postgres.txt\n    mysql: -rtests/requirements/mysql.txt\n    oracle: -rtests/requirements/oracle.txt\nchangedir = tests\ncommands =\n    {envpython} runtests.py {posargs}\n\n[testenv:black]\nbasepython = python3\nusedevelop = false\ndeps = black\nchangedir = {toxinidir}\ncommands = black --check --diff .\n\n[testenv:flake8]\nbasepython = python3\nusedevelop = false\ndeps = flake8\nchangedir = {toxinidir}\ncommands = flake8 .\n\n[testenv:docs]\nbasepython = python3\nusedevelop = false\nallowlist_externals =\n    make\ndeps =\n    Sphinx\n    pyenchant\n    sphinxcontrib-spelling\nchangedir = docs\ncommands =\n    make spelling"
+}

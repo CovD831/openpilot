@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_210c25652ddb",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_545d20f72c8c",
+  "proposal_id": "prop_6d5c32f68312",
+  "admission_id": "adm_79c42d3858eb",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:16.379521+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && /tmp/swebench-eval/pallets__flask-5063/venv/bin/python -c \"from werkzeug.routing import Rule; import inspect; print(inspect.getsource(Rule.build_compare_key))\"",
+  "exit_code": 0,
+  "output_tail": "def build_compare_key(self) -> tuple[int, int, int]:\n        \"\"\"The build compare key for sorting.\n\n        :internal:\n        \"\"\"\n        return (1 if self.alias else 0, -len(self.arguments), -len(self.defaults or ()))"
+}

@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_ee6f5aaca594",
+  "run_id": "run_c077040623e9483aa8ef65f07c0b5cb6",
+  "consent_id": "con_ba812ff13e7e",
+  "proposal_id": "prop_bc1a5fa9d2d0",
+  "admission_id": "adm_ab0627a9ede6",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T07:40:58.085807+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/django__django-16527/repo && grep -n \"class Person\" tests/admin_views/models.py tests/admin_views/*.py",
+  "exit_code": 0,
+  "output_tail": "tests/admin_views/models.py:254:class Person(models.Model):\ntests/admin_views/models.py:268:class Persona(models.Model):\ntests/admin_views/admin.py:343:class PersonAdmin(admin.ModelAdmin):\ntests/admin_views/admin.py:371:class PersonaAdmin(admin.ModelAdmin):\ntests/admin_views/models.py:254:class Person(models.Model):\ntests/admin_views/models.py:268:class Persona(models.Model):"
+}

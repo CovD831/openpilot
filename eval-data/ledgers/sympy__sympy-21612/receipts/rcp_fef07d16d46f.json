@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_fef07d16d46f",
+  "run_id": "run_31cab8af4fc94b3b8c8e5fd25ded529d",
+  "consent_id": "con_30e713763634",
+  "proposal_id": "prop_d3fd20c2be08",
+  "admission_id": "adm_a35e008737a2",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T16:45:19.481735+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-21612/repo && ls -la; ls -la .openpilot 2>/dev/null; find /private/tmp/swebench-eval/sympy__sympy-21612 -maxdepth 3 -name 'activate' 2>/dev/null; pip3 list 2>/dev/null | grep -Ei 'mpmath|antlr' || echo none",
+  "exit_code": 0,
+  "output_tail": "  2021 .gitignore\n-rw-r--r--@  1 abab  wheel  32408 Jun 13  2021 .mailmap\ndrwxr-xr-x@  5 abab  wheel    160 Sep 14 00:44 .openpilot\ndrwxr-xr-x@  6 abab  wheel    192 Sep 14 00:44 .pytest_cache\n-rw-r--r--@  1 abab  wheel   6492 Jun 13  2021 .travis.yml\n-rw-r--r--@  1 abab  wheel  41853 Jun 13  2021 AUTHORS\n-rw-r--r--@  1 abab  wheel    590 Jun 13  2021 CODEOWNERS\n-rw-r--r--@  1 abab  wheel   3267 Jun 13  2021 CODE_OF_CONDUCT.md\n-rw-r--r--@  1 abab  wheel    625 Jun 13  2021 CONTRIBUTING.md\n-rw-r--r--@  1 abab  wheel   6632 Jun 13  2021 LICENSE\n-rw-r--r--@  1 abab  wheel    496 Jun 13  2021 MANIFEST.in\n-rw-r--r--@  1 abab  wheel   1168 Jun 13  2021 PULL_REQUEST_TEMPLATE.md\n-rw-r--r--@  1 abab  wheel  10982 Jun 13  2021 README.md\n-rw-r--r--@  1 abab  wheel   2774 Jun 13  2021 asv.conf.travis.json\n-rw-r--r--@  1 abab  wheel  87868 Jun 13  2021 banner.svg\ndrwxr-xr-x@ 29 abab  wheel    928 Jun 13  2021 bin\n-rw-r--r--@  1 abab  wheel    196 Jun 13  2021 codecov.yml\n-rw-r--r--@  1 abab  wheel   2921 Jun 13  2021 conftest.py\n-rw-r--r--@  1 abab  wheel    316 Jun 13  2021 coveragerc_travis\ndrwxr-xr-x@  3 abab  wheel     96 Jun 13  2021 data\ndrwxr-xr-x@ 11 abab  wheel    352 Jun 13  2021 doc\ndrwxr-xr-x@  8 abab  wheel    256 Jun 13  2021 examples\n-rw-r--r--@  1 abab  wheel   4408 Jun 13  2021 github_deploy_key.enc\n-rw-r--r--@  1 abab  wheel  11199 Jun 13  2021 isympy.py\n-rw-r--r--@  1 abab  wheel    835 Jun 13  2021 pytest.ini\ndrwxr-xr-x@ 21 abab  wheel    672 Jun 13  2021 release\n-rw-r--r--@  1 abab  wheel   1788 Jun 13  2021 setup.cfg\n-rwxr-xr-x@  1 abab  wheel  14740 Jun 13  2021 setup.py\n-rw-r--r--@  1 abab  wheel     49 Jun 13  2021 setupegg.py\ndrwxr-xr-x@ 48 abab  wheel   1536 Jun 13  2021 sympy\ntotal 0\ndrwxr-xr-x@  5 abab  wheel   160 Sep 14 00:44 .\ndrwxr-xr-x@ 37 abab  wheel  1184 Sep 14 00:44 ..\ndrwxr-xr-x@  4 abab  wheel   128 Sep 14 00:44 observations\ndrwxr-xr-x@  7 abab  wheel   224 Sep 14 00:45 receipts\ndrwxr-xr-x@  3 abab  wheel    96 Sep 14 00:44 trajectory\nnone"
+}

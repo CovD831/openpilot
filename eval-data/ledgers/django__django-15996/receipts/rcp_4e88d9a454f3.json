@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_4e88d9a454f3",
+  "run_id": "run_a8c9dae320bc46599fdc30fb0f943821",
+  "consent_id": "con_681f6ddc74a1",
+  "proposal_id": "prop_cafc46887e42",
+  "admission_id": "adm_30164dc86dcd",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T02:32:18.202623+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/django__django-15996/repo && /tmp/swebench-eval/django__django-15996/venv/bin/python - <<'PY'\nimport re\nfor m in re.RegexFlag:\n    print(m.name, m.value)\nprint('combo', (re.UNICODE | re.IGNORECASE).value)\nPY",
+  "exit_code": 0,
+  "output_tail": "ASCII 256\nIGNORECASE 2\nLOCALE 4\nUNICODE 32\nMULTILINE 8\nDOTALL 16\nVERBOSE 64\nDEBUG 128\ncombo 34"
+}

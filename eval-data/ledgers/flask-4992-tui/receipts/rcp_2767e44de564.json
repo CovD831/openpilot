@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_2767e44de564",
+  "run_id": "run_55d138a712854931bc80e3bac365a9d1",
+  "consent_id": "con_a6cc82a92e30",
+  "proposal_id": "prop_457bcc0e9ba7",
+  "admission_id": "adm_c68266b9266c",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-13T13:38:04.771302+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/flask-4992 && echo \"=== test_config at b10b6d4a ===\"; git show b10b6d4a:tests/test_config.py 2>&1 | sed -n '25,50p'; echo \"=== static tree ===\"; git ls-tree b10b6d4a:tests/static 2>&1; echo \"=== main test_config grep toml ===\"; git show main:tests/test_config.py 2>&1 | grep -n \"toml\\|from_file\\|def test_config_from_file\"",
+  "exit_code": 0,
+  "output_tail": "=== test_config at b10b6d4a ===\n=== static tree ===\n100644 blob 4eedab128e1cc41a1ffe6a7c0a55d3b2f4362942\tconfig.json\n100644 blob 64acdbdd09c0f7a831738fa7201d4e7ded63ae47\tconfig.toml\n100644 blob de8b69b6e855a1356f054f49af7711c7a2441e97\tindex.html\n=== main test_config grep toml ===\n31:def test_config_from_file_json():\n34:    app.config.from_file(os.path.join(current_dir, \"static\", \"config.json\"), json.load)\n38:def test_config_from_file_toml():\n39:    tomllib = pytest.importorskip(\"tomllib\", reason=\"tomllib added in 3.11\")\n42:    app.config.from_file(\n43:        os.path.join(current_dir, \"static\", \"config.toml\"), tomllib.load, text=False\n189:        app.config.from_file(\"missing.json\", load=json.load)\n195:    assert not app.config.from_file(\"missing.json\", load=json.load, silent=True)"
+}

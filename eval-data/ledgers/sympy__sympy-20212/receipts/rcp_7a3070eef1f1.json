@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_7a3070eef1f1",
+  "run_id": "run_a30a38bbefac42e89ffb3409ca423760",
+  "consent_id": "con_a61fa502fca5",
+  "proposal_id": "prop_a10426de64b4",
+  "admission_id": "adm_d1fb5d65955b",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T01:37:05.603786+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /private/tmp/swebench-eval/sympy__sympy-20212/repo && PYTHONPATH=/private/tmp/swebench-eval/sympy__sympy-20212/repo:/Users/abab/.workbuddy/binaries/python/envs/default/lib/python3.13/site-packages /Users/abab/.workbuddy/binaries/python/envs/default/bin/python -m pytest sympy/core/tests/test_power.py::test_zero sympy/core/tests/test_numbers.py::test_ComplexInfinity -q 2>&1 | tail -20",
+  "exit_code": 0,
+  "output_tail": "[test output: 7 of 9 lines dropped — failures and summaries kept]\n=============================== warnings summary ===============================\n2 passed, 1 warning in 0.67s"
+}

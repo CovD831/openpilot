@@ -1,0 +1,19 @@
+{
+  "receipt_id": "rcp_63a53bdb0954",
+  "run_id": "run_d6a6a11f4c3b4f86919c65377cfa782d",
+  "consent_id": "con_10c5fcb5fda5",
+  "proposal_id": "prop_e63873fc60c1",
+  "admission_id": "adm_dd7a5a0ef0a3",
+  "path": "",
+  "hash_before": "n/a",
+  "hash_after": "n/a",
+  "created_at": "2026-09-14T00:45:04.986433+00:00",
+  "validation_command": "",
+  "validation_status": "passed",
+  "validation_detail": "",
+  "validation_at": "",
+  "kind": "bash",
+  "command": "cd /tmp/swebench-eval/pallets__flask-5063/repo && grep -rn \"SERVER_NAME\\|subdomain\\|host_matching\\|static_host\" tests/test_cli.py tests/test_basic.py tests/ | head -50",
+  "exit_code": 0,
+  "output_tail": "ubdomain_matching():\ntests/test_basic.py:1696:    app = flask.Flask(__name__, subdomain_matching=True)\ntests/test_basic.py:1698:    app.config[\"SERVER_NAME\"] = \"localhost.localdomain\"\ntests/test_basic.py:1700:    @app.route(\"/\", subdomain=\"<user>\")\ntests/test_basic.py:1708:def test_subdomain_matching_with_ports():\ntests/test_basic.py:1709:    app = flask.Flask(__name__, subdomain_matching=True)\ntests/test_basic.py:1710:    app.config[\"SERVER_NAME\"] = \"localhost.localdomain:3000\"\ntests/test_basic.py:1713:    @app.route(\"/\", subdomain=\"<user>\")\ntests/test_basic.py:1722:def test_subdomain_matching_other_name(matching):\ntests/test_basic.py:1723:    app = flask.Flask(__name__, subdomain_matching=matching)\ntests/test_basic.py:1724:    app.config[\"SERVER_NAME\"] = \"localhost.localdomain:3000\"\ntests/test_basic.py:1740:    # allow all subdomains if matching is disabled\ntests/test_basic.py:1818:    app.config[\"SERVER_NAME\"] = server_name\ntests/test_basic.py:290:        SERVER_NAME=\"www.example.com:8080\",\ntests/test_basic.py:1410:def test_static_route_with_host_matching():\ntests/test_basic.py:1411:    app = flask.Flask(__name__, host_matching=True, static_host=\"example.com\")\ntests/test_basic.py:1419:    # Providing static_host without host_matching=True should error.\ntests/test_basic.py:1421:        flask.Flask(__name__, static_host=\"example.com\")\ntests/test_basic.py:1422:    # Providing host_matching=True with static_folder\ntests/test_basic.py:1423:    # but without static_host should error.\ntests/test_basic.py:1425:        flask.Flask(__name__, host_matching=True)\ntests/test_basic.py:1426:    # Providing host_matching=True without static_host\ntests/test_basic.py:1428:    flask.Flask(__name__, host_matching=True, static_folder=None)\ntests/test_basic.py:1436:def test_server_name_subdomain():\ntests/test_basic.py:1437:    app = flask.Flask(__name__, subdomain_matching=True)\ntests/test_basic.py:1444:    @app.route(\"/\", subdomain=\"foo\")\ntests/test_basic.py:1445:    def subdomain():"
+}
