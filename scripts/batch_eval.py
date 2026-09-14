@@ -46,7 +46,38 @@ REPO_URLS = {
 VENVS = {
     "sympy/sympy": Path("/tmp/swebench-sympy-venv/bin/python"),
     "pallets/flask": Path("/tmp/flask-4992-venv/bin/python"),
+    "django/django": None,  # per-instance venv: WORKROOT/<id>/venv/bin/python
 }
+_DJANGO_TEST_RE = re.compile(r"^(\w+) \(([\w.]+)\)$")  # "test_x (module.Class)"
+
+
+def _django_ref(name: str) -> str:
+    m = _DJANGO_TEST_RE.match(name.strip())
+    return f"{m.group(2)}.{m.group(1)}" if m else name
+
+
+def _is_django(instance: dict) -> bool:
+    return instance["repo"] == "django/django"
+
+
+def _venv_python(instance: dict) -> Path:
+    if VENVS.get(instance["repo"]):
+        return Path(VENVS[instance["repo"]])
+    return WORKROOT / instance["instance_id"] / "venv" / "bin" / "python"
+
+
+def run_django_tests(repo: Path, py: Path, refs: list[str]) -> dict:
+    """django's own runner: tests/runtests.py <module.Class.test> --settings test_sqlite -v 2."""
+    proc = subprocess.run(
+        [str(py), "tests/runtests.py", *refs, "--settings", "test_sqlite", "-v", "2",
+         f"--basetemp={repo}/.pytest-tmp"],
+        capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
+    )
+    out = (proc.stdout + proc.stderr)[-8000:]
+    failed = len(re.findall(r"\.\.\. (FAIL|ERROR)", out))
+    ok = len(re.findall(r"\.\.\. ok", out))
+    return {"failed": failed, "passed": ok, "errors": 0,
+            "exit": proc.returncode, "output": out}
 RUN_TIMEOUT = 420.0
 TEST_FILE_TIMEOUT = 240.0
 
@@ -145,6 +176,7 @@ def run_op0(repo: Path, goal: str) -> dict:
         command_authorizer=cmd,
         on_patch_applied=patch_cb,
         on_bash_executed=bash_cb,
+        spec_recorder=lambda payload: session.record("spec_assumptions", payload, producer="agent"),
     )
     bridge.start()
     engine.start(bridge)
@@ -193,6 +225,7 @@ def run_op0(repo: Path, goal: str) -> dict:
         "events": dict(types),
         "receipts": len(store.all(run_id=session.run_id)),
         "run_id": session.run_id,
+        "spec_assumptions": types.get("spec_assumptions", 0),
     }
 
 
@@ -204,11 +237,17 @@ def evaluate(instance: dict) -> dict:
     if err:
         record.update(verdict="environment", cause=err, elapsed_s=round(time.monotonic() - t0, 1))
         return record
-    py = VENVS[instance["repo"]]
+    py = _venv_python(instance)
+    django = _is_django(instance)
     test_files = test_files_from_patch(instance["test_patch"])
     f2p = json.loads(instance["FAIL_TO_PASS"])
-    # node ids: full ones pass through; bare names attach to the touched file
-    f2p_ids = [n if "::" in n else f"{test_files[0]}::{n}" for n in f2p]
+    if django:
+        f2p_ids = [_django_ref(n) for n in f2p]
+        run_tests = run_django_tests
+    else:
+        # node ids: full ones pass through; bare names attach to the touched file
+        f2p_ids = [n if "::" in n else f"{test_files[0]}::{n}" for n in f2p]
+        run_tests = run_pytest
 
     # base calibration (test patch applied, untouched source)
     proc = subprocess.run(["git", "-C", str(repo), "apply", "/dev/stdin"],
@@ -216,7 +255,10 @@ def evaluate(instance: dict) -> dict:
     if proc.returncode != 0:
         record.update(verdict="environment", cause=f"test patch failed on base: {proc.stderr[-160:]}")
         return record
-    base = run_pytest(repo, py, test_files + f2p_ids)
+    if django:
+        base = run_tests(repo, py, f2p_ids)
+    else:
+        base = run_tests(repo, py, test_files + f2p_ids)
     # environment gate: a FAILING (assertion) F2P test is measurable; a test
     # that COLLECTION-ERRORs on base means this environment cannot run the
     # benchmark at all (py3.13 vs old deps) - that is an environment verdict,
@@ -284,12 +326,18 @@ def evaluate(instance: dict) -> dict:
         record.update(verdict="failed", cause=f"test patch conflicts with op0 patch: {proc.stderr[-160:]}")
         record["elapsed_s"] = round(time.monotonic() - t0, 1)
         return record
-    got = run_pytest(repo, py, test_files + f2p_ids)
+    got = run_tests(repo, py, f2p_ids) if django else run_tests(repo, py, test_files + f2p_ids)
     record["op0"] = {k: got[k] for k in ("failed", "passed", "errors")}
-    passed_block = got["output"].split("short test summary")[-1]
-    f2p_missing = [nid for nid in f2p_ids
-                   if f"PASSED {nid}" not in passed_block
-                   and f"PASSED {nid.split('::')[-1]}" not in passed_block]
+    if django:
+        # -v 2 prints "test_x (module.Class) ... ok" per test
+        f2p_missing = [nid for nid in f2p
+                       if f"... ok" not in got["output"] or
+                       not re.search(re.escape(nid.split(" ")[0]) + r" \(" + re.escape(nid.split("(")[1].rstrip(")")) + r"\) \.\.\. ok", got["output"])]
+    else:
+        passed_block = got["output"].split("short test summary")[-1]
+        f2p_missing = [nid for nid in f2p_ids
+                       if f"PASSED {nid}" not in passed_block
+                       and f"PASSED {nid.split('::')[-1]}" not in passed_block]
     no_regression = (got["failed"] <= base["failed"]) and (got["errors"] <= base["errors"])
     if not f2p_missing and no_regression:
         record["verdict"] = "success"

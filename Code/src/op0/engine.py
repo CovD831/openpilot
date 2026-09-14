@@ -346,7 +346,8 @@ def compose_turn_message(prompt: str, context: str = "", skills: str = "") -> st
         "messages): derive every scenario the request mentions and let the "
         "surface vary per scenario, then re-read the request before "
         "finishing to confirm each named scenario is covered by your "
-        "implementation. This contract holds for every "
+        "implementation; record the derived assumptions via openpilot_spec "
+        "(assumptions list, goal) before implementing. This contract holds for every "
         "later turn in this conversation.\n\n"
     )
     if skills:

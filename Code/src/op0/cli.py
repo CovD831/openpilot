@@ -270,6 +270,9 @@ def _make_bridge(
         session, store, registry, gate, project_root, goal_state
     )
 
+    def spec_recorder(payload: dict) -> None:
+        session.record("spec_assumptions", payload, producer="agent")
+
     def _spawn_task(task_prompt: str, validate_cmd: str = "", worktree: bool = False) -> dict:
         """Subagent: a full op0 run in a child context. Child carries its own
         ledger and engine; approvals surface on the SAME human gate (the

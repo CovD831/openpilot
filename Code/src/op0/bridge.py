@@ -40,6 +40,7 @@ _ALLOWED_TOOLS = frozenset(
         "openpilot_obs",
         "openpilot_task",
         "openpilot_tasks",
+        "openpilot_spec",
     }
 )
 
@@ -128,6 +129,7 @@ class ReadOnlyToolBridge:
         on_bash_executed: Callable[[str, int, str, Any], None] | None = None,
         on_request: Callable[[dict[str, Any]], None] | None = None,
         on_result: Callable[[dict[str, Any]], None] | None = None,
+        spec_recorder: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.scoped_roots = tuple(Path(root).expanduser().resolve(strict=False) for root in scoped_roots)
         self.observations_dir = observations_dir
@@ -151,6 +153,8 @@ class ReadOnlyToolBridge:
         self.on_bash_executed = on_bash_executed
         self.on_request = on_request
         self.on_result = on_result
+        # spec assumptions: a typed audit exit for feature-work guesses
+        self.spec_recorder = spec_recorder
         self._temporary: tempfile.TemporaryDirectory[str] | None = None
         self._read_memory: dict[tuple[str, int, int], dict[str, str]] = {}  # S1
         self._server: socket.socket | None = None
@@ -205,6 +209,23 @@ class ReadOnlyToolBridge:
             except OSError:
                 pass
 
+    def _record_spec(self, args: dict[str, Any]) -> str:
+        """Typed audit exit for the spec-derivation contract: the agent
+        records the acceptance-assertion variants it derived BEFORE
+        implementing, so the ledger shows what surface it guessed."""
+        assumptions = args.get("assumptions")
+        if (not isinstance(assumptions, list) or not assumptions
+                or not all(isinstance(a, str) and a.strip() for a in assumptions)):
+            raise ValueError("assumptions must be a non-empty list of strings")
+        if self.spec_recorder is None:
+            return "spec recording is not available in this session"
+        payload = {
+            "goal": str(args.get("goal") or "")[:500],
+            "assumptions": [a.strip()[:500] for a in assumptions][:12],
+        }
+        self.spec_recorder(payload)
+        return f"recorded {len(payload['assumptions'])} spec assumption(s)"
+
     @staticmethod
     def _read_request(connection: socket.socket) -> dict[str, Any]:
         buffer = bytearray()
@@ -233,6 +254,8 @@ class ReadOnlyToolBridge:
                 content = self._run_task(args, call_id)
             elif tool == "openpilot_tasks":
                 content = self._run_tasks(args, call_id)
+            elif tool == "openpilot_spec":
+                content = self._record_spec(args)
             elif tool == "openpilot_obs":
                 content = fetch_observation(self.observations_dir, str(args.get("id") or ""))
             else:

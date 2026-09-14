@@ -78,6 +78,10 @@ def _register() -> None:
                   "approval_timeout"):
         _contract(event, producer="admission", consumers=("audit",), strict=False)
 
+    # -- agent spec assumptions (typed audit of feature-work guesses) ----
+    _contract("spec_assumptions", producer="agent", consumers=("audit", "handoff"),
+              required={"goal": str, "assumptions": list})
+
     # -- receipts & cli lifecycle ---------------------------------------
     _contract("task_received", producer="cli", consumers=("audit",),
               required={"goal": str}, optional={"project_root": str})
