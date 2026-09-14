@@ -13,7 +13,6 @@ __all__ = [
     "instrumented_llm",
     "llm",
     "openpilot_log",
-    "risk",
     "semantic_analyzer",
     "semantic_types",
 ]
