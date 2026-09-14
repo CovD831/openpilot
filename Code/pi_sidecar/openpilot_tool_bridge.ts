@@ -139,6 +139,28 @@ export default function openpilotToolBridge(pi: ExtensionAPI) {
   });
 
   pi.registerTool({
+    name: "openpilot_spec",
+    label: "OpenPilot Spec Assumptions",
+    description: "Record the acceptance-assertion variants you derived for feature work (names, wording, columns, messages that the request does not pin exactly) BEFORE implementing - one entry per scenario the request mentions. Typed audit trail.",
+    parameters: Type.Object({
+      goal: Type.String({ description: "The feature goal these assumptions belong to" }),
+      assumptions: Type.Array(Type.String({ description: "One derived acceptance-assertion variant per scenario" }), { minItems: 1 }),
+    }),
+    executionMode: "sequential",
+    async execute(toolCallId, params, signal) {
+      const response = await invokeGateway(
+        { type: "tool_call", toolName: "openpilot_spec", toolCallId, args: params },
+        signal,
+      );
+      if (!response.success) throw new Error(response.content);
+      return {
+        content: [{ type: "text", text: response.content }],
+        details: { gateway: "openpilot", success: response.success },
+      };
+    },
+  });
+
+  pi.registerTool({
     name: "openpilot_search",
     label: "OpenPilot Search",
     description: "Search project files for a substring or regex through the OpenPilot Action Gateway.",

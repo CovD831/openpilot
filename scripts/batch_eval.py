@@ -69,8 +69,7 @@ def _venv_python(instance: dict) -> Path:
 def run_django_tests(repo: Path, py: Path, refs: list[str]) -> dict:
     """django's own runner: tests/runtests.py <module.Class.test> --settings test_sqlite -v 2."""
     proc = subprocess.run(
-        [str(py), "tests/runtests.py", *refs, "--settings", "test_sqlite", "-v", "2",
-         f"--basetemp={repo}/.pytest-tmp"],
+        [str(py), "tests/runtests.py", *refs, "--settings", "test_sqlite", "-v", "2"],
         capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
     )
     out = (proc.stdout + proc.stderr)[-8000:]
@@ -264,18 +263,18 @@ def evaluate(instance: dict) -> dict:
     # benchmark at all (py3.13 vs old deps) - that is an environment verdict,
     # not a model verdict
     base_f2p_env_broken = []
-    for nid in f2p_ids:
-        solo = subprocess.run(
-            [str(py), "-m", "pytest", nid, "-q", "-W", "ignore::DeprecationWarning",
-             f"--basetemp={repo}/.pytest-base-f2p"],
-            capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
-        )
-        combined = solo.stdout + solo.stderr
-        if "errors" in combined.splitlines()[-1] or "collected" in combined and "error" in combined:
-            pass  # refined below
-        if solo.returncode != 0 and ("ModuleNotFoundError" in combined or "AttributeError" in combined
-                                     or "ImportError" in combined or "no tests ran" in combined):
-            base_f2p_env_broken.append(nid)
+    if not django:  # django F2P methods legitimately do not exist on base
+        # (the test patch adds them) - the solo gate is pytest-only
+        for nid in f2p_ids:
+            solo = subprocess.run(
+                [str(py), "-m", "pytest", nid, "-q", "-W", "ignore::DeprecationWarning",
+                 f"--basetemp={repo}/.pytest-base-f2p"],
+                capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
+            )
+            combined = solo.stdout + solo.stderr
+            if solo.returncode != 0 and ("ModuleNotFoundError" in combined or "AttributeError" in combined
+                                         or "ImportError" in combined or "no tests ran" in combined):
+                base_f2p_env_broken.append(nid)
     if base_f2p_env_broken:
         record.update(verdict="environment",
                       cause=f"F2P unrunnable on base (py3.13 vs old deps): {base_f2p_env_broken}")
@@ -328,11 +327,17 @@ def evaluate(instance: dict) -> dict:
         return record
     got = run_tests(repo, py, f2p_ids) if django else run_tests(repo, py, test_files + f2p_ids)
     record["op0"] = {k: got[k] for k in ("failed", "passed", "errors")}
+    if django and ("ModuleNotFoundError" in got["output"] or "ImportError" in got["output"]):
+        # py3.13 removed cgi/distutils - old django lines die at import
+        record.update(verdict="environment",
+                      cause="py3.13 vs old django deps (module removed at import)")
+        record["elapsed_s"] = round(time.monotonic() - t0, 1)
+        return record
     if django:
-        # -v 2 prints "test_x (module.Class) ... ok" per test
+        # -v 2 prints "test_x (module.Class.test_x) ... ok" per test; match
+        # on the test NAME (the parenthesised form duplicates it)
         f2p_missing = [nid for nid in f2p
-                       if f"... ok" not in got["output"] or
-                       not re.search(re.escape(nid.split(" ")[0]) + r" \(" + re.escape(nid.split("(")[1].rstrip(")")) + r"\) \.\.\. ok", got["output"])]
+                       if not re.search(re.escape(nid.split(" ")[0]) + r" \(.*\) \.\.\. ok", got["output"])]
     else:
         passed_block = got["output"].split("short test summary")[-1]
         f2p_missing = [nid for nid in f2p_ids
