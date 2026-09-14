@@ -81,6 +81,8 @@ def _register() -> None:
     # -- agent spec assumptions (typed audit of feature-work guesses) ----
     _contract("spec_assumptions", producer="agent", consumers=("audit", "handoff"),
               required={"goal": str, "assumptions": list})
+    _contract("closure_gate", producer="engine", consumers=("audit",),
+              required={"requirement": str, "result": str})
 
     # -- receipts & cli lifecycle ---------------------------------------
     _contract("task_received", producer="cli", consumers=("audit",),

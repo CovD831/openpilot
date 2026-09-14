@@ -57,6 +57,7 @@ class EngineConfig:
     cwd: str = ""
     timeout_seconds: float = 180.0
     enable_read_tool: bool = True
+    closure_requires_spec: bool = False
     context_budget_tokens: int = 0  # 0 disables compaction (safe default)
     observations_dir: str = ""
 
@@ -175,7 +176,8 @@ class Engine:
         self.restart()
         self._context = projection
 
-    def ask(self, prompt: str, *, first_turn: bool = False, _retry: bool = True) -> str:
+    def ask(self, prompt: str, *, first_turn: bool = False, _retry: bool = True,
+            _closure_gate: bool = False) -> str:
         """Run one conversation turn against the live process."""
         if self.state is not EngineState.RUNNING or self._process is None:
             raise RuntimeError("engine is not running")
@@ -242,7 +244,52 @@ class Engine:
             )
             _stop_process(self._process)
             self._process = None
+        if self.config.closure_requires_spec and not _closure_gate:
+            return self._enforce_spec_closure()
         return self.session.last_model_response()
+
+    def _ledger_has_spec(self) -> bool:
+        return any(e.event_type == "spec_assumptions" for e in self.session.load_events())
+
+    def _enforce_spec_closure(self) -> str:
+        """Closure gate (typed admission decides, via closure_requires_spec):
+        a feature run must carry spec_assumptions in its ledger before it
+        closes. One corrective turn, then close WITH the miss marked - a
+        missing assumption is an audit fact, never an infinite loop."""
+        if self._ledger_has_spec():
+            return self.session.last_model_response()
+        answer = self.session.last_model_response()
+        self.session.record(
+            "closure_gate", {"requirement": "spec_assumptions", "result": "blocked"}, producer="engine"
+        )
+        try:
+            retry = self.ask(
+                "[closure gate] This run requires spec assumptions in the ledger before it "
+                "can close: call openpilot_spec now with the acceptance-assertion variants "
+                "you derived (assumptions list + goal), then briefly confirm. Do not "
+                "implement anything new.",
+                _closure_gate=True,
+            )
+        except (EOFError, TimeoutError, RuntimeError, OSError, ValueError):
+            self.session.record(
+                "closure_gate",
+                {"requirement": "spec_assumptions", "result": "closed_with_miss"},
+                producer="engine",
+            )
+            return answer
+        if self._ledger_has_spec():
+            self.session.record(
+                "closure_gate",
+                {"requirement": "spec_assumptions", "result": "passed_after_retry"},
+                producer="engine",
+            )
+            return retry
+        self.session.record(
+            "closure_gate",
+            {"requirement": "spec_assumptions", "result": "closed_with_miss"},
+            producer="engine",
+        )
+        return answer
 
     def run_once(self, spec: TaskSpec, *, bridge: ReadOnlyToolBridge | None = None) -> str:
         """Single-shot compatibility path used by --once and acceptance runs."""

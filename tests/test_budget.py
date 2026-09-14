@@ -18,8 +18,10 @@ from pathlib import Path
 # continuation, /checkpoint) -> 4,180; yes-to-all fix + fixed-height
 # approval card scrolling (both from the real flask-4992 run) -> 4,210;
 # spec_assumptions typed exit (openpilot_spec tool + strict contract,
-# from the 5063 capability work) -> 4,250, pending the boss's ruling.
-LINE_BUDGET = 4250
+# from the 5063 capability work) -> 4,250; closure gate (single
+# corrective turn, miss marked on the ledger) -> 4,300, pending the
+# boss's ruling.
+LINE_BUDGET = 4300
 
 
 def test_line_budget() -> None:

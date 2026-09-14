@@ -177,6 +177,7 @@ def run_op0(repo: Path, goal: str) -> dict:
         cwd=str(repo),
         timeout_seconds=RUN_TIMEOUT,
         enable_read_tool=True,
+        closure_requires_spec=True,  # batch runs audit every run's spec ledger
         context_budget_tokens=0,
         observations_dir=observations,
     )
@@ -260,7 +261,7 @@ def evaluate(instance: dict) -> dict:
         # by bare test name (always recoverable from the truncated string)
         f2p_modules = [f[len("tests/"):-3].replace("/", ".") for f in test_files
                        if f.startswith("tests/") and f.endswith(".py")]
-        f2p_ids = [m for m in (_django_ref(n) for n in f2p) if m != n] or f2p_modules
+        f2p_ids = [ref for n in f2p if (ref := _django_ref(n)) != n] or f2p_modules
         run_tests = run_django_tests
     else:
         # node ids: full ones pass through; bare names attach to the touched file
