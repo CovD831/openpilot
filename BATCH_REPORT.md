@@ -10,9 +10,12 @@
 
 | instance | verdict | turns | tokens | cost | 时长 |
 |---|---|---|---|---|---|
+| pallets/flask-4045 | **success** | 31 | 26,193 | $0.0791 | 95s |
 | pallets/flask-4992 | **success** | 26 | 26,075 | $0.0062 | 140s |
-| pallets/flask-5063 | failed | 88 | 95,248 | $0.4624 | 789s |
+| pallets/flask-5063 | failed ×3 | 88/46/126 | 95k/51k/111k | $0.46/$0.19/$0.62 | 789/396/1005s |
 | sympy-15609 | **success** | 27 | 21,575 | $0.0573 | 91s |
+
+补测后总量：**9 条，可测 7 条，成功 6（86%）**。
 | sympy-16988 | environment | - | - | - | - |
 | sympy-18057 | environment | - | - | - | - |
 | sympy-20212 | **success** | 51 | 39,001 | $0.1271 | 155s |
@@ -22,12 +25,14 @@
 
 判据细节：每条在 base 与 op0-patch 两个状态下同口径对照（官方 test_patch 注入），verdict 要求 FAIL_TO_PASS 全过且 failed/errors 不劣于 base。
 
+**补测批次（2026-09-14）**：flask-4045（加校验型，需 werkzeug 2.0 venv + `-W ignore::DeprecationWarning` 解除 py3.13 warning-as-error）一次命中；flask-5063 方差验证重跑两次——**三次独立运行全部 failed**（88/46/126 turns，$0.46/$0.19/$0.62），失败稳定非方差，且暴露无 turn 上限下长任务的成本方差（3.3×）。
+
 ## 失败归因三分法
 
 | 归因 | 条数 | 说明 |
 |---|---|---|
 | environment（不可测） | 2 | sympy 1.5/1.6 的 `distutils` 与 `py.path` 在 py3.13 断裂——F2P 测试在 base 上就 collection-error，benchmark 无法运行。**不是模型失败，是环境死刑** |
-| capability（能力边界） | 1 | flask-5063：**功能增强型** issue（给 routes 加 subdomain 信息），88 turns / 95k token 未达——对比 4992（bug 修复型）一次命中。初步模式：**修 bug 易、加功能难** |
+| capability（能力边界） | 1（3/3 次运行） | flask-5063：**功能增强 + 输出格式规格型**——三次独立运行（88/46/126 turns）全部失败。尸检：功能逻辑全对（Domain 列、host_matching 分支），唯独列头用静态 "Domain"，官方按场景动态命名 `"Host" if host_matching else "Subdomain"`——**规格尾步推断失败**。对照：bug 修复型（4992）与加校验型（4045，规格可从 issue 直接推导）均一次命中。模式清晰：**规格可推导的任务稳过，规格需推断变体的任务稳挂** |
 | 治理流程导致 | 0 | 没有一条失败与审批/沙箱/记账相关 |
 
 ## 治理栈在批量下的表现

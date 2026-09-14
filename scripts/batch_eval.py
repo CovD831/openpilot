@@ -102,7 +102,8 @@ def test_files_from_patch(test_patch: str) -> list[str]:
 
 def run_pytest(repo: Path, py: Path, node_ids: list[str]) -> dict:
     proc = subprocess.run(
-        [str(py), "-m", "pytest", *node_ids, "-q", f"--basetemp={repo}/.pytest-tmp"],
+        [str(py), "-m", "pytest", *node_ids, "-q", "-W", "ignore::DeprecationWarning",
+         f"--basetemp={repo}/.pytest-tmp"],
         capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
     )
     out = proc.stdout[-4000:]
@@ -147,10 +148,20 @@ def run_op0(repo: Path, goal: str) -> dict:
     )
     bridge.start()
     engine.start(bridge)
+    # environment hint: the pre-built venv is evaluation infrastructure, not
+    # benchmark information - without it the agent burns turns building its
+    # own (observed on flask-5063: /tmp venvs, PYTHONPATH surgery, site-
+    # packages archaeology)
+    env_hint = ""
+    venv_python = repo.parent / "venv" / "bin" / "python"
+    if venv_python.exists():
+        env_hint = (f"[Environment] A ready virtualenv for this repo: {venv_python} "
+                    f"(the project is installed editable; pytest included). "
+                    f"Run tests as: cd {repo} && {venv_python} -m pytest <test file>\n\n")
     started = time.monotonic()
     error = ""
     try:
-        answer = engine.ask(goal, first_turn=True)
+        answer = engine.ask(env_hint + goal, first_turn=True)
         if not answer.strip():
             # fail-closed: an empty report means the Pi sidecar crashed
             # mid-run (the ask() crash path returns the empty projection)
@@ -213,7 +224,8 @@ def evaluate(instance: dict) -> dict:
     base_f2p_env_broken = []
     for nid in f2p_ids:
         solo = subprocess.run(
-            [str(py), "-m", "pytest", nid, "-q", f"--basetemp={repo}/.pytest-base-f2p"],
+            [str(py), "-m", "pytest", nid, "-q", "-W", "ignore::DeprecationWarning",
+             f"--basetemp={repo}/.pytest-base-f2p"],
             capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
         )
         combined = solo.stdout + solo.stderr
@@ -275,7 +287,8 @@ def evaluate(instance: dict) -> dict:
     f2p_missing = []
     for nid in f2p_ids:
         solo = subprocess.run(
-            [str(py), "-m", "pytest", nid, "-q", f"--basetemp={repo}/.pytest-f2p"],
+            [str(py), "-m", "pytest", nid, "-q", "-W", "ignore::DeprecationWarning",
+             f"--basetemp={repo}/.pytest-f2p"],
             capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
         )
         if solo.returncode != 0:
