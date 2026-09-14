@@ -71,7 +71,7 @@ class EngineConfig:
         if self.enable_read_tool:
             extension = str(Path(__file__).resolve().parents[2] / "pi_sidecar" / "openpilot_tool_bridge.ts")
             argv.extend(
-                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search,openpilot_obs,openpilot_task,openpilot_tasks")
+                ("--no-builtin-tools", "--extension", extension, "--tools", "openpilot_read,openpilot_patch,openpilot_write,openpilot_bash,openpilot_search,openpilot_obs,openpilot_task,openpilot_tasks,openpilot_spec")
             )
         else:
             argv.append("--no-tools")
