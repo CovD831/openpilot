@@ -102,7 +102,7 @@ def test_files_from_patch(test_patch: str) -> list[str]:
 
 def run_pytest(repo: Path, py: Path, node_ids: list[str]) -> dict:
     proc = subprocess.run(
-        [str(py), "-m", "pytest", *node_ids, "-q", "-W", "ignore::DeprecationWarning",
+        [str(py), "-m", "pytest", *node_ids, "-q", "-rA", "-W", "ignore::DeprecationWarning",
          f"--basetemp={repo}/.pytest-tmp"],
         capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
     )
@@ -267,11 +267,13 @@ def evaluate(instance: dict) -> dict:
         record["elapsed_s"] = round(time.monotonic() - t0, 1)
         return record
 
-    # verify: F2P verdict by running each node id SOLO (pytest -q does not
-    # list passing test names, so grep-the-output verdicts are impossible)
-    # the agent may have written its OWN tests (observed on sympy-21614);
-    # the official test patch replaces them - drop agent changes to the
-    # touched test files before applying, keeping the source patch
+    # verify: F2P verdict read from the main run's -rA summary (PASSED per
+    # test) - solo re-runs after the full-file run misfired intermittently
+    # (observed on flask-5063: solo failed where the same command passed
+    # standalone, poisoning the verdict). The agent may have written its OWN
+    # tests (observed on sympy-21614); the official test patch replaces them
+    # - drop agent changes to the touched test files before applying,
+    # keeping the source patch
     for tf in test_files:
         subprocess.run(["git", "-C", str(repo), "checkout", "--", tf], capture_output=True)
         subprocess.run(["git", "-C", str(repo), "clean", "-qf", "--", str(Path(tf).parent)],
@@ -284,15 +286,10 @@ def evaluate(instance: dict) -> dict:
         return record
     got = run_pytest(repo, py, test_files + f2p_ids)
     record["op0"] = {k: got[k] for k in ("failed", "passed", "errors")}
-    f2p_missing = []
-    for nid in f2p_ids:
-        solo = subprocess.run(
-            [str(py), "-m", "pytest", nid, "-q", "-W", "ignore::DeprecationWarning",
-             f"--basetemp={repo}/.pytest-f2p"],
-            capture_output=True, text=True, timeout=TEST_FILE_TIMEOUT, cwd=str(repo),
-        )
-        if solo.returncode != 0:
-            f2p_missing.append(nid)
+    passed_block = got["output"].split("short test summary")[-1]
+    f2p_missing = [nid for nid in f2p_ids
+                   if f"PASSED {nid}" not in passed_block
+                   and f"PASSED {nid.split('::')[-1]}" not in passed_block]
     no_regression = (got["failed"] <= base["failed"]) and (got["errors"] <= base["errors"])
     if not f2p_missing and no_regression:
         record["verdict"] = "success"

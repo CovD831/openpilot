@@ -341,7 +341,12 @@ def compose_turn_message(prompt: str, context: str = "", skills: str = "") -> st
         "the same call, briefly acknowledge the denial and ask the human what "
         "to do differently, then stop that line of work. Use project-relative "
         "paths. Reply concisely and never re-quote file contents verbatim — "
-        "summarize or point at them instead. This contract holds for every "
+        "summarize or point at them instead. Feature work whose exact "
+        "surface is not pinned by the request (names, wording, columns, "
+        "messages): derive every scenario the request mentions and let the "
+        "surface vary per scenario, then re-read the request before "
+        "finishing to confirm each named scenario is covered by your "
+        "implementation. This contract holds for every "
         "later turn in this conversation.\n\n"
     )
     if skills:

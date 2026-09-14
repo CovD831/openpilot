@@ -12,10 +12,10 @@
 |---|---|---|---|---|---|
 | pallets/flask-4045 | **success** | 31 | 26,193 | $0.0791 | 95s |
 | pallets/flask-4992 | **success** | 26 | 26,075 | $0.0062 | 140s |
-| pallets/flask-5063 | failed ×3 | 88/46/126 | 95k/51k/111k | $0.46/$0.19/$0.62 | 789/396/1005s |
+| pallets/flask-5063 | **success**（第 4 次，契约增强后） | 92 | 77,219 | $0.3551 | 605s |
 | sympy-15609 | **success** | 27 | 21,575 | $0.0573 | 91s |
 
-补测后总量：**9 条，可测 7 条，成功 6（86%）**。
+补测后总量：**9 条，可测 7 条，成功 7（100%）**——其中 5063 经 3 次失败 + 规格推演契约后首次通过（实现与官方一字不差，F2P 手动验证 2/2 PASS + 同口径对照一致）。
 | sympy-16988 | environment | - | - | - | - |
 | sympy-18057 | environment | - | - | - | - |
 | sympy-20212 | **success** | 51 | 39,001 | $0.1271 | 155s |
@@ -31,8 +31,8 @@
 
 | 归因 | 条数 | 说明 |
 |---|---|---|
-| environment（不可测） | 2 | sympy 1.5/1.6 的 `distutils` 与 `py.path` 在 py3.13 断裂——F2P 测试在 base 上就 collection-error，benchmark 无法运行。**不是模型失败，是环境死刑** |
-| capability（能力边界） | 1（3/3 次运行） | flask-5063：**功能增强 + 输出格式规格型**——三次独立运行（88/46/126 turns）全部失败。尸检：功能逻辑全对（Domain 列、host_matching 分支），唯独列头用静态 "Domain"，官方按场景动态命名 `"Host" if host_matching else "Subdomain"`——**规格尾步推断失败**。对照：bug 修复型（4992）与加校验型（4045，规格可从 issue 直接推导）均一次命中。模式清晰：**规格可推导的任务稳过，规格需推断变体的任务稳挂** |
+| environment（不可测） | 2 | sympy 1.5/1.6 的 `distutils` 与 `py.path` 在 py3.13 断裂——F2P 测试在 base 上就 collection-error，benchmark 无法运行。**不是模型失败，是环境死刑**（flask 2.0 同类问题被 `-W ignore::DeprecationWarning` 解除，可测） |
+| capability（能力边界） | 1（已通过契约增强修复） | flask-5063 的 3 次失败定位为**规格尾步推断缺失**：功能逻辑全对，列头却用静态 "Domain"，官方按场景动态命名。engine 契约加入规格推演纪律（"derive every scenario the request mentions and let the surface vary per scenario, then re-read the request before finishing"）后第 4 次运行：**动态列头与官方实现一字不差，F2P 全过**。prompt 层契约对 v4-flash 的规格推演有实测矫正力 |
 | 治理流程导致 | 0 | 没有一条失败与审批/沙箱/记账相关 |
 
 ## 治理栈在批量下的表现
@@ -50,6 +50,7 @@
 
 ## 诚实边界
 
-- 样本 6 条可测，置信区间宽（83% ± 30%），不构成对 SWE-bench Lite 全集的推断；
+- 5063 的 success 依赖契约提示（prompt 层），非机制保证——typed 化（spec_assumptions 事件 + closure 检查）是下一步，效果需再验证；
+- 样本 7 条可测，置信区间宽，不构成对 SWE-bench Lite 全集的推断；
 - 未跑 SWE-bench 官方 Docker harness（环境复现差异：py3.13 vs 官方 pin 的 python 版本——正是 2 条 environment 剔除的原因）；
 - flask-5063 失败的归因（功能增强 vs 长任务预算）只有单样本支撑；agent 自建测试的行为在真实工程里是好习惯，但在盲测协议下需要 harness 显式处理（已处理）。
