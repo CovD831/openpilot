@@ -25,6 +25,8 @@ dependencies = [
 
 [project.scripts]
 openpilot = "ui.cli:main"
+coding-agent = "coding_agent.cli:main"
+evidence = "evidence_core.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
