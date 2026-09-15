@@ -6,7 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from memory.compaction_summary import source_candidate_binding_hash
+from core.exceptions import ContextSourceError
+from memory.compaction_summary import (
+    source_candidate_binding_hash,
+    source_candidate_fingerprint,
+)
+import memory.context_builder as context_builder_module
 from memory.compaction_reuse import (
     ReusableCompactionArtifactCandidate,
     ReusableCompactionSemanticFact,
@@ -29,6 +34,7 @@ from metadata import (
     ContextCandidateTrust,
     ContextCandidateTruncation,
     ContextCompactionBinding,
+    ContextCompactionAttempt,
     ContextCompactionRecord,
     ContextCompactionReuseAdmission,
     ContextCompactionReuseAdmissionStatus,
@@ -253,6 +259,7 @@ def _preflight_fixture():
         source_candidate_ids=list(record.source_candidate_ids),
         source_fingerprint=record.source_fingerprint,
         source_binding_hash=binding_hash,
+        required_candidate_ids=["required-1"],
         recent_suffix_ids=["recent-1"],
         artifact_id=binding.artifact.artifact_id,
         artifact_kind=binding.artifact.kind,
@@ -347,6 +354,232 @@ def test_source_candidate_binding_hash_matches_shadow_payload_shape() -> None:
         payload,
         ["dialog-1", "dialog-2"],
     )
+
+
+def test_source_fingerprint_shadow_index_is_incremental_and_bounded(monkeypatch) -> None:
+    candidates = [
+        ContextCandidate(
+            candidate_id=f"dialog-{index}",
+            kind=ContextCandidateKind.DIALOG,
+            source_id=f"turn-{index}",
+            content=f"assistant detail {index}: " + ("body " * (index % 7 + 1)),
+            role="assistant",
+            retention=ContextCandidateRetention.PREFERRED,
+            priority=40,
+            source_order=index,
+            truncation=ContextCandidateTruncation.HEAD,
+            trust=ContextCandidateTrust.DIRECT,
+            freshness=ContextCandidateFreshness.HISTORICAL,
+        )
+        for index in range(1_000)
+    ]
+
+    bounded_candidates = candidates[-64:]
+    expected: dict[str, str] = {}
+    for start in range(len(bounded_candidates)):
+        for end in range(start + 2, min(len(bounded_candidates), start + 64) + 1):
+            window = bounded_candidates[start:end]
+            source_ids = [candidate.candidate_id for candidate in window]
+            key = json.dumps(source_ids, ensure_ascii=False, separators=(",", ":"))
+            expected[key] = source_candidate_fingerprint(window)
+
+    original_sha256 = context_builder_module.hashlib.sha256
+    sha256_calls: list[bytes] = []
+
+    def counted_sha256(data: bytes = b""):
+        sha256_calls.append(bytes(data))
+        return original_sha256(data)
+
+    monkeypatch.setattr(context_builder_module.hashlib, "sha256", counted_sha256)
+    observed = MemoryContextBuilder._source_fingerprint_shadow_index(candidates, [])
+
+    assert observed == expected
+    assert len(observed) <= 64 * 63 // 2
+    assert json.dumps(
+        ["dialog-0", "dialog-1"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ) not in observed
+    # One initial hash state per start position; overlapping windows must not
+    # re-hash each full body.  This is the deterministic work bound for the
+    # max-window=64 shadow evidence path.
+    assert len(sha256_calls) <= 64
+
+
+def test_source_fingerprint_shadow_index_keeps_oldest_bounded_attempt() -> None:
+    attempts = [
+        SimpleNamespace(
+            source_candidate_ids=[f"persisted-{index}"],
+            source_fingerprint="sha256:" + f"{index:064x}",
+        )
+        for index in range(256)
+    ]
+
+    observed = MemoryContextBuilder._source_fingerprint_shadow_index([], attempts)
+
+    assert observed[json.dumps(["persisted-0"], separators=(",", ":"))] == (
+        "sha256:" + "0" * 64
+    )
+    assert observed[json.dumps(["persisted-255"], separators=(",", ":"))] == (
+        "sha256:" + f"{255:064x}"
+    )
+
+
+@pytest.mark.parametrize(
+    "attempts",
+    [
+        [
+            SimpleNamespace(
+                source_candidate_ids=[f"persisted-{index}"],
+                source_fingerprint="sha256:" + "a" * 64,
+            )
+            for index in range(257)
+        ],
+        [
+            SimpleNamespace(
+                source_candidate_ids=[f"persisted-{index}" for index in range(4_097)],
+                source_fingerprint="sha256:" + "a" * 64,
+            )
+        ],
+    ],
+)
+def test_source_fingerprint_shadow_index_fails_closed_above_attempt_bounds(
+    attempts,
+) -> None:
+    with pytest.raises(ValueError, match="compaction attempt fingerprint index limit"):
+        MemoryContextBuilder._source_fingerprint_shadow_index([], attempts)
+
+
+def test_source_fingerprint_shadow_index_accepts_exact_source_id_bounds() -> None:
+    one_maximal_attempt = [
+        SimpleNamespace(
+            source_candidate_ids=[f"single-{index}" for index in range(4_096)],
+            source_fingerprint="sha256:" + "a" * 64,
+        )
+    ]
+    observed_single = MemoryContextBuilder._source_fingerprint_shadow_index(
+        [],
+        one_maximal_attempt,
+    )
+    assert len(observed_single) == 1
+
+    maximal_total = [
+        SimpleNamespace(
+            source_candidate_ids=[
+                f"total-{attempt_index}-{source_index}"
+                for source_index in range(4_096)
+            ],
+            source_fingerprint="sha256:" + f"{attempt_index:064x}",
+        )
+        for attempt_index in range(16)
+    ]
+    observed_total = MemoryContextBuilder._source_fingerprint_shadow_index(
+        [],
+        maximal_total,
+    )
+    assert len(observed_total) == 16
+
+
+def test_source_fingerprint_shadow_index_fails_closed_above_total_source_id_bound() -> None:
+    attempts = [
+        SimpleNamespace(
+            source_candidate_ids=[
+                f"total-over-{attempt_index}-{source_index}"
+                for source_index in range(4_096)
+            ],
+            source_fingerprint="sha256:" + f"{attempt_index:064x}",
+        )
+        for attempt_index in range(16)
+    ]
+    attempts.append(
+        SimpleNamespace(
+            source_candidate_ids=["total-over-final"],
+            source_fingerprint="sha256:" + "f" * 64,
+        )
+    )
+
+    with pytest.raises(ValueError, match="compaction attempt fingerprint index limit"):
+        MemoryContextBuilder._source_fingerprint_shadow_index([], attempts)
+
+
+def test_compaction_reuse_shadow_attempt_overflow_is_typed_and_keeps_prompt(
+    tmp_path,
+) -> None:
+    fixture = _preflight_fixture()
+    builder = MemoryContextBuilder(
+        short_memory=ShortMemory(repo_path=tmp_path / "short"),
+        memory_store=MemoryStore(tmp_path / "memory"),
+        max_prompt_chars=1_000,
+        compaction_reuse_shadow_provider=lambda _payload: [],
+    )
+    assembly = builder.context_assembler.assemble_candidates(
+        fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+    )
+    assembly.selection.compaction_attempts = [
+        ContextCompactionAttempt(
+            attempt_ordinal=index + 1,
+            source_candidate_ids=[f"persisted-{index}"],
+            source_fingerprint="sha256:" + f"{index:064x}",
+            algorithm="deterministic_observation_mask_v1",
+        )
+        for index in range(257)
+    ]
+
+    observed = builder._apply_compaction_reuse_shadow(
+        candidates=fixture["candidates"],
+        assembly=assembly,
+        request_hash="sha256:" + "1" * 64,
+        session_turn_source_hash="sha256:" + "2" * 64,
+        session_constraints_hash="",
+    )
+
+    assert observed.prompt_text == assembly.prompt_text
+    assert observed.selected_candidates == assembly.selected_candidates
+    assert len(observed.selection.compaction_attempts) == 257
+    assert observed.selection.compaction_reuse_admissions == []
+    assert observed.selection.compaction_reuse_shadow_failures[0].reason == (
+        "source_index_limit_exceeded"
+    )
+    with pytest.raises(ContextSourceError, match="context_compaction_reuse"):
+        builder._apply_compaction_reuse_shadow(
+            candidates=fixture["candidates"],
+            assembly=assembly,
+            request_hash="sha256:" + "1" * 64,
+            session_turn_source_hash="sha256:" + "2" * 64,
+            session_constraints_hash="",
+            strict_sources=True,
+        )
+
+
+@pytest.mark.parametrize("empty_result", [None, [], ()])
+def test_compaction_reuse_shadow_strict_sources_rejects_empty_provider_result(
+    tmp_path,
+    empty_result,
+) -> None:
+    fixture = _preflight_fixture()
+    builder = MemoryContextBuilder(
+        short_memory=ShortMemory(repo_path=tmp_path / "short"),
+        memory_store=MemoryStore(tmp_path / "memory"),
+        max_prompt_chars=1_000,
+        compaction_reuse_shadow_provider=lambda _payload: empty_result,
+    )
+    assembly = builder.context_assembler.assemble_candidates(
+        fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+    )
+
+    with pytest.raises(ContextSourceError, match="context_compaction_reuse"):
+        builder._apply_compaction_reuse_shadow(
+            candidates=fixture["candidates"],
+            assembly=assembly,
+            request_hash="sha256:" + "1" * 64,
+            session_turn_source_hash="sha256:" + "2" * 64,
+            session_constraints_hash="",
+            strict_sources=True,
+        )
 
 
 def test_reusable_compaction_candidate_from_binding_is_body_free() -> None:
@@ -725,6 +958,127 @@ def test_prompt_use_preflight_passes_with_admitted_binding_and_semantic_facts() 
 
 
 @pytest.mark.parametrize(
+    "field",
+    [
+        "artifact_integrity_checksum",
+        "source_fingerprint",
+        "generated_summary_fingerprint",
+    ],
+)
+def test_prompt_use_preflight_rejects_admission_identity_drift(field: str) -> None:
+    fixture = _preflight_fixture()
+    admission = fixture["admission"].model_copy(
+        update={field: "sha256:" + "f" * 64}
+    )
+
+    result = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=admission,
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    )
+
+    assert result.status == "rejected"
+    assert "admission_binding_mismatch" in result.rejection_reasons
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("required_candidate_ids", ["different-required"]),
+        ("recent_suffix_ids", ["different-recent"]),
+        ("session_constraints_hash", "sha256:" + "f" * 64),
+    ],
+)
+def test_prompt_use_preflight_rejects_admission_governance_identity_drift(
+    field: str,
+    value,
+) -> None:
+    fixture = _preflight_fixture()
+    admission = fixture["admission"].model_copy(update={field: value})
+
+    result = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=admission,
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    )
+
+    assert result.status == "rejected"
+    assert "admission_binding_mismatch" in result.rejection_reasons
+
+
+def test_prompt_use_preflight_binds_matching_session_constraint_authority() -> None:
+    fixture = _preflight_fixture()
+    authority_hash = "sha256:" + "c" * 64
+    admission = fixture["admission"].model_copy(
+        update={"session_constraints_hash": authority_hash}
+    )
+
+    result = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=admission,
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+        session_constraints_hash=authority_hash,
+    )
+
+    assert result.status == "passed"
+    assert result.session_constraints_hash == authority_hash
+
+
+def test_prompt_use_preflight_semantic_fact_hash_is_order_independent() -> None:
+    fixture = _preflight_fixture()
+
+    forward = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    )
+    reversed_facts = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=fixture["admission"],
+        semantic_facts=list(reversed(fixture["facts"])),
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    )
+
+    assert forward.status == "passed"
+    assert reversed_facts.status == "passed"
+    assert forward.semantic_facts_hash == reversed_facts.semantic_facts_hash
+    simulation = simulate_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        preflight=forward,
+        admission=fixture["admission"],
+        semantic_facts=list(reversed(fixture["facts"])),
+    )
+    assert simulation.status == "passed"
+
+
+@pytest.mark.parametrize(
     ("mutate", "reason"),
     [
         (
@@ -837,6 +1191,8 @@ def test_prompt_use_simulation_passes_with_body_free_char_reduction() -> None:
         policy=fixture["policy"],
         renderer=fixture["renderer"],
         preflight=preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
     )
 
     assert result.status == "passed"
@@ -881,6 +1237,8 @@ def test_prompt_use_simulation_records_token_accounting_when_requested() -> None
         policy=policy,
         renderer=fixture["renderer"],
         preflight=preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
         token_counter=counter,
     )
 
@@ -918,6 +1276,8 @@ def test_prompt_use_simulation_rejects_non_passed_preflight_without_prompt_hashe
         policy=fixture["policy"],
         renderer=fixture["renderer"],
         preflight=rejected_preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
     )
 
     assert result.status == "rejected"
@@ -952,10 +1312,213 @@ def test_prompt_use_simulation_rejects_source_drift_after_preflight() -> None:
         policy=fixture["policy"],
         renderer=fixture["renderer"],
         preflight=preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
     )
 
     assert result.status == "rejected"
     assert "source_binding_hash_mismatch" in result.rejection_reasons
+    assert result.raw_prompt_hash is None
+    assert result.reusable_prompt_hash is None
+
+
+def test_prompt_use_simulation_rejects_summary_candidate_identity_drift() -> None:
+    fixture = _preflight_fixture()
+    preflight = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    )
+
+    result = simulate_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        preflight=preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+        summary_candidate_id="different-summary-id",
+    )
+
+    assert result.status == "rejected"
+    assert "preflight_binding_mismatch" in result.rejection_reasons
+    assert result.raw_prompt_hash is None
+    assert result.reusable_prompt_hash is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("semantic_fact_ids", ["forged-fact"]),
+        ("semantic_evidence_candidate_ids", ["dialog-1"]),
+        ("semantic_facts_hash", "sha256:" + "f" * 64),
+    ],
+)
+def test_prompt_use_simulation_rejects_forged_preflight_semantic_evidence_before_assembly(
+    field: str,
+    value,
+) -> None:
+    fixture = _preflight_fixture()
+    preflight = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    ).model_copy(update={field: value})
+
+    result = simulate_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=lambda _candidates: pytest.fail("assembly must not run"),
+        preflight=preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+    )
+
+    assert result.status == "rejected"
+    assert "preflight_semantic_evidence_mismatch" in result.rejection_reasons
+    assert result.raw_prompt_hash is None
+    assert result.reusable_prompt_hash is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("required_candidate_ids", ["different-required"]),
+        ("recent_suffix_ids", ["different-recent"]),
+        ("session_constraints_hash", "sha256:" + "f" * 64),
+        ("artifact_id", "different-artifact"),
+        ("artifact_kind", "different-kind"),
+        ("artifact_integrity_checksum", "sha256:" + "e" * 64),
+        ("source_candidate_ids", ["dialog-2", "dialog-1"]),
+        ("source_fingerprint", "sha256:" + "d" * 64),
+        ("source_binding_hash", "sha256:" + "b" * 64),
+        ("generated_summary_fingerprint", "sha256:" + "c" * 64),
+    ],
+)
+def test_prompt_use_simulation_rejects_admission_identity_drift_before_assembly(
+    field: str,
+    value,
+) -> None:
+    fixture = _preflight_fixture()
+    preflight = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    )
+
+    result = simulate_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=lambda _candidates: pytest.fail("assembly must not run"),
+        preflight=preflight,
+        admission=fixture["admission"].model_copy(update={field: value}),
+        semantic_facts=fixture["facts"],
+    )
+
+    assert result.status == "rejected"
+    assert "preflight_binding_mismatch" in result.rejection_reasons
+    assert result.raw_prompt_hash is None
+    assert result.reusable_prompt_hash is None
+
+
+def test_passed_preflight_and_simulation_require_semantic_evidence() -> None:
+    fixture = _preflight_fixture()
+    preflight = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    )
+    invalid_preflight = preflight.model_dump(mode="python")
+    invalid_preflight["semantic_fact_ids"] = []
+    invalid_preflight["semantic_evidence_candidate_ids"] = []
+    with pytest.raises(ValueError, match="semantic evidence"):
+        type(preflight).model_validate(invalid_preflight)
+
+    rejected = simulate_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        preflight=preflight.model_copy(
+            update={
+                "semantic_fact_ids": [],
+                "semantic_evidence_candidate_ids": [],
+            }
+        ),
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+    )
+    assert rejected.status == "rejected"
+    assert "preflight_semantic_evidence_missing" in rejected.rejection_reasons
+
+    simulation = simulate_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        preflight=preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+    )
+    invalid_simulation = simulation.model_dump(mode="python")
+    invalid_simulation["semantic_fact_ids"] = []
+    invalid_simulation["semantic_evidence_candidate_ids"] = []
+    with pytest.raises(ValueError, match="semantic evidence"):
+        type(simulation).model_validate(invalid_simulation)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["artifact_integrity_checksum", "source_fingerprint"],
+)
+def test_prompt_use_simulation_rejects_preflight_identity_drift(field: str) -> None:
+    fixture = _preflight_fixture()
+    preflight = preflight_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+        required_candidate_ids=["required-1"],
+        recent_suffix_ids=["recent-1"],
+    ).model_copy(update={field: "sha256:" + "f" * 64})
+
+    result = simulate_reusable_compaction_prompt_use(
+        binding=fixture["binding"],
+        candidates=fixture["candidates"],
+        policy=fixture["policy"],
+        renderer=fixture["renderer"],
+        preflight=preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
+    )
+
+    assert result.status == "rejected"
+    assert "preflight_binding_mismatch" in result.rejection_reasons
     assert result.raw_prompt_hash is None
     assert result.reusable_prompt_hash is None
 
@@ -979,6 +1542,8 @@ def test_prompt_use_simulation_rejects_when_summary_falls_back_to_sources() -> N
         policy=ContextAssemblyPolicy(max_prompt_chars=80),
         renderer=fixture["renderer"],
         preflight=preflight,
+        admission=fixture["admission"],
+        semantic_facts=fixture["facts"],
     )
 
     assert result.status == "rejected"
@@ -1040,6 +1605,8 @@ def test_prompt_use_simulation_rejects_safe_but_non_beneficial_summary() -> None
         policy=ContextAssemblyPolicy(max_prompt_chars=2000),
         renderer=fixture["renderer"],
         preflight=preflight,
+        admission=admission,
+        semantic_facts=facts,
     )
 
     assert preflight.status == "passed"

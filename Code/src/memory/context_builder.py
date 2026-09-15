@@ -69,6 +69,13 @@ DEFAULT_MAX_PROMPT_CHARS = 16_000
 DEFAULT_MAX_PROMPT_TOKENS = 4_096
 MIN_PROMPT_CHARS = 256
 MEMORY_CONTEXT_ADAPTER_VERSION = "typed_memory_candidates_segmented_compaction_v5"
+_MAX_COMPACTION_FINGERPRINT_ATTEMPTS = 256
+_MAX_COMPACTION_FINGERPRINT_SOURCE_IDS_PER_ATTEMPT = 4_096
+_MAX_COMPACTION_FINGERPRINT_TOTAL_SOURCE_IDS = 65_536
+
+
+class _CompactionFingerprintIndexLimitError(ValueError):
+    """The body-free reuse index exceeded its explicit work envelope."""
 ROLLING_SUMMARY_RESPONSE_SCHEMA_RESERVE_TOKENS = 64
 
 
@@ -177,7 +184,7 @@ class MemoryContextBuilder:
             ingress_constraints = session_ingress_state.session_constraints
             if (
                 session_constraints is not None
-                and session_constraints.canonical_hash != ingress_constraints.canonical_hash
+                and session_constraints.authority_hash != ingress_constraints.authority_hash
             ):
                 raise ValueError("session ingress and explicit constraints differ")
             session_constraints = ingress_constraints
@@ -212,8 +219,10 @@ class MemoryContextBuilder:
             int(max_prompt_chars),
         )
         requested_max_tokens = self.max_prompt_tokens if max_prompt_tokens is None else int(max_prompt_tokens)
+        # Model-facing context identity excludes the ingress cursor.  The
+        # complete canonical hash remains for checkpoint/replay identity.
         session_constraints_hash = (
-            session_constraints.canonical_hash if session_constraints is not None else ""
+            session_constraints.authority_hash if session_constraints is not None else ""
         )
         session_turn_source_hash = (
             self._session_ingress_turn_ledger_hash(session_ingress_state)
@@ -900,24 +909,72 @@ class MemoryContextBuilder:
         the current source view.  The provider receives only hashes and IDs.
         """
 
-        index = {
-            _source_candidate_ids_key(attempt.source_candidate_ids): attempt.source_fingerprint
-            for attempt in attempts
-        }
+        if len(attempts) > _MAX_COMPACTION_FINGERPRINT_ATTEMPTS:
+            raise _CompactionFingerprintIndexLimitError(
+                "compaction attempt fingerprint index limit exceeded"
+            )
+        index: dict[str, str] = {}
+        total_attempt_source_ids = 0
+        for attempt in attempts:
+            source_ids = list(attempt.source_candidate_ids)
+            total_attempt_source_ids += len(source_ids)
+            if (
+                len(source_ids) > _MAX_COMPACTION_FINGERPRINT_SOURCE_IDS_PER_ATTEMPT
+                or total_attempt_source_ids
+                > _MAX_COMPACTION_FINGERPRINT_TOTAL_SOURCE_IDS
+            ):
+                raise _CompactionFingerprintIndexLimitError(
+                    "compaction attempt fingerprint index limit exceeded"
+                )
+            index[_source_candidate_ids_key(source_ids)] = attempt.source_fingerprint
+        # Only the most recent bounded dialog horizon is eligible for a new
+        # shadow-only lookup. Persisted compaction attempts above remain
+        # authoritative for older windows; missing older matches fail closed
+        # instead of building an unbounded O(n * window) index.
+        max_shadow_candidates = 64
         assistant_dialog = [
             candidate
             for candidate in candidates
             if candidate.kind == ContextCandidateKind.DIALOG
             and candidate.role == "assistant"
-        ]
+        ][-max_shadow_candidates:]
         max_window = 64
+        # ``source_candidate_fingerprint`` serializes and hashes the complete
+        # source window.  Calling it for every overlapping window repeats the
+        # body work O(window) times.  Serialize each candidate once and extend
+        # one incremental hash per start position instead.  ``copy`` finalizes
+        # each candidate window without mutating the prefix state, preserving
+        # the exact JSON/hash bytes used by ``source_candidate_fingerprint``.
+        serialized_candidates = [
+            json.dumps(
+                {
+                    "candidate_id": str(candidate.candidate_id),
+                    "content": str(candidate.content),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            for candidate in assistant_dialog
+        ]
+        candidate_ids = [candidate.candidate_id for candidate in assistant_dialog]
         for start in range(len(assistant_dialog)):
-            for end in range(start + 2, min(len(assistant_dialog), start + max_window) + 1):
-                window = assistant_dialog[start:end]
-                source_ids = [candidate.candidate_id for candidate in window]
+            source_hasher = hashlib.sha256(b"[")
+            for end in range(
+                start,
+                min(len(assistant_dialog), start + max_window),
+            ):
+                if end > start:
+                    source_hasher.update(b",")
+                source_hasher.update(serialized_candidates[end])
+                if end - start + 1 < 2:
+                    continue
+                source_ids = candidate_ids[start : end + 1]
+                window_hasher = source_hasher.copy()
+                window_hasher.update(b"]")
                 index.setdefault(
                     _source_candidate_ids_key(source_ids),
-                    source_candidate_fingerprint(window),
+                    "sha256:" + window_hasher.hexdigest(),
                 )
         return index
 
@@ -943,6 +1000,21 @@ class MemoryContextBuilder:
         if self.compaction_reuse_shadow_provider is None:
             return assembly
         selected_ids = [candidate.candidate_id for candidate in assembly.selected_candidates]
+        try:
+            source_fingerprint_index = self._source_fingerprint_shadow_index(
+                candidates,
+                assembly.selection.compaction_attempts,
+            )
+        except _CompactionFingerprintIndexLimitError as exc:
+            if strict_sources:
+                raise ContextSourceError("context_compaction_reuse", exc) from exc
+            return self._append_compaction_reuse_shadow_failure(
+                assembly,
+                reason=(
+                    ContextCompactionReuseShadowFailureReason.SOURCE_INDEX_LIMIT_EXCEEDED
+                ),
+                exception_type=type(exc).__name__,
+            )
         provider_payload = {
             "schema": "memory-context-compaction-reuse-shadow-v1",
             "context_request_hash": request_hash,
@@ -966,10 +1038,7 @@ class MemoryContextBuilder:
             "existing_compaction_reuse_admissions": len(
                 assembly.selection.compaction_reuse_admissions
             ),
-            "source_fingerprint_by_candidate_ids": self._source_fingerprint_shadow_index(
-                candidates,
-                assembly.selection.compaction_attempts,
-            ),
+            "source_fingerprint_by_candidate_ids": source_fingerprint_index,
         }
         try:
             raw_admissions = self.compaction_reuse_shadow_provider(provider_payload)
@@ -982,6 +1051,9 @@ class MemoryContextBuilder:
                 exception_type=type(exc).__name__,
             )
         if raw_admissions is None or raw_admissions == []:
+            if strict_sources:
+                exc = ValueError("shadow provider returned no admissions")
+                raise ContextSourceError("context_compaction_reuse", exc) from exc
             return self._append_compaction_reuse_shadow_failure(
                 assembly,
                 reason=ContextCompactionReuseShadowFailureReason.PROVIDER_EMPTY,
@@ -1011,6 +1083,9 @@ class MemoryContextBuilder:
                 exception_type=type(exc).__name__,
             )
         if not admissions:
+            if strict_sources:
+                exc = ValueError("shadow provider returned no admissions")
+                raise ContextSourceError("context_compaction_reuse", exc) from exc
             return self._append_compaction_reuse_shadow_failure(
                 assembly,
                 reason=ContextCompactionReuseShadowFailureReason.PROVIDER_EMPTY,

@@ -122,7 +122,7 @@ def build_derived_context_projection(
     if payload_turn_hash and payload_turn_hash != expected_turn_hash:
         raise DerivedContextProjectionError("ContextLoader turn source hash is stale")
     payload_constraints_hash = str(context_result.get("session_constraints_hash") or "")
-    if payload_constraints_hash and payload_constraints_hash != ingress.session_constraints.canonical_hash:
+    if payload_constraints_hash and payload_constraints_hash != ingress.session_constraints.authority_hash:
         raise DerivedContextProjectionError("ContextLoader constraint hash is stale")
     selection = context_result.get("context_selection")
     if not isinstance(selection, Mapping):
@@ -226,7 +226,7 @@ def build_derived_context_projection(
         {
             "context_request_hash": request_hash,
             "session_turn_source_hash": expected_turn_hash,
-            "session_constraints_hash": ingress.session_constraints.canonical_hash,
+            "session_constraints_hash": ingress.session_constraints.authority_hash,
             "dialog": [item.model_dump(mode="json") for item in dialog_candidates],
             "artifacts": [item.model_dump(mode="json") for item in artifact_candidates],
         }
@@ -234,7 +234,7 @@ def build_derived_context_projection(
     return DerivedContextProjection(
         context_request_hash=request_hash,
         session_turn_source_hash=expected_turn_hash,
-        session_constraints_hash=ingress.session_constraints.canonical_hash,
+        session_constraints_hash=ingress.session_constraints.authority_hash,
         dialog_candidates=dialog_candidates,
         artifact_candidates=artifact_candidates,
         projection_hash=projection_hash,

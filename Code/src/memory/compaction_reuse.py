@@ -208,6 +208,11 @@ class ReusableCompactionPromptUsePreflight(BaseModel):
     recent_suffix_ids: list[str] = Field(default_factory=list)
     semantic_fact_ids: list[str] = Field(default_factory=list)
     semantic_evidence_candidate_ids: list[str] = Field(default_factory=list)
+    semantic_facts_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    session_constraints_hash: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
     artifact_id: str = Field(min_length=1)
     artifact_kind: str = Field(min_length=1)
     artifact_integrity_checksum: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -233,9 +238,21 @@ class ReusableCompactionPromptUsePreflight(BaseModel):
             raise ValueError("preflight required candidate IDs must be unique")
         if len(self.recent_suffix_ids) != len(set(self.recent_suffix_ids)):
             raise ValueError("preflight recent suffix IDs must be unique")
+        if len(self.semantic_fact_ids) != len(set(self.semantic_fact_ids)):
+            raise ValueError("preflight semantic fact IDs must be unique")
+        if len(self.semantic_evidence_candidate_ids) != len(
+            set(self.semantic_evidence_candidate_ids)
+        ):
+            raise ValueError("preflight semantic evidence IDs must be unique")
         if self.status == ReusableCompactionPromptUsePreflightStatus.PASSED:
             if self.rejection_reasons:
                 raise ValueError("passed preflight cannot carry rejection reasons")
+            if not self.semantic_fact_ids or not self.semantic_evidence_candidate_ids:
+                raise ValueError("passed preflight requires semantic evidence")
+            if not set(self.semantic_evidence_candidate_ids).issubset(
+                set(self.source_candidate_ids)
+            ):
+                raise ValueError("passed preflight semantic evidence must reference sources")
             if set(self.trial_replaced_source_candidate_ids) != set(self.source_candidate_ids):
                 raise ValueError("passed preflight must replace every source candidate")
         elif not self.rejection_reasons:
@@ -257,6 +274,8 @@ class ReusableCompactionPromptUseSimulationRejectionReason(str, Enum):
 
     PREFLIGHT_NOT_PASSED = "preflight_not_passed"
     PREFLIGHT_BINDING_MISMATCH = "preflight_binding_mismatch"
+    PREFLIGHT_SEMANTIC_EVIDENCE_MISSING = "preflight_semantic_evidence_missing"
+    PREFLIGHT_SEMANTIC_EVIDENCE_MISMATCH = "preflight_semantic_evidence_mismatch"
     SOURCE_CANDIDATE_IDS_MISMATCH = "source_candidate_ids_mismatch"
     SOURCE_BINDING_HASH_MISSING = "source_binding_hash_missing"
     SOURCE_BINDING_HASH_MISMATCH = "source_binding_hash_mismatch"
@@ -289,6 +308,12 @@ class ReusableCompactionPromptUseSimulation(BaseModel):
     required_candidate_ids: list[str] = Field(default_factory=list)
     recent_suffix_ids: list[str] = Field(default_factory=list)
     semantic_fact_ids: list[str] = Field(default_factory=list)
+    semantic_evidence_candidate_ids: list[str] = Field(default_factory=list)
+    semantic_facts_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    session_constraints_hash: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
     artifact_id: str = Field(min_length=1)
     artifact_kind: str = Field(min_length=1)
     artifact_integrity_checksum: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
@@ -329,6 +354,7 @@ class ReusableCompactionPromptUseSimulation(BaseModel):
             ("required candidate IDs", self.required_candidate_ids),
             ("recent suffix IDs", self.recent_suffix_ids),
             ("semantic fact IDs", self.semantic_fact_ids),
+            ("semantic evidence candidate IDs", self.semantic_evidence_candidate_ids),
             ("raw selected candidate IDs", self.raw_selected_candidate_ids),
             ("reusable selected candidate IDs", self.reusable_selected_candidate_ids),
             ("replaced source candidate IDs", self.replaced_source_candidate_ids),
@@ -340,6 +366,12 @@ class ReusableCompactionPromptUseSimulation(BaseModel):
         if self.status == ReusableCompactionPromptUseSimulationStatus.PASSED:
             if self.rejection_reasons:
                 raise ValueError("passed simulation cannot carry rejection reasons")
+            if not self.semantic_fact_ids or not self.semantic_evidence_candidate_ids:
+                raise ValueError("passed simulation requires semantic evidence")
+            if not set(self.semantic_evidence_candidate_ids).issubset(
+                set(self.source_candidate_ids)
+            ):
+                raise ValueError("passed simulation semantic evidence must reference sources")
             if set(self.replaced_source_candidate_ids) != set(self.source_candidate_ids):
                 raise ValueError("passed simulation must replace every source candidate")
             if set(self.retained_required_candidate_ids) != set(self.required_candidate_ids):
@@ -408,6 +440,33 @@ def source_binding_hash_from_shadow_payload(
 
 def _normalize_text(text: str) -> str:
     return " ".join(text.split()).casefold()
+
+
+def _normalized_semantic_fact_evidence(
+    facts: Sequence[ReusableCompactionSemanticFact],
+) -> tuple[list[str], list[str], str]:
+    """Return the body-free canonical identity for one explicit fact set."""
+
+    ordered_facts = sorted(facts, key=lambda item: item.fact_id)
+    fact_ids = [fact.fact_id for fact in ordered_facts]
+    evidence_ids = sorted(
+        {
+            evidence_id
+            for fact in ordered_facts
+            for evidence_id in fact.evidence_candidate_ids
+        }
+    )
+    facts_hash = _canonical_hash(
+        [
+            {
+                "fact_id": fact.fact_id,
+                "text": _normalize_text(fact.text),
+                "evidence_candidate_ids": sorted(fact.evidence_candidate_ids),
+            }
+            for fact in ordered_facts
+        ]
+    )
+    return fact_ids, evidence_ids, facts_hash
 
 
 def _candidate_digest(candidate: ContextCandidate) -> dict[str, Any]:
@@ -505,6 +564,7 @@ def preflight_reusable_compaction_prompt_use(
     semantic_facts: Sequence[ReusableCompactionSemanticFact | Mapping[str, Any]] = (),
     required_candidate_ids: Sequence[str] = (),
     recent_suffix_ids: Sequence[str] = (),
+    session_constraints_hash: str | None = None,
     expected_artifact_integrity_checksum: str | None = None,
     preflight_id: str | None = None,
     summary_candidate_id: str | None = None,
@@ -568,10 +628,19 @@ def preflight_reusable_compaction_prompt_use(
             add_reason(ReusableCompactionPromptUseRejectionReason.ADMISSION_NOT_ADMITTED)
         if (
             admission_value.artifact_id != validated_binding.artifact.artifact_id
+            or admission_value.artifact_integrity_checksum
+            != validated_binding.artifact.integrity_checksum
             or admission_value.source_candidate_ids
             != validated_binding.record.source_candidate_ids
+            or admission_value.source_fingerprint
+            != validated_binding.record.source_fingerprint
             or admission_value.source_binding_hash
             != validated_binding.source_binding_hash
+            or admission_value.required_candidate_ids != required_ids
+            or admission_value.recent_suffix_ids != recent_ids
+            or admission_value.session_constraints_hash != session_constraints_hash
+            or admission_value.generated_summary_fingerprint
+            != _sha256_text(validated_binding.record.summary)
         ):
             add_reason(ReusableCompactionPromptUseRejectionReason.ADMISSION_BINDING_MISMATCH)
     else:
@@ -596,15 +665,14 @@ def preflight_reusable_compaction_prompt_use(
     if not facts:
         add_reason(ReusableCompactionPromptUseRejectionReason.SEMANTIC_FACTS_MISSING)
     summary_text = _normalize_text(validated_binding.record.summary)
-    semantic_evidence_ids: list[str] = []
     for fact in facts:
         if not set(fact.evidence_candidate_ids).issubset(set(source_ids)):
             add_reason(ReusableCompactionPromptUseRejectionReason.SEMANTIC_EVIDENCE_MISMATCH)
-        for evidence_id in fact.evidence_candidate_ids:
-            if evidence_id not in semantic_evidence_ids:
-                semantic_evidence_ids.append(evidence_id)
         if _normalize_text(fact.text) not in summary_text:
             add_reason(ReusableCompactionPromptUseRejectionReason.SEMANTIC_FACT_MISSING)
+    semantic_fact_ids, semantic_evidence_ids, semantic_facts_hash = (
+        _normalized_semantic_fact_evidence(facts)
+    )
 
     trial_selected_ids: list[str] = []
     trial_replaced_ids: list[str] = []
@@ -627,60 +695,31 @@ def preflight_reusable_compaction_prompt_use(
             compacted_candidate_ids=source_ids,
         )
         try:
-            trial = ContextAssembler(
-                renderer=lambda _payload: "",
-                token_counter=token_counter,
-            ).assemble_candidates(
-                [*validated_candidates, summary_candidate],
+            trial = _assemble_reusable_trial(
+                candidates=validated_candidates,
+                summary_candidate=summary_candidate,
+                source_candidate_ids=source_ids,
+                required_candidate_ids=required_ids,
+                recent_suffix_ids=recent_ids,
                 policy=validated_policy,
                 renderer=renderer,
+                token_counter=token_counter,
             )
-            trial_status = str(
-                getattr(
-                    trial.selection.assembly_status,
-                    "value",
-                    trial.selection.assembly_status,
-                )
-            )
-            trial_selected_ids = [
-                candidate.candidate_id for candidate in trial.selected_candidates
-            ]
-            trial_prompt_hash = _sha256_text(trial.prompt_text)
-            trial_chars = len(trial.prompt_text)
-            decision_by_id = {
-                decision.candidate_id: decision
-                for decision in trial.selection.candidate_decisions
-            }
-            summary_decision = decision_by_id.get(summary_id)
-            if (
-                trial.selection.assembly_status != ContextAssemblyStatus.READY
-            ):
+            trial_status = trial.assembly_status
+            trial_selected_ids = trial.selected_candidate_ids
+            trial_prompt_hash = trial.prompt_hash
+            trial_chars = trial.prompt_chars
+            if trial.assembly_status != ContextAssemblyStatus.READY.value:
                 add_reason(ReusableCompactionPromptUseRejectionReason.TRIAL_ASSEMBLY_NOT_READY)
-            if summary_decision is None or summary_decision.action != "kept":
+            if not trial.summary_selected:
                 add_reason(ReusableCompactionPromptUseRejectionReason.TRIAL_SUMMARY_NOT_SELECTED)
-            for source_id in source_ids:
-                decision = decision_by_id.get(source_id)
-                if (
-                    decision is not None
-                    and decision.action == "omitted"
-                    and decision.reason == "compacted"
-                    and decision.governed_by_candidate_id == summary_id
-                ):
-                    trial_replaced_ids.append(source_id)
-                else:
-                    add_reason(ReusableCompactionPromptUseRejectionReason.TRIAL_SOURCE_NOT_GOVERNED)
-            for required_id in required_ids:
-                decision = decision_by_id.get(required_id)
-                if decision is None or decision.action != "kept":
-                    add_reason(
-                        ReusableCompactionPromptUseRejectionReason.TRIAL_REQUIRED_CANDIDATE_OMITTED
-                    )
-            for recent_id in recent_ids:
-                decision = decision_by_id.get(recent_id)
-                if decision is None or decision.action != "kept":
-                    add_reason(
-                        ReusableCompactionPromptUseRejectionReason.TRIAL_RECENT_SUFFIX_OMITTED
-                    )
+            trial_replaced_ids = trial.replaced_source_candidate_ids
+            if not trial.source_complete:
+                add_reason(ReusableCompactionPromptUseRejectionReason.TRIAL_SOURCE_NOT_GOVERNED)
+            if not trial.required_complete:
+                add_reason(ReusableCompactionPromptUseRejectionReason.TRIAL_REQUIRED_CANDIDATE_OMITTED)
+            if not trial.recent_complete:
+                add_reason(ReusableCompactionPromptUseRejectionReason.TRIAL_RECENT_SUFFIX_OMITTED)
         except Exception:
             add_reason(ReusableCompactionPromptUseRejectionReason.TRIAL_ASSEMBLY_NOT_READY)
 
@@ -698,8 +737,10 @@ def preflight_reusable_compaction_prompt_use(
         source_binding_hash=validated_binding.source_binding_hash or _ZERO_HASH,
         required_candidate_ids=required_ids,
         recent_suffix_ids=recent_ids,
-        semantic_fact_ids=[fact.fact_id for fact in facts],
+        semantic_fact_ids=semantic_fact_ids,
         semantic_evidence_candidate_ids=semantic_evidence_ids,
+        semantic_facts_hash=semantic_facts_hash,
+        session_constraints_hash=session_constraints_hash,
         artifact_id=validated_binding.artifact.artifact_id,
         artifact_kind=validated_binding.artifact.kind,
         artifact_integrity_checksum=validated_binding.artifact.integrity_checksum,
@@ -726,6 +767,107 @@ def _selected_candidate_ids(result: Any) -> list[str]:
     return [candidate.candidate_id for candidate in result.selected_candidates]
 
 
+class _ReusableTrialEvidence(BaseModel):
+    """Neutral, typed evidence for one reusable-summary assembly trial."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    assembly_status: str
+    prompt_hash: str
+    prompt_chars: int
+    prompt_tokens: int | None = None
+    token_count_method: str | None = None
+    tokenizer_id: str | None = None
+    token_model: str | None = None
+    selected_candidate_ids: list[str] = Field(default_factory=list)
+    replaced_source_candidate_ids: list[str] = Field(default_factory=list)
+    retained_required_candidate_ids: list[str] = Field(default_factory=list)
+    retained_recent_suffix_ids: list[str] = Field(default_factory=list)
+    summary_selected: bool = False
+    source_complete: bool = False
+    required_complete: bool = False
+    recent_complete: bool = False
+
+
+def _assemble_reusable_trial(
+    *,
+    candidates: Sequence[ContextCandidate],
+    summary_candidate: ContextCandidate,
+    source_candidate_ids: Sequence[str],
+    required_candidate_ids: Sequence[str],
+    recent_suffix_ids: Sequence[str],
+    policy: ContextAssemblyPolicy,
+    renderer: Callable[[list[ContextCandidate]], str],
+    token_counter: Any | None,
+) -> _ReusableTrialEvidence:
+    """Assemble and classify the shared reusable-summary trial once."""
+
+    trial = ContextAssembler(
+        renderer=lambda _payload: "",
+        token_counter=token_counter,
+    ).assemble_candidates(
+        [*candidates, summary_candidate],
+        policy=policy,
+        renderer=renderer,
+    )
+    decision_by_id = {
+        decision.candidate_id: decision
+        for decision in trial.selection.candidate_decisions
+    }
+    summary_decision = decision_by_id.get(summary_candidate.candidate_id)
+    replaced_source_ids: list[str] = []
+    for source_id in source_candidate_ids:
+        decision = decision_by_id.get(source_id)
+        if (
+            decision is not None
+            and decision.action == "omitted"
+            and decision.reason == "compacted"
+            and decision.governed_by_candidate_id == summary_candidate.candidate_id
+        ):
+            replaced_source_ids.append(source_id)
+    retained_required_ids = [
+        candidate_id
+        for candidate_id in required_candidate_ids
+        if (decision_by_id.get(candidate_id) is not None
+            and decision_by_id[candidate_id].action == "kept")
+    ]
+    retained_recent_ids = [
+        candidate_id
+        for candidate_id in recent_suffix_ids
+        if (decision_by_id.get(candidate_id) is not None
+            and decision_by_id[candidate_id].action == "kept")
+    ]
+    return _ReusableTrialEvidence(
+        assembly_status=_assembly_status_value(trial.selection.assembly_status),
+        prompt_hash=_sha256_text(trial.prompt_text),
+        prompt_chars=len(trial.prompt_text),
+        prompt_tokens=trial.selection.final_prompt_tokens,
+        token_count_method=(
+            trial.selection.token_count_method
+            if trial.selection.budget_unit == "tokens"
+            else None
+        ),
+        tokenizer_id=(
+            trial.selection.tokenizer_id
+            if trial.selection.budget_unit == "tokens"
+            else None
+        ),
+        token_model=(
+            trial.selection.model
+            if trial.selection.budget_unit == "tokens"
+            else None
+        ),
+        selected_candidate_ids=_selected_candidate_ids(trial),
+        replaced_source_candidate_ids=replaced_source_ids,
+        retained_required_candidate_ids=retained_required_ids,
+        retained_recent_suffix_ids=retained_recent_ids,
+        summary_selected=(summary_decision is not None and summary_decision.action == "kept"),
+        source_complete=(len(replaced_source_ids) == len(source_candidate_ids)),
+        required_complete=(len(retained_required_ids) == len(required_candidate_ids)),
+        recent_complete=(len(retained_recent_ids) == len(recent_suffix_ids)),
+    )
+
+
 def simulate_reusable_compaction_prompt_use(
     *,
     binding: ContextCompactionBinding | Mapping[str, Any],
@@ -733,6 +875,8 @@ def simulate_reusable_compaction_prompt_use(
     policy: ContextAssemblyPolicy | Mapping[str, Any],
     renderer: Callable[[list[ContextCandidate]], str],
     preflight: ReusableCompactionPromptUsePreflight | Mapping[str, Any],
+    admission: ContextCompactionReuseAdmission | Mapping[str, Any],
+    semantic_facts: Sequence[ReusableCompactionSemanticFact | Mapping[str, Any]],
     simulation_id: str | None = None,
     summary_candidate_id: str | None = None,
     token_counter: Any | None = None,
@@ -766,11 +910,24 @@ def simulate_reusable_compaction_prompt_use(
         if isinstance(preflight, ReusableCompactionPromptUsePreflight)
         else ReusableCompactionPromptUsePreflight.model_validate(preflight)
     )
+    validated_admission = (
+        admission
+        if isinstance(admission, ContextCompactionReuseAdmission)
+        else ContextCompactionReuseAdmission.model_validate(admission)
+    )
+    facts = [
+        item
+        if isinstance(item, ReusableCompactionSemanticFact)
+        else ReusableCompactionSemanticFact.model_validate(item)
+        for item in semantic_facts
+    ]
     source_ids = list(validated_binding.record.source_candidate_ids)
-    required_ids = list(validated_preflight.required_candidate_ids)
-    recent_ids = list(validated_preflight.recent_suffix_ids)
-    semantic_fact_ids = list(validated_preflight.semantic_fact_ids)
-    resolved_summary_id = summary_candidate_id or validated_preflight.trial_summary_candidate_id
+    required_ids = list(validated_admission.required_candidate_ids)
+    recent_ids = list(validated_admission.recent_suffix_ids)
+    semantic_fact_ids, semantic_evidence_ids, semantic_facts_hash = (
+        _normalized_semantic_fact_evidence(facts)
+    )
+    resolved_summary_id = validated_preflight.trial_summary_candidate_id
     reasons: list[ReusableCompactionPromptUseSimulationRejectionReason] = []
 
     def add_reason(reason: ReusableCompactionPromptUseSimulationRejectionReason) -> None:
@@ -783,13 +940,66 @@ def simulate_reusable_compaction_prompt_use(
         add_reason(
             ReusableCompactionPromptUseSimulationRejectionReason.PREFLIGHT_NOT_PASSED
         )
+    if summary_candidate_id is not None and summary_candidate_id != resolved_summary_id:
+        add_reason(
+            ReusableCompactionPromptUseSimulationRejectionReason.PREFLIGHT_BINDING_MISMATCH
+        )
+    if (
+        not semantic_fact_ids
+        or not semantic_evidence_ids
+        or not validated_preflight.semantic_fact_ids
+        or not validated_preflight.semantic_evidence_candidate_ids
+    ):
+        add_reason(
+            ReusableCompactionPromptUseSimulationRejectionReason.PREFLIGHT_SEMANTIC_EVIDENCE_MISSING
+        )
+    summary_text = _normalize_text(validated_binding.record.summary)
+    semantic_identity_mismatch = (
+        validated_preflight.semantic_fact_ids != semantic_fact_ids
+        or validated_preflight.semantic_evidence_candidate_ids != semantic_evidence_ids
+        or validated_preflight.semantic_facts_hash != semantic_facts_hash
+        or any(
+            not set(fact.evidence_candidate_ids).issubset(set(source_ids))
+            or _normalize_text(fact.text) not in summary_text
+            for fact in facts
+        )
+    )
+    if semantic_identity_mismatch:
+        add_reason(
+            ReusableCompactionPromptUseSimulationRejectionReason.PREFLIGHT_SEMANTIC_EVIDENCE_MISMATCH
+        )
+    if validated_admission.status != ContextCompactionReuseAdmissionStatus.ADMITTED:
+        add_reason(
+            ReusableCompactionPromptUseSimulationRejectionReason.PREFLIGHT_BINDING_MISMATCH
+        )
     if (
         validated_preflight.artifact_id != validated_binding.artifact.artifact_id
         or validated_preflight.artifact_kind != validated_binding.artifact.kind
+        or validated_preflight.artifact_integrity_checksum
+        != validated_binding.artifact.integrity_checksum
         or validated_preflight.source_candidate_ids != source_ids
+        or validated_preflight.source_fingerprint
+        != validated_binding.record.source_fingerprint
         or validated_preflight.source_binding_hash
         != (validated_binding.source_binding_hash or _ZERO_HASH)
         or validated_preflight.generated_summary_fingerprint
+        != _sha256_text(validated_binding.record.summary)
+        or validated_admission.artifact_id != validated_binding.artifact.artifact_id
+        or validated_admission.artifact_kind != validated_binding.artifact.kind
+        or validated_admission.artifact_integrity_checksum
+        != validated_binding.artifact.integrity_checksum
+        or validated_admission.source_candidate_ids != source_ids
+        or validated_admission.source_fingerprint
+        != validated_binding.record.source_fingerprint
+        or validated_admission.source_binding_hash
+        != validated_binding.source_binding_hash
+        or validated_admission.required_candidate_ids
+        != validated_preflight.required_candidate_ids
+        or validated_admission.recent_suffix_ids
+        != validated_preflight.recent_suffix_ids
+        or validated_admission.session_constraints_hash
+        != validated_preflight.session_constraints_hash
+        or validated_admission.generated_summary_fingerprint
         != _sha256_text(validated_binding.record.summary)
     ):
         add_reason(
@@ -849,6 +1059,9 @@ def simulate_reusable_compaction_prompt_use(
             required_candidate_ids=required_ids,
             recent_suffix_ids=recent_ids,
             semantic_fact_ids=semantic_fact_ids,
+            semantic_evidence_candidate_ids=semantic_evidence_ids,
+            semantic_facts_hash=semantic_facts_hash,
+            session_constraints_hash=validated_admission.session_constraints_hash,
             artifact_id=validated_binding.artifact.artifact_id,
             artifact_kind=validated_binding.artifact.kind,
             artifact_integrity_checksum=validated_binding.artifact.integrity_checksum,
@@ -924,66 +1137,45 @@ def simulate_reusable_compaction_prompt_use(
             compacted_candidate_ids=source_ids,
         )
         try:
-            reusable = assembler.assemble_candidates(
-                [*validated_candidates, summary_candidate],
+            reusable = _assemble_reusable_trial(
+                candidates=validated_candidates,
+                summary_candidate=summary_candidate,
+                source_candidate_ids=source_ids,
+                required_candidate_ids=required_ids,
+                recent_suffix_ids=recent_ids,
                 policy=validated_policy,
                 renderer=renderer,
+                token_counter=token_counter,
             )
-            reusable_status = _assembly_status_value(reusable.selection.assembly_status)
-            reusable_prompt_hash = _sha256_text(reusable.prompt_text)
-            reusable_chars = len(reusable.prompt_text)
-            reusable_tokens = reusable.selection.final_prompt_tokens
-            if reusable.selection.budget_unit == "tokens":
-                token_count_method = reusable.selection.token_count_method
-                tokenizer_id = reusable.selection.tokenizer_id
-                token_model = reusable.selection.model
-            reusable_selected_ids = _selected_candidate_ids(reusable)
+            reusable_status = reusable.assembly_status
+            reusable_prompt_hash = reusable.prompt_hash
+            reusable_chars = reusable.prompt_chars
+            reusable_tokens = reusable.prompt_tokens
+            token_count_method = reusable.token_count_method or token_count_method
+            tokenizer_id = reusable.tokenizer_id or tokenizer_id
+            token_model = reusable.token_model or token_model
+            reusable_selected_ids = reusable.selected_candidate_ids
             if raw_chars is not None:
                 prompt_char_delta = raw_chars - reusable_chars
             if raw_tokens is not None and reusable_tokens is not None:
                 prompt_token_delta = raw_tokens - reusable_tokens
-            decision_by_id = {
-                decision.candidate_id: decision
-                for decision in reusable.selection.candidate_decisions
-            }
-            summary_decision = decision_by_id.get(resolved_summary_id)
-            if reusable.selection.assembly_status != ContextAssemblyStatus.READY:
+            if reusable.assembly_status != ContextAssemblyStatus.READY.value:
                 add_reason(
                     ReusableCompactionPromptUseSimulationRejectionReason.REUSABLE_ASSEMBLY_NOT_READY
                 )
-            if summary_decision is None or summary_decision.action != "kept":
+            if not reusable.summary_selected:
                 add_reason(
                     ReusableCompactionPromptUseSimulationRejectionReason.SUMMARY_NOT_SELECTED
                 )
-            for source_id in source_ids:
-                decision = decision_by_id.get(source_id)
-                if (
-                    decision is not None
-                    and decision.action == "omitted"
-                    and decision.reason == "compacted"
-                    and decision.governed_by_candidate_id == resolved_summary_id
-                ):
-                    replaced_ids.append(source_id)
-                else:
-                    add_reason(
-                        ReusableCompactionPromptUseSimulationRejectionReason.SOURCE_REPLACEMENT_MISMATCH
-                    )
-            for required_id in required_ids:
-                decision = decision_by_id.get(required_id)
-                if decision is not None and decision.action == "kept":
-                    retained_required_ids.append(required_id)
-                else:
-                    add_reason(
-                        ReusableCompactionPromptUseSimulationRejectionReason.REQUIRED_CANDIDATE_OMITTED
-                    )
-            for recent_id in recent_ids:
-                decision = decision_by_id.get(recent_id)
-                if decision is not None and decision.action == "kept":
-                    retained_recent_ids.append(recent_id)
-                else:
-                    add_reason(
-                        ReusableCompactionPromptUseSimulationRejectionReason.RECENT_SUFFIX_OMITTED
-                    )
+            replaced_ids = reusable.replaced_source_candidate_ids
+            retained_required_ids = reusable.retained_required_candidate_ids
+            retained_recent_ids = reusable.retained_recent_suffix_ids
+            if not reusable.source_complete:
+                add_reason(ReusableCompactionPromptUseSimulationRejectionReason.SOURCE_REPLACEMENT_MISMATCH)
+            if not reusable.required_complete:
+                add_reason(ReusableCompactionPromptUseSimulationRejectionReason.REQUIRED_CANDIDATE_OMITTED)
+            if not reusable.recent_complete:
+                add_reason(ReusableCompactionPromptUseSimulationRejectionReason.RECENT_SUFFIX_OMITTED)
             if prompt_char_delta is not None and prompt_char_delta <= 0:
                 add_reason(
                     ReusableCompactionPromptUseSimulationRejectionReason.NO_PROMPT_REDUCTION
@@ -1018,6 +1210,9 @@ def simulate_reusable_compaction_prompt_use(
         required_candidate_ids=required_ids,
         recent_suffix_ids=recent_ids,
         semantic_fact_ids=semantic_fact_ids,
+        semantic_evidence_candidate_ids=semantic_evidence_ids,
+        semantic_facts_hash=semantic_facts_hash,
+        session_constraints_hash=validated_admission.session_constraints_hash,
         artifact_id=validated_binding.artifact.artifact_id,
         artifact_kind=validated_binding.artifact.kind,
         artifact_integrity_checksum=validated_binding.artifact.integrity_checksum,
