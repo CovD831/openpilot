@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
+import shlex
 from typing import TYPE_CHECKING, Sequence
 from uuid import uuid4
 
 from rich.console import Console
 
-from core.config import EmbeddingSettings, LLMSettings
+from core.config import LLMSettings
 from core.instrumented_llm import InstrumentedLLMClient
-from core.model_health import run_startup_model_health_check
-from core.openpilot_log import OpenPilotLogger
-from runtime_diagnostics.hooks import get_default_hooks
 from metadata import (
     ConversationIdentity,
     ProjectImprovementPolicy,
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
 
 DEFAULT_IMPROVEMENT_ITERATIONS = 2
 _CONSTRAINT_COMMANDS = frozenset({"/constraints", "/confirm", "/reject", "/revoke"})
+_PROPOSAL_APPROVE_COMMAND = "/approve"
 
 
 def _is_constraint_command(user_input: str) -> bool:
@@ -42,20 +42,136 @@ def _is_constraint_command(user_input: str) -> bool:
     return command in _CONSTRAINT_COMMANDS
 
 
+def _proposal_approval_id(user_input: str) -> str | None:
+    """Return a proposal id only for the explicit mutation-approval command."""
+
+    parts = str(user_input).strip().split(maxsplit=1)
+    if len(parts) != 2 or parts[0].casefold() != _PROPOSAL_APPROVE_COMMAND:
+        return None
+    proposal_id = parts[1].strip()
+    return proposal_id or None
+
+
 def _runtime_diagnostics_enabled() -> bool:
     value = str(os.getenv("OPENPILOT_RUNTIME_DIAGNOSTICS_ENABLED", "1")).strip().lower()
     return value not in {"0", "false", "no", "off"}
 
 
-def _build_task_execution_context(*, source: str, classification: "TaskRouteMetadata") -> dict[str, object]:
-    """Create a stable task context before runtime execution begins."""
-    return {
-        "task_id": f"cli_{uuid4().hex}",
-        "source": source,
-        "route": classification.route,
-        "route_confidence": classification.confidence,
-        "route_reason": classification.reason,
+def _project_file_inventory(
+    project_root: Path,
+    *,
+    limit: int = 160,
+    max_directories: int = 256,
+) -> list[str]:
+    """Return body-free candidate paths for task design, never execution authority."""
+
+    if not project_root.is_dir():
+        raise ValueError(f"project root is not a directory: {project_root}")
+    if limit < 1 or max_directories < 1:
+        raise ValueError("project inventory limits must be positive")
+    ignored_directories = {
+        ".git",
+        ".hg",
+        ".mypy_cache",
+        ".openpilot",
+        ".pytest_cache",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "node_modules",
+        "venv",
     }
+    paths: list[str] = []
+    for directory_count, (current_root, directories, files) in enumerate(
+        os.walk(project_root, followlinks=False),
+        start=1,
+    ):
+        if directory_count > max_directories:
+            return paths
+        directories[:] = sorted(
+            directory
+            for directory in directories
+            if directory not in ignored_directories and not directory.startswith(".")
+        )
+        for filename in sorted(files):
+            candidate = Path(current_root) / filename
+            if candidate.is_symlink():
+                continue
+            paths.append(str(candidate.relative_to(project_root)))
+            if len(paths) >= limit:
+                return paths
+    return paths
+
+
+def _new_cli_interaction_controller(
+    *,
+    llm_client,
+    logger,
+    source: str,
+    mutation_started_callback=None,
+):
+    """Build the public CLI's proposal-first Pi-only interaction path."""
+
+    from autonomous_iteration.agents.execution_task_decomposer import TaskDecomposer
+    from autonomous_iteration.pi_task_runner import PiTaskRunner
+    from ui.interaction_controller import InteractionController
+
+    runner = PiTaskRunner(mutation_started_callback=mutation_started_callback)
+
+    def design_tasks(goal: str, project_root: Path, task_id: str):
+        decomposer = TaskDecomposer(llm_client, logger=logger)
+        decomposition = decomposer.decompose(
+            goal,
+            context={
+                "project_root": str(project_root),
+                "project_files": _project_file_inventory(project_root),
+            },
+            parent_task_id=task_id,
+        )
+        return decomposition.subtasks
+
+    def execute_admitted_task(goal, admission, approval, context):
+        return runner.run(
+            goal,
+            admission,
+            approval=approval,
+            source=source,
+            conversation_id=str(context["conversation_id"]),
+        )
+
+    return InteractionController(
+        task_designer=design_tasks,
+        executor=execute_admitted_task,
+    )
+
+
+def _proposal_payload(proposal) -> dict[str, object]:
+    """Build a bounded, non-authoritative rendering of an admitted proposal."""
+
+    grant = proposal.admission.grant
+    validation = getattr(grant, "validation", None)
+    return {
+        "proposal_id": proposal.proposal_id,
+        "goal": proposal.goal,
+        "mode": "mutation" if proposal.is_mutation else "read_only",
+        "admission_id": grant.admission_id,
+        "task_id": grant.task_id,
+        "protocol_version": grant.protocol_version,
+        "project_root": grant.project_root,
+        "read_files": list(grant.read_files),
+        "write_files": list(grant.write_files),
+        "validation_command": getattr(validation, "command", "") if validation else "",
+    }
+
+
+def _show_task_proposal(ui: EnhancedUI, proposal) -> None:
+    """Render proposal data as literal JSON so untrusted paths cannot become markup."""
+
+    ui.console.print("Task proposal")
+    ui.console.print(
+        json.dumps(_proposal_payload(proposal), ensure_ascii=False, indent=2),
+        markup=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -282,14 +398,7 @@ def run_enhanced_cli(
     if block_missing_socksio(console):
         return 2
 
-    # Probe configured providers before the runtime starts doing real work.
     settings = LLMSettings()
-    if llm_client is None:
-        run_startup_model_health_check(
-            console,
-            llm_settings=settings,
-            embedding_settings=EmbeddingSettings(),
-        )
 
     # Initialize enhanced UI
     enhanced_ui = EnhancedUI(console)
@@ -302,38 +411,8 @@ def run_enhanced_cli(
     if llm_client is None:
         llm_client = InstrumentedLLMClient(settings, tracker)
 
-    # Setup logging
-    log_file = getattr(args, 'log_file', None)
-    if log_file:
-        log_path = Path(log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text("", encoding="utf-8")
-        logger = OpenPilotLogger(log_file)
-    else:
-        logger = None
-
-    # Check for once mode
-    resume_run_id = str(getattr(args, "resume_run_id", None) or "").strip()
-    resume_checkpoint_id = str(getattr(args, "resume_checkpoint_id", None) or "").strip()
-    if bool(resume_run_id) != bool(resume_checkpoint_id):
-        enhanced_ui.show_error(
-            "Resume arguments incomplete",
-            "--resume-run-id and --resume-checkpoint-id must be provided together.",
-        )
-        return 2
-    if resume_run_id and resume_checkpoint_id:
-        runtime_options = _runtime_options_from_args(args, project_prompt_default=False)
-        return _run_resume_mode(
-            run_id=resume_run_id,
-            checkpoint_id=resume_checkpoint_id,
-            project_path=str(getattr(args, "project_path", None) or "").strip(),
-            ui=enhanced_ui,
-            tracker=tracker,
-            logger=logger,
-            settings=settings,
-            runtime_options=runtime_options,
-            llm_client=llm_client,
-        )
+    # Public Pi CLI has no legacy shared-log or iterative-improvement switch.
+    logger = None
 
     if hasattr(args, 'once') and args.once:
         runtime_options = _runtime_options_from_args(args, project_prompt_default=False)
@@ -345,7 +424,6 @@ def run_enhanced_cli(
             settings,
             runtime_options,
             llm_client,
-            checkpointing_enabled=bool(getattr(args, "checkpointing", False)),
             project_path=str(getattr(args, "project_path", None) or "").strip(),
         )
 
@@ -401,11 +479,9 @@ def _run_once_mode(
     runtime_options: OpenPilotRuntimeOptions,
     llm_client = None,
     *,
-    checkpointing_enabled: bool = False,
     project_path: str = "",
 ) -> int:
-    """Run a single goal and exit."""
-    from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
+    """Design one task and run only an admitted read-only Pi proposal."""
     from core.llm import LLMClient
 
     ui.console.print()
@@ -415,158 +491,49 @@ def _run_once_mode(
     try:
         classification = _classify_task_route(goal)
         _show_task_route(ui, classification)
-        execution_context = _build_task_execution_context(source="cli_once", classification=classification)
-        execution_context["checkpointing_enabled"] = checkpointing_enabled
-        if project_path:
-            execution_context["project_path"] = str(Path(project_path).expanduser().resolve())
-        if _runtime_diagnostics_enabled() and classification.route != "agent_generator":
-            get_default_hooks().on_route_selected(
-                task_id=str(execution_context["task_id"]),
-                route=classification.route,
-                confidence=classification.confidence,
-                reason=classification.reason,
-            )
-
         active_llm_client = llm_client or LLMClient(settings)
-        diagnostics_hooks = get_default_hooks() if _runtime_diagnostics_enabled() else None
         if classification.route == "agent_generator":
             return 0 if _execute_agent_generator(goal, ui, active_llm_client, logger) else 2
 
-        # Create autopilot with enhanced UI support
-        autopilot = IntelligentAutopilot(
+        root = Path(project_path or Path.cwd()).expanduser().resolve(strict=False)
+        conversation_id = f"once_{uuid4().hex}"
+        controller = _new_cli_interaction_controller(
             llm_client=active_llm_client,
-            console=ui.console,
-            auto_approve=True,
             logger=logger,
-            use_enhanced_ui=True,
-            enhanced_ui=ui,
-            tracker=tracker,
-            enable_iterative_improvement=runtime_options.enable_iterative_improvement,
-            required_successful_improvements=runtime_options.improvement_iterations,
-            project_improvement_policy=runtime_options.project_improvement_policy,
-            prompt_for_project_improvement_iterations=runtime_options.prompt_for_project_improvement_iterations,
-            runtime_diagnostics_hooks=diagnostics_hooks,
+            source="cli_once",
+        )
+        proposal = controller.propose(
+            goal,
+            project_root=root,
+            conversation_id=conversation_id,
+        )
+        _show_task_proposal(ui, proposal)
+        if proposal.is_mutation:
+            ui.console.print(
+                "approval_required: --once never dispatches mutations; use the interactive proposal flow.",
+                markup=False,
+            )
+            return 3
+
+        result = controller.execute(
+            proposal.proposal_id,
+            conversation_id=conversation_id,
         )
 
-        # Execute with live session
-        with ui.live_session(f"Executing: {goal[:50]}..."):
-            ui.update_main_content(
-                ui.create_status_panel("Autopilot Mode", "Intelligent task decomposition and execution...")
-            )
-
-            result = autopilot.execute(goal, context=execution_context)
-
-            # Small delay to let user see final status
-            import time
-            time.sleep(1)
-
-        ui.show_full_task_graph_timeline()
-
         if result.get("success"):
-            ui.show_success("Goal completed successfully!")
+            response = str(result.get("response") or "").strip()
+            if response:
+                ui.console.print(response, markup=False)
+            ui.show_success("Read-only Pi task completed successfully!")
             return 0
 
-        ui.show_error("Execution failed", _format_failure_details(result))
+        ui.show_error("Pi task did not complete", _format_failure_details(result))
         return 2
 
     except Exception as e:
-        ui.show_full_task_graph_timeline()
-        ui.show_error("Execution failed", str(e))
-        import traceback
-        traceback.print_exc()
+        ui.show_error("Task proposal or execution failed", str(e))
         return 2
 
-
-def _run_resume_mode(
-    *,
-    run_id: str,
-    checkpoint_id: str,
-    project_path: str,
-    ui: EnhancedUI,
-    tracker: ProgressTracker,
-    logger,
-    settings: LLMSettings,
-    runtime_options: OpenPilotRuntimeOptions,
-    llm_client=None,
-) -> int:
-    """Resume one explicitly identified checkpoint and show its preflight result."""
-    from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
-    from core.llm import LLMClient
-
-    if not project_path:
-        ui.show_error("Resume blocked", "--project-path is required for project identity verification.")
-        return 2
-    diagnostics_hooks = get_default_hooks() if _runtime_diagnostics_enabled() else None
-    if diagnostics_hooks is None:
-        ui.show_error("Resume blocked", "Runtime diagnostics/checkpoint storage is disabled.")
-        return 2
-    autopilot = IntelligentAutopilot(
-        llm_client=llm_client or LLMClient(settings),
-        console=ui.console,
-        auto_approve=True,
-        logger=logger,
-        use_enhanced_ui=True,
-        enhanced_ui=ui,
-        tracker=tracker,
-        enable_iterative_improvement=runtime_options.enable_iterative_improvement,
-        required_successful_improvements=runtime_options.improvement_iterations,
-        project_improvement_policy=runtime_options.project_improvement_policy,
-        prompt_for_project_improvement_iterations=runtime_options.prompt_for_project_improvement_iterations,
-        runtime_diagnostics_hooks=diagnostics_hooks,
-    )
-    try:
-        with ui.live_session(f"Resuming checkpoint {checkpoint_id[:12]}..."):
-            result = autopilot.resume(
-                run_id,
-                checkpoint_id,
-                {"project_path": str(Path(project_path).expanduser().resolve())},
-            )
-        title, message, succeeded = _resume_outcome_display(result)
-        if succeeded:
-            ui.show_success(title, message)
-            return 0
-        ui.show_error(title, message)
-        return 2
-    except Exception as exc:
-        ui.show_error("Resume failed", str(exc))
-        return 2
-
-
-def _resume_outcome_display(result: dict[str, object]) -> tuple[str, str, bool]:
-    """Render typed recovery control fields; explanation text is display-only."""
-    decision_value = result.get("resume_decision")
-    decision = decision_value if isinstance(decision_value, dict) else {}
-    fallback_value = decision.get("fallback")
-    fallback = fallback_value if isinstance(fallback_value, dict) else {}
-    recoverability = str(decision.get("recoverability") or "")
-    reason_code = str(decision.get("reason_code") or "")
-    fallback_action = str(fallback.get("action") or "none")
-    explanation = str(decision.get("reason") or "").strip()
-    instructions = str(fallback.get("instructions") or "").strip()
-    succeeded = bool(result.get("success"))
-
-    if succeeded and recoverability == "already_complete":
-        title = "Checkpoint already completed"
-    elif succeeded:
-        title = "Checkpoint resumed successfully"
-    elif recoverability == "not_recoverable":
-        title = "Checkpoint is not recoverable"
-    elif recoverability == "recoverable_after_action":
-        title = "Resume action required"
-    else:
-        title = "Resume failed"
-
-    control_summary = ", ".join(
-        item
-        for item in (
-            f"reason={reason_code}" if reason_code else "",
-            f"fallback={fallback_action}" if fallback_action else "",
-        )
-        if item
-    )
-    details = [item for item in (control_summary, explanation, instructions) if item]
-    message = "\n".join(details) or str(result.get("resume_status") or "resume result unavailable")
-    return title, message, succeeded
 
 def _run_interactive_mode(
     ui: EnhancedUI,
@@ -607,24 +574,27 @@ def _run_interactive_mode(
         vi_mode=False,  # 确保使用 Emacs 模式（支持上下键历史）
     )
     conversation_id = f"conversation_{uuid4().hex}"
+    interactive_project_root = Path(
+        str(getattr(args, "project_path", None) or Path.cwd())
+    ).expanduser().resolve(strict=False)
     ingress_state = SessionIngressState(
         identity=ConversationIdentity(
             conversation_id=conversation_id,
             run_id=f"run_{uuid4().hex}",
             turn_index=0,
-            project_root=str(Path.cwd().expanduser().resolve()),
+            project_root=str(interactive_project_root),
         )
+    )
+    interaction_controller = _new_cli_interaction_controller(
+        llm_client=llm_client,
+        logger=logger,
+        source="interactive",
+        mutation_started_callback=lambda details: _show_mutation_revoke_hint(ui, details),
     )
 
     ui.console.print()
     ui.console.print("[bold green]Welcome to OpenPilot Interactive Mode[/bold green]")
     ui.console.print("[dim]Type your task or use /help for commands[/dim]")
-    if runtime_options.prompt_for_project_improvement_iterations:
-        ui.console.print("[dim]Project improvement iterations: asked per generated project[/dim]")
-    else:
-        ui.console.print(
-            f"[dim]Project improvement iterations: {runtime_options.improvement_iterations}[/dim]"
-        )
     ui.console.print()
 
     tracker.start_tracking()
@@ -650,7 +620,17 @@ def _run_interactive_mode(
 
                 # Handle config command
                 if user_input.strip() == "/config":
-                    _show_config(ui, settings, runtime_options)
+                    _show_config(ui, settings)
+                    continue
+
+                proposal_id = _proposal_approval_id(user_input)
+                if proposal_id is not None:
+                    ingress_state = _approve_interactive_proposal(
+                        proposal_id,
+                        ui,
+                        interaction_controller,
+                        ingress_state,
+                    )
                     continue
 
                 if _is_constraint_command(user_input):
@@ -673,6 +653,7 @@ def _run_interactive_mode(
                         logger,
                         runtime_options,
                         ingress_state=ingress_state,
+                        interaction_controller=interaction_controller,
                     )
                 else:
                     ui.console.print(f"[yellow]Unknown command: {user_input}[/yellow]")
@@ -699,47 +680,146 @@ def _execute_goal_interactive(
     runtime_options: OpenPilotRuntimeOptions,
     *,
     ingress_state: SessionIngressState | None = None,
+    interaction_controller=None,
 ):
-    """Execute a goal in interactive mode."""
+    """Execute every public interactive task through the proposal-first Pi path."""
+    del tracker, runtime_options
+    active_llm_client = llm_client
+    if interaction_controller is None:
+        if active_llm_client is None:
+            from core.llm import LLMClient
+
+            active_llm_client = LLMClient()
+        interaction_controller = _new_cli_interaction_controller(
+            llm_client=active_llm_client,
+            logger=logger,
+            source="interactive",
+            mutation_started_callback=lambda details: _show_mutation_revoke_hint(ui, details),
+        )
+    return _execute_goal_interactive_v2(
+        goal,
+        ui,
+        interaction_controller,
+        ingress_state=ingress_state,
+        llm_client=active_llm_client,
+        logger=logger,
+    )
+
+
+def _execute_goal_interactive_v2(
+    goal: str,
+    ui: EnhancedUI,
+    interaction_controller,
+    *,
+    ingress_state: SessionIngressState | None,
+    llm_client=None,
+    logger=None,
+):
+    """Design and run the public Pi-only interaction path for one input turn."""
+
     if _handle_shell_state_command(goal, ui):
         return ingress_state if ingress_state is not None else None
-
     classification = _classify_task_route(goal)
     _show_task_route(ui, classification)
-    if ingress_state is not None:
-        run_id = f"run_{uuid4().hex}"
-        turn = SessionTurn(
-            identity=ConversationIdentity(
-                conversation_id=ingress_state.identity.conversation_id,
-                run_id=run_id,
-                turn_index=ingress_state.identity.turn_index + 1,
-                project_root=ingress_state.identity.project_root,
-            ),
-            message_id=f"message_{uuid4().hex}",
-            role="user",
-            content=goal,
-        )
-        ingress_state = SessionIngress.open_turn(ingress_state, turn)
-    execution_context = _build_task_execution_context(source="interactive", classification=classification)
-    if ingress_state is not None:
-        execution_context.update(
-            {
-                "conversation_id": ingress_state.identity.conversation_id,
-                "run_id": ingress_state.identity.run_id,
-                "session_ingress_state": ingress_state,
-            }
-        )
-    if _runtime_diagnostics_enabled() and classification.route != "agent_generator":
-        get_default_hooks().on_route_selected(
-            task_id=str(execution_context["task_id"]),
-            route=classification.route,
-            confidence=classification.confidence,
-            reason=classification.reason,
-        )
     if classification.route == "agent_generator":
         result = _execute_agent_generator(goal, ui, llm_client, logger)
+        return _append_interactive_assistant_turn(ingress_state, result)
+
+    conversation_id = (
+        ingress_state.identity.conversation_id
+        if ingress_state is not None
+        else f"conversation_{uuid4().hex}"
+    )
+    project_root = (
+        ingress_state.identity.project_root
+        if ingress_state is not None
+        else str(Path.cwd().expanduser().resolve())
+    )
+    proposal = interaction_controller.propose(
+        goal,
+        project_root=project_root,
+        conversation_id=conversation_id,
+    )
+    _show_task_proposal(ui, proposal)
+    if proposal.is_mutation:
+        result: dict[str, object] = {
+            "success": False,
+            "status": "approval_required",
+            "proposal_id": proposal.proposal_id,
+        }
+        ui.console.print(
+            "approval_required: use /approve <proposal_id> to start the scoped Pi mutation. "
+            "It will recheck file baselines and the ready project environment before dispatch.",
+            markup=False,
+        )
     else:
-        result = _execute_autopilot(goal, ui, tracker, llm_client, logger, runtime_options, context=execution_context)
+        result = interaction_controller.execute(
+            proposal.proposal_id,
+            conversation_id=conversation_id,
+        )
+        response = str(result.get("response") or "").strip()
+        if response:
+            ui.console.print(response, markup=False)
+    return _append_interactive_assistant_turn(ingress_state, result)
+
+
+def _approve_interactive_proposal(
+    proposal_id: str,
+    ui: EnhancedUI,
+    interaction_controller,
+    ingress_state: SessionIngressState,
+) -> SessionIngressState:
+    """Consume one explicit approval and dispatch the matching admitted task."""
+
+    try:
+        approval = interaction_controller.approve(
+            proposal_id,
+            conversation_id=ingress_state.identity.conversation_id,
+        )
+        result = interaction_controller.execute(
+            proposal_id,
+            conversation_id=ingress_state.identity.conversation_id,
+            approval=approval,
+        )
+        response = str(result.get("response") or "").strip()
+        if response:
+            ui.console.print(response, markup=False)
+    except Exception as exc:
+        result = {
+            "success": False,
+            "status": "blocked",
+            "reason": str(exc),
+        }
+        ui.show_error("Proposal was not dispatched", str(exc))
+    return _append_interactive_assistant_turn(ingress_state, result)
+
+
+def _show_mutation_revoke_hint(ui: EnhancedUI, details: dict[str, str]) -> None:
+    """Show the separate-terminal revoke command after a consent becomes active."""
+
+    project_root = str(details["project_root"])
+    command = " ".join(
+        (
+            "openpilot revoke",
+            "--project-path",
+            shlex.quote(project_root),
+            "--run-id",
+            shlex.quote(str(details["run_id"])),
+            "--consent-id",
+            shlex.quote(str(details["consent_id"])),
+        )
+    )
+    ui.console.print(
+        "Mutation consent is active for this Run. To revoke it from another terminal before "
+        f"the next tool dispatch, run: {command}",
+        markup=False,
+    )
+
+
+def _append_interactive_assistant_turn(
+    ingress_state: SessionIngressState | None,
+    result,
+):
     if ingress_state is None:
         return result
     assistant_turn = SessionTurn(
@@ -875,81 +955,6 @@ def _show_config(
     ui.console.print()
     ui.console.print(table)
     ui.console.print()
-
-
-def _execute_autopilot(
-    goal: str,
-    ui: EnhancedUI,
-    tracker: ProgressTracker,
-    llm_client,
-    logger,
-    runtime_options: OpenPilotRuntimeOptions | None = None,
-    context: dict[str, object] | None = None,
-):
-    """Execute goal using intelligent autopilot with enhanced UI."""
-    from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
-    from core.llm import LLMClient
-
-    ui.console.print()
-    runtime_options = runtime_options or OpenPilotRuntimeOptions()
-
-    try:
-        diagnostics_hooks = get_default_hooks() if _runtime_diagnostics_enabled() else None
-        # Create autopilot with enhanced UI support
-        autopilot = IntelligentAutopilot(
-            llm_client=llm_client or LLMClient(),
-            console=ui.console,
-            auto_approve=True,
-            logger=logger,
-            use_enhanced_ui=True,
-            enhanced_ui=ui,
-            tracker=tracker,
-            enable_iterative_improvement=runtime_options.enable_iterative_improvement,
-            required_successful_improvements=runtime_options.improvement_iterations,
-            project_improvement_policy=runtime_options.project_improvement_policy,
-            prompt_for_project_improvement_iterations=runtime_options.prompt_for_project_improvement_iterations,
-            runtime_diagnostics_hooks=diagnostics_hooks,
-        )
-
-        # Execute with live session
-        with ui.live_session(f"Executing: {goal[:50]}..."):
-            ui.update_main_content(
-                ui.create_status_panel("Autopilot Mode", "Intelligent task decomposition and execution...")
-            )
-
-            result = autopilot.execute(goal, context=dict(context or {}))
-
-            # Final status is already shown in the layout by autopilot
-            # Just add a small delay to let user see it
-            import time
-            time.sleep(1)
-
-        ui.show_full_task_graph_timeline()
-
-        if result.get("success"):
-            warning = result.get("iteration_error")
-            if warning:
-                ui.show_success(
-                    "Goal completed with iteration warning",
-                    warning,
-                )
-            else:
-                ui.show_success("Goal completed!")
-        else:
-            ui.show_error("Autopilot execution failed", _format_failure_details(result))
-        return result
-
-    except Exception as e:
-        ui.console.print()
-        ui.show_full_task_graph_timeline()
-        ui.show_error("Autopilot execution failed", str(e))
-        import traceback
-        traceback.print_exc()
-        return {
-            "success": False,
-            "failure_stage": "CLI",
-            "failure_reason": str(e),
-        }
 
 
 def _execute_agent_generator(task: str, ui: EnhancedUI, llm_client = None, logger = None) -> bool:

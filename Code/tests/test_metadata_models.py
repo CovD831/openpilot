@@ -521,6 +521,23 @@ def test_context_compaction_shadow_failure_is_typed_and_body_free() -> None:
     assert payload["compaction_reuse_shadow_failures"][0]["exception_type"] == "RuntimeError"
     assert "shadow admission unavailable" not in json.dumps(payload)
 
+    bounded_failure = ContextCompactionReuseShadowFailure(
+        failure_id="compaction-reuse-shadow:source_index_limit_exceeded",
+        reason=ContextCompactionReuseShadowFailureReason.SOURCE_INDEX_LIMIT_EXCEEDED,
+        exception_type="_CompactionFingerprintIndexLimitError",
+    )
+    restored_bounded = ContextCompactionReuseShadowFailure.model_validate_json(
+        bounded_failure.model_dump_json()
+    )
+    assert restored_bounded.reason == "source_index_limit_exceeded"
+    with pytest.raises(ValueError, match="shadow failure evidence requires"):
+        ContextCompactionReuseShadowFailure(
+            failure_id="source-index-limit",
+            reason=(
+                ContextCompactionReuseShadowFailureReason.SOURCE_INDEX_LIMIT_EXCEEDED
+            ),
+        )
+
     with pytest.raises(ValueError, match="empty shadow provider result"):
         ContextCompactionReuseShadowFailure(
             failure_id="empty",

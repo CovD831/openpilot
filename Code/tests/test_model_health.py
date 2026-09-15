@@ -133,33 +133,25 @@ def test_startup_model_health_check_can_be_disabled() -> None:
     assert "skipped by configuration" in output.getvalue()
 
 
-def test_enhanced_cli_runs_model_health_check_before_banner(monkeypatch) -> None:
+def test_enhanced_cli_does_not_probe_provider_before_showing_banner(monkeypatch) -> None:
     events = []
     args = SimpleNamespace(log_file=None, once=None, improvement_iterations=0)
     monkeypatch.setattr("ui.environment_guard.block_project_venv", lambda _console: False)
     monkeypatch.setattr("ui.environment_guard.block_missing_socksio", lambda _console: False)
-    monkeypatch.setattr(
-        "ui.enhanced_cli.run_startup_model_health_check",
-        lambda *_args, **_kwargs: events.append("health"),
-    )
     monkeypatch.setattr("ui.enhanced_cli.EnhancedUI.show_banner", lambda _self: events.append("banner"))
     monkeypatch.setattr("ui.enhanced_cli._run_interactive_mode", lambda *_args, **_kwargs: 0)
 
     exit_code = run_enhanced_cli(args, console=Console(file=StringIO()))
 
     assert exit_code == 0
-    assert events == ["health", "banner"]
+    assert events == ["banner"]
 
 
-def test_enhanced_cli_skips_configured_model_probe_for_injected_client(monkeypatch) -> None:
+def test_enhanced_cli_does_not_probe_provider_for_injected_client(monkeypatch) -> None:
     events = []
     args = SimpleNamespace(log_file=None, once=None, improvement_iterations=0)
     monkeypatch.setattr("ui.environment_guard.block_project_venv", lambda _console: False)
     monkeypatch.setattr("ui.environment_guard.block_missing_socksio", lambda _console: False)
-    monkeypatch.setattr(
-        "ui.enhanced_cli.run_startup_model_health_check",
-        lambda *_args, **_kwargs: events.append("health"),
-    )
     monkeypatch.setattr("ui.enhanced_cli.EnhancedUI.show_banner", lambda _self: events.append("banner"))
     monkeypatch.setattr("ui.enhanced_cli._run_interactive_mode", lambda *_args, **_kwargs: 0)
 

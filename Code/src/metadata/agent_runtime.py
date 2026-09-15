@@ -1529,6 +1529,7 @@ class ContextCompactionReuseShadowFailureReason(str, Enum):
     PROVIDER_EXCEPTION = "provider_exception"
     PROVIDER_EMPTY = "provider_empty"
     INVALID_PROVIDER_RESULT = "invalid_provider_result"
+    SOURCE_INDEX_LIMIT_EXCEEDED = "source_index_limit_exceeded"
 
 
 class ContextCompactionReuseShadowFailure(BaseModel):
@@ -1557,8 +1558,9 @@ class ContextCompactionReuseShadowFailure(BaseModel):
         elif self.reason in {
             ContextCompactionReuseShadowFailureReason.PROVIDER_EXCEPTION,
             ContextCompactionReuseShadowFailureReason.INVALID_PROVIDER_RESULT,
+            ContextCompactionReuseShadowFailureReason.SOURCE_INDEX_LIMIT_EXCEEDED,
         } and self.exception_type is None:
-            raise ValueError("provider failure evidence requires exception type")
+            raise ValueError("shadow failure evidence requires exception type")
         if self.strict_sources:
             raise ValueError("strict shadow failures must be raised, not returned as fallback evidence")
         if not self.fallback_applied:

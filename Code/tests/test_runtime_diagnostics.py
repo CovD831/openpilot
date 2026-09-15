@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+
 from types import SimpleNamespace
+
+import pytest
 
 from core.llm import LLMMessage, LLMRequest, LLMResponse
 from core.exceptions import InvalidLLMResponseError
@@ -22,9 +26,12 @@ from metadata import (
     ToolExecutionEnvelopeMetadata,
     ToolInputMetadata,
 )
+from metadata.artifacts import CommandArtifactMetadata
+from metadata.results import ToolResultMetadata
 from metadata.agent_runtime import AgentPhase, RuntimeStateMetadata
 
 from autonomous_iteration.runtime_controller import AgentRuntimeController, StateUpdater
+from autonomous_iteration.run_coordinator import RunCoordinator
 from core.tool_event_loop import ToolEventLoopRunner
 from runtime_diagnostics import (
     DiagnosticRecorder,
@@ -127,6 +134,26 @@ def test_recorder_and_summarizer_round_trip(tmp_path) -> None:
     assert summary.by_severity == {"review": 1}
 
 
+def test_recorder_exposes_neutral_evidence_conformance_adapter(tmp_path) -> None:
+    recorder = DiagnosticRecorder(tmp_path)
+    recorder.record_event("runtime-task", event_type="task_received", payload={"goal": "inspect"})
+    recorder.record_event("runtime-task", event_type="tool_called", payload={"tool": "file_reader"})
+    recorder.record_event("runtime-task", event_type="tool_succeeded", payload={"tool": "file_reader"})
+    recorder.record_event(
+        "runtime-task",
+        event_type="verification_state_changed",
+        payload={"verification_status": "passed"},
+    )
+    recorder.record_event("runtime-task", event_type="task_finished", payload={"success": True})
+
+    result = recorder.validate_trajectory("runtime-task")
+
+    assert recorder.evidence_store is not None
+    assert result.valid is True
+    assert result.checks["task_received"] is True
+    assert result.checks["task_finished"] is True
+
+
 def test_hooks_are_no_throw_and_record_tool_failures(tmp_path) -> None:
     hooks = RuntimeDiagnosticsHooks(DiagnosticRecorder(tmp_path))
     error = {
@@ -142,6 +169,53 @@ def test_hooks_are_no_throw_and_record_tool_failures(tmp_path) -> None:
 
     assert record_ids
     assert records[0]["signal"]["category"] == "environment"
+
+
+def test_hooks_fail_closed_when_command_result_disagrees_with_envelope(tmp_path) -> None:
+    recorder = DiagnosticRecorder(tmp_path)
+    hooks = RuntimeDiagnosticsHooks(recorder)
+    hooks.on_task_received(task_id="semantic-failure", source="test", raw_input="run tests", session_id="s1")
+    tool = ToolExecutionEnvelopeMetadata(
+        tool_name="command_executor",
+        step_id="step-1",
+        status=ResultStatus.SUCCESS,
+        success=True,
+        input_metadata=ToolInputMetadata(tool_name="command_executor", command="python -m pytest -q"),
+        output_metadata=ToolResultMetadata(
+            tool_name="command_executor",
+            status=ResultStatus.SUCCESS,
+            result=CommandArtifactMetadata(
+                command="python -m pytest -q",
+                success=False,
+                exit_code=1,
+                stderr="test failed",
+            ),
+        ),
+        tool_context={"task_id": "semantic-failure", "session_id": "s1", "step_id": "step-1", "call_id": "call-1"},
+    )
+
+    hooks.on_tool_completed(tool_execution=tool)
+    hooks.on_task_finished(task_id="semantic-failure", session_id="s1", success=True)
+    events = recorder.load_trajectory_events("semantic-failure", limit=0)
+    event_types = [event["event_type"] for event in events]
+    assert "tool_failed" in event_types
+    validation = next(event for event in events if event["event_type"] == "validation_completed")
+    assert validation["payload"]["success"] is False
+    verification = [event for event in events if event["event_type"] == "verification_state_changed"][-1]
+    assert verification["payload"]["output_summary"]["verification_status"] == "failed"
+    finished = next(event for event in events if event["event_type"] == "task_finished")
+    assert finished["payload"]["success"] is False
+
+
+def test_task_finish_uses_latest_validation_outcome(tmp_path) -> None:
+    recorder = DiagnosticRecorder(tmp_path)
+    hooks = RuntimeDiagnosticsHooks(recorder)
+    hooks.on_task_received(task_id="validation-sequence", source="test", raw_input="repair", session_id="s1")
+    recorder.record_event("validation-sequence", event_type="validation_completed", payload={"command": "receipt-check", "success": False})
+    recorder.record_event("validation-sequence", event_type="validation_completed", payload={"command": "pytest -q", "success": True})
+    hooks.on_task_finished(task_id="validation-sequence", session_id="s1", success=True)
+    finished = [e for e in recorder.load_trajectory_events("validation-sequence", limit=0) if e["event_type"] == "task_finished"][-1]
+    assert finished["payload"]["success"] is True
 
 
 def test_guard_decision_hook_records_typed_block_event(tmp_path) -> None:
@@ -312,6 +386,100 @@ def test_tool_event_loop_records_tool_error_via_runtime_hooks(tmp_path) -> None:
 from runtime_diagnostics import RuntimeTaskPoolRunner, load_raw_tasks
 
 
+def test_pi_executor_requires_typed_admission_and_routes_it_to_pi(tmp_path) -> None:
+    from metadata import TaskAdmissionGrant
+    from runtime_diagnostics import build_pi_executor
+
+    target = tmp_path / "service.py"
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    admission = TaskAdmissionGrant(
+        admission_id="admission-1",
+        task_id="task-1",
+        project_root=str(tmp_path),
+        read_files=[str(target)],
+    )
+    calls: list[tuple[object, ...]] = []
+
+    class FakePiRunner:
+        def run(self, goal, grant, *, approval, source, conversation_id):
+            calls.append((goal, grant, approval, source, conversation_id))
+            return {"success": True, "run_id": "pi-run-1"}
+
+    executor = build_pi_executor(runner=FakePiRunner())
+
+    with pytest.raises(TypeError, match="TaskAdmissionGrant"):
+        executor("inspect", {"session_id": "session-1"})
+
+    with pytest.raises(ValueError, match="task identity"):
+        executor(
+            "inspect",
+            {
+                "task_id": "different-task",
+                "task_admission": admission,
+                "session_id": "session-1",
+            },
+        )
+
+    with pytest.raises(ValueError, match="project identity"):
+        executor(
+            "inspect",
+            {
+                "task_admission": admission,
+                "project_path": str(tmp_path / "other-project"),
+                "session_id": "session-1",
+            },
+        )
+
+    result = executor(
+        "inspect",
+        {
+            "task_admission": admission,
+            "source": "diagnostics",
+            "session_id": "session-1",
+        },
+    )
+
+    assert result == {"success": True, "run_id": "pi-run-1"}
+    assert calls == [("inspect", admission, None, "diagnostics", "session-1")]
+
+
+def test_task_pool_links_its_diagnostic_run_to_the_pi_execution_run(tmp_path) -> None:
+    from metadata import TaskAdmissionGrant
+    from runtime_diagnostics import build_pi_executor
+
+    target = tmp_path / "service.py"
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    admission = TaskAdmissionGrant(
+        admission_id="admission-1",
+        task_id="task-1",
+        project_root=str(tmp_path),
+        read_files=[str(target)],
+    )
+
+    class FakePiRunner:
+        def run(self, *_args, **_kwargs):
+            return {"success": True, "run_id": "pi-run-1"}
+
+    recorder = DiagnosticRecorder(tmp_path / "diagnostics")
+    runner = RuntimeTaskPoolRunner(
+        build_pi_executor(runner=FakePiRunner()),
+        recorder=recorder,
+    )
+    result = runner.run_task(
+        RawTaskInput(
+            task_id="task-1",
+            source="diagnostics",
+            raw_input="inspect",
+            context={"task_admission": admission},
+        )
+    )
+
+    assert result.success is True
+    assert result.execution_run_id == "pi-run-1"
+    events = recorder.load_run_events(limit=0)
+    assert events[-1]["payload"]["execution_run_id"] == "pi-run-1"
+
+
 def test_load_raw_tasks_from_jsonl_and_json(tmp_path) -> None:
     jsonl_path = tmp_path / "tasks.jsonl"
     jsonl_path.write_text(
@@ -364,9 +532,12 @@ def test_runtime_task_pool_runner_passes_task_context_and_records_runs(tmp_path)
     assert seen[0][1]["task_id"] == "manual_010"
     assert seen[0][1]["source"] == "manual"
     assert seen[0][1]["project_path"] == "/tmp/project"
-    runs = runner.recorder.runs_file.read_text(encoding="utf-8")
-    assert '"event": "task_pool_item_started"' in runs
-    assert '"event": "task_pool_item_finished"' in runs
+    events = runner.recorder.load_run_events(limit=0)
+    assert [event["event"] for event in events] == [
+        "task_pool_item_started",
+        "task_pool_item_finished",
+    ]
+    assert not runner.recorder.runs_file.exists()
 
 
 def test_summarizer_highlights_repeated_signals_and_renders_markdown(tmp_path) -> None:
@@ -404,6 +575,19 @@ def test_recorder_load_run_events(tmp_path) -> None:
     events = recorder.load_run_events(limit=0)
 
     assert [event["event"] for event in events] == ["task_pool_item_started", "task_pool_item_finished"]
+
+
+def test_recorder_merges_legacy_and_evidence_core_events(tmp_path) -> None:
+    recorder = DiagnosticRecorder(tmp_path)
+    recorder.runs_file.write_text(
+        json.dumps({"event": "legacy_only", "task_id": "legacy-task"}) + "\n",
+        encoding="utf-8",
+    )
+    recorder.record_event("new-task", event_type="task_received", payload={})
+
+    events = recorder.load_run_events(limit=0)
+
+    assert {event["event"] for event in events} == {"legacy_only", "task_received"}
 
 
 def test_recorder_creates_run_directory_and_event_stream(tmp_path) -> None:
@@ -453,7 +637,8 @@ def test_recorder_creates_run_directory_and_event_stream(tmp_path) -> None:
     assert run is not None
     assert run.task_id == "task-trajectory-1"
     assert run.session_id == "session-trajectory-1"
-    assert run.final_status == "success"
+    assert run.final_status == "running"
+    assert run.success is None
     assert len(trajectory_events) == 2
     assert [item["event_type"] for item in trajectory_events] == ["task_received", "task_finished"]
     assert trajectory_events[0]["payload_kind"] == "log_event"
@@ -461,12 +646,16 @@ def test_recorder_creates_run_directory_and_event_stream(tmp_path) -> None:
     assert trajectory_events[0]["payload"]["correlation"]["task_id"] == "task-trajectory-1"
     assert trajectory_events[0]["payload"]["correlation"]["session_id"] == "session-trajectory-1"
     assert summary is not None
-    assert summary.final_status == "success"
+    assert summary.final_status == "running"
     assert summary.event_count == 2
 
 
 def test_hooks_correlate_session_events_into_one_run(tmp_path) -> None:
-    hooks = RuntimeDiagnosticsHooks(DiagnosticRecorder(tmp_path))
+    recorder = DiagnosticRecorder(tmp_path)
+    hooks = RuntimeDiagnosticsHooks(
+        recorder,
+        coordinator=RunCoordinator(recorder.evidence_store),
+    )
 
     hooks.on_task_received(
         task_id="manual_task_001",
@@ -493,7 +682,9 @@ def test_hooks_correlate_session_events_into_one_run(tmp_path) -> None:
     assert run.goal == "请总结模块"
     assert run.final_status == "failed"
     events = hooks.recorder.load_trajectory_events(run.run_id)
-    assert [event["event_type"] for event in events] == ["task_received", "task_card_ready", "task_finished"]
+    assert [
+        event["event_type"] for event in events if event["layer"] == "semantic"
+    ] == ["task_received", "task_card_ready", "task_finished"]
 
 
 def test_hooks_record_phase_verification_and_tool_events(tmp_path) -> None:
@@ -553,21 +744,24 @@ def test_hooks_record_phase_verification_and_tool_events(tmp_path) -> None:
         "task_received",
         "runtime_phase_changed",
         "verification_state_changed",
+        "mutation_requested",
         "tool_called",
         "tool_succeeded",
+        "mutation_receipt",
     ]
     assert events[1]["payload_kind"] == "log_event"
     assert events[2]["payload_kind"] == "log_event"
-    assert events[3]["payload_kind"] == "tool_call"
-    assert events[4]["payload_kind"] == "tool_execution_envelope"
+    assert events[3]["payload_kind"] == "dict"
+    assert events[4]["payload_kind"] == "tool_call"
+    assert events[5]["payload_kind"] == "tool_execution_envelope"
     assert events[1]["payload"]["correlation"]["task_id"] == "task-phase-1"
     assert events[1]["payload"]["correlation"]["session_id"] == "session-phase-1"
-    assert events[3]["task_id"] == "task-phase-1"
-    assert events[3]["payload"]["correlation"]["task_id"] == "task-phase-1"
-    assert events[3]["payload"]["annotations"]["subtask_id"] == "subtask-phase-1"
-    assert events[3]["payload"]["correlation"]["execution_id"] == "call-1"
+    assert events[4]["task_id"] == "task-phase-1"
     assert events[4]["payload"]["correlation"]["task_id"] == "task-phase-1"
     assert events[4]["payload"]["annotations"]["subtask_id"] == "subtask-phase-1"
+    assert events[4]["payload"]["correlation"]["execution_id"] == "call-1"
+    assert events[5]["payload"]["correlation"]["task_id"] == "task-phase-1"
+    assert events[5]["payload"]["annotations"]["subtask_id"] == "subtask-phase-1"
     assert summary is not None
     assert summary.phase_changes == 1
     assert summary.verification_state_changes == 1
@@ -591,6 +785,112 @@ def test_diagnostic_recorder_reopens_run_id_and_continues_event_sequence_after_r
     assert second_event.run_id == run.run_id
     assert second_event.sequence == first_event.sequence + 1
     assert len(list((tmp_path / "task_trajectory").glob("*/run.json"))) == 1
+
+
+def test_repeated_root_task_creates_isolated_runs_and_routes_by_session(tmp_path) -> None:
+    hooks = RuntimeDiagnosticsHooks(DiagnosticRecorder(tmp_path))
+    first_run_id = hooks.on_task_received(
+        task_id="same-root-task",
+        source="test",
+        raw_input="first",
+        session_id="session-first",
+    )
+    second_run_id = hooks.on_task_received(
+        task_id="same-root-task",
+        source="test",
+        raw_input="second",
+        session_id="session-second",
+    )
+    hooks.on_log_event(
+        task_id="same-root-task",
+        session_id="session-second",
+        source_name="test",
+        phase="execute",
+        event_type="second_only",
+        success=True,
+    )
+
+    assert first_run_id and second_run_id and first_run_id != second_run_id
+    assert [event["event_type"] for event in hooks.recorder.load_trajectory_events(first_run_id)] == ["task_received"]
+    assert [event["event_type"] for event in hooks.recorder.load_trajectory_events(second_run_id)] == ["task_received", "second_only"]
+
+
+def test_runtime_mutation_and_exact_validation_events_pass_strict_conformance(tmp_path) -> None:
+    hooks = RuntimeDiagnosticsHooks(DiagnosticRecorder(tmp_path))
+    hooks.on_task_received(
+        task_id="runtime-mutation-task",
+        source="manual",
+        raw_input="repair fixture",
+        session_id="runtime-mutation-session",
+    )
+    file_input = ToolInputMetadata(tool_name="file_writer", file_path="fixture.py", content="print(1)\n")
+    hooks.on_tool_started(
+        tool_call=ToolCallMetadata(
+            session_id="runtime-mutation-session",
+            task_id="runtime-mutation-task",
+            step_id="write-1",
+            call_id="write-call",
+            tool_name="file_writer",
+            input_metadata=file_input,
+        )
+    )
+    hooks.on_tool_completed(
+        task_id="runtime-mutation-task",
+        session_id="runtime-mutation-session",
+        tool_execution=ToolExecutionEnvelopeMetadata(
+            tool_name="file_writer",
+            step_id="write-1",
+            status=ResultStatus.SUCCESS,
+            success=True,
+            input_metadata=file_input,
+            call_id="write-call",
+        ),
+    )
+    command_input = ToolInputMetadata(tool_name="command_executor", command="python -m pytest -q")
+    hooks.on_tool_started(
+        tool_call=ToolCallMetadata(
+            session_id="runtime-mutation-session",
+            task_id="runtime-mutation-task",
+            step_id="verify-1",
+            call_id="verify-call",
+            tool_name="command_executor",
+            input_metadata=command_input,
+        )
+    )
+    hooks.on_tool_completed(
+        task_id="runtime-mutation-task",
+        session_id="runtime-mutation-session",
+        tool_execution=ToolExecutionEnvelopeMetadata(
+            tool_name="command_executor",
+            step_id="verify-1",
+            status=ResultStatus.SUCCESS,
+            success=True,
+            input_metadata=command_input,
+            call_id="verify-call",
+        ),
+    )
+    hooks.on_verification_state_changed(
+        task_id="runtime-mutation-task",
+        session_id="runtime-mutation-session",
+        verification_status="passed",
+        phase="verify",
+    )
+    hooks.on_task_finished(
+        task_id="runtime-mutation-task",
+        session_id="runtime-mutation-session",
+        success=True,
+        summary={"completion_reason": "validated"},
+    )
+
+    result = hooks.recorder.validate_trajectory(
+        "runtime-mutation-task",
+        require_mutation_chain=True,
+    )
+
+    assert result.valid is True
+    assert result.checks["mutation_requested"] is True
+    assert result.checks["mutation_receipt"] is True
+    assert result.checks["validation_completed"] is True
 
 
 def test_hooks_record_generic_log_event_with_correlation(tmp_path) -> None:

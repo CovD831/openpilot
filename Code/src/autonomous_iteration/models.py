@@ -97,6 +97,13 @@ class DesignedImprovementTask(BaseModel):
     goal_id: str
     description: str
     target_files: list[str] = Field(default_factory=list)
+    # ``target_files`` is the model-facing selection.  These three fields are
+    # the typed handoff consumed by execution-backed callers.  They remain
+    # optional for historical snapshots; new runtime producers fill them from
+    # the same validated project/task facts and reject contradictory values.
+    read_files: list[str] = Field(default_factory=list)
+    write_files: list[str] = Field(default_factory=list)
+    validation_command: str = ""
     acceptance_criteria: list[str] = Field(default_factory=list)
     risk_notes: list[str] = Field(default_factory=list)
     evidence_ids: list[str] = Field(default_factory=list)

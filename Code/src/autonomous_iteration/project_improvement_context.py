@@ -28,6 +28,15 @@ _TASK_DESIGN_SCHEMA = {
     "task": {
         "description": "specific implementation task",
         "target_files": ["path"],
+        "read_files": [
+            "exact project paths required as read-before-write evidence; empty only when no read is needed"
+        ],
+        "write_files": [
+            "exact permitted project paths; must be a subset of target_files and may be empty for non-mutating work"
+        ],
+        "validation_command": (
+            "exact command from the project validation contract; empty only when no validation is required"
+        ),
         "acceptance_criteria": ["observable criterion"],
         "risk_notes": ["risk or empty"],
         "evidence_ids": [
@@ -111,6 +120,10 @@ def build_iteration_task_design_candidates(
                 "improvement goal into 1-2 specific implementation tasks. Return "
                 "only valid JSON. Preserve the stated safety constraints and do "
                 "not silently change the delivery surface, language, or framework. "
+                "For the execution handoff, include exact read_files, write_files, "
+                "and validation_command values from the typed project facts. "
+                "Never invent a write path or validation command; write_files must "
+                "stay within target_files and the validated project scope. "
                 "Evidence IDs must be exact values copied from "
                 "[evidence_id=\"...\"] headers. A goal ID, diagnosis candidate ID, "
                 "task ID, source ID, or any ID found inside candidate content must not "
@@ -703,7 +716,7 @@ def _resolve_session_constraints(
     if session_ingress_state is None:
         return session_constraints
     ingress_constraints = session_ingress_state.session_constraints
-    if session_constraints is not None and session_constraints.canonical_hash != ingress_constraints.canonical_hash:
+    if session_constraints is not None and session_constraints.authority_hash != ingress_constraints.authority_hash:
         raise ValueError("session ingress and explicit constraints differ")
     return ingress_constraints
 
@@ -718,7 +731,7 @@ def _append_session_dialog_candidates(
             raise ValueError("context projection requires session ingress state")
         if context_projection.session_turn_source_hash != session_turn_ledger_hash(session_ingress_state):
             raise ValueError("context projection turn source hash mismatch")
-        if context_projection.session_constraints_hash != session_ingress_state.session_constraints.canonical_hash:
+        if context_projection.session_constraints_hash != session_ingress_state.session_constraints.authority_hash:
             raise ValueError("context projection constraint hash mismatch")
         base_order = max((candidate.source_order for candidate in candidates), default=0) + 1
         for offset, candidate in enumerate(

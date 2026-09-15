@@ -36,6 +36,47 @@ class CommandRegistry:
     def _initialize_commands(self):
         """Initialize all available commands."""
         commands = [
+            # Execution and proposal controls
+            Command(
+                name="/approve",
+                aliases=[],
+                description="Submit one pending mutation proposal for the current safety gate",
+                usage="/approve PROPOSAL_ID",
+                category=CommandCategory.EXECUTION,
+                requires_args=True,
+            ),
+            Command(
+                name="/constraints",
+                aliases=[],
+                description="Show or propose session-scoped narrowing constraints",
+                usage="/constraints [text]",
+                category=CommandCategory.EXECUTION,
+                requires_args=False,
+            ),
+            Command(
+                name="/confirm",
+                aliases=[],
+                description="Confirm a pending session constraint proposal",
+                usage="/confirm PROPOSAL_ID",
+                category=CommandCategory.EXECUTION,
+                requires_args=True,
+            ),
+            Command(
+                name="/reject",
+                aliases=[],
+                description="Reject a pending session constraint proposal",
+                usage="/reject PROPOSAL_ID",
+                category=CommandCategory.EXECUTION,
+                requires_args=True,
+            ),
+            Command(
+                name="/revoke",
+                aliases=[],
+                description="Revoke one active session constraint",
+                usage="/revoke CONSTRAINT_KEY",
+                category=CommandCategory.EXECUTION,
+                requires_args=True,
+            ),
             # System
             Command(
                 name="/config",

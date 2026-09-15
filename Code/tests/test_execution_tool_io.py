@@ -585,6 +585,7 @@ def test_fast_tool_success_persists_exactly_one_called_and_succeeded_event(tmp_p
         event
         for event in recorder.load_trajectory_events(run.run_id)
         if event["event_type"] in {"tool_called", "tool_succeeded", "tool_failed"}
+        and event["layer"] == "semantic"
     ]
     assert result.success is True
     assert [event["event_type"] for event in events] == ["tool_called", "tool_succeeded"]
@@ -614,6 +615,7 @@ def test_fast_tool_failure_persists_exactly_one_called_and_failed_event(tmp_path
         event
         for event in recorder.load_trajectory_events(run.run_id)
         if event["event_type"] in {"tool_called", "tool_succeeded", "tool_failed"}
+        and event["layer"] == "semantic"
     ]
     assert result.success is False
     assert [event["event_type"] for event in events] == ["tool_called", "tool_failed"]
@@ -667,6 +669,7 @@ def test_fast_tool_retry_history_does_not_inflate_logical_durable_events(tmp_pat
         event
         for event in recorder.load_trajectory_events(run.run_id)
         if event["event_type"] in {"tool_called", "tool_succeeded", "tool_failed"}
+        and event["layer"] == "semantic"
     ]
     assert result.attempts_used == 2
     assert result.retry_count == 1
@@ -748,6 +751,7 @@ def test_repeated_fast_tool_step_gets_distinct_invocation_ids(tmp_path) -> None:
         event
         for event in recorder.load_trajectory_events(run.run_id)
         if event["event_type"] in {"tool_called", "tool_succeeded", "tool_failed"}
+        and event["layer"] == "semantic"
     ]
     assert first.call_id != second.call_id
     assert [event["event_type"] for event in events] == [

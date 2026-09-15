@@ -13,7 +13,11 @@ from typing import Any, Mapping, Sequence
 from core.tool_roundtrip import append_tool_round_trip
 from core.exceptions import ContextAssemblyBudgetError
 from core.llm import LLMMessage, LLMResponse, LLMToolDefinition, LLMToolFunction, LLMToolResult
-from core.provider_tool_admission import ProviderToolAdmission, admit_provider_tool_calls
+from core.provider_tool_admission import (
+    ProviderToolAdmission,
+    admit_provider_tool_calls,
+    provider_tool_wire_fields,
+)
 from core.tool_contracts import ToolCapability
 from core.tool_event_loop import ToolEventLoopRunResult, ToolEventLoopRunner
 from core.validation_command import validation_commands_match
@@ -25,6 +29,7 @@ from metadata import (
     ContextCandidateTruncation,
     ContextCandidateTrust,
     ContextRequestPurpose,
+    FileReadMode,
     FileReadWindowSpec,
     ReasoningDecisionComplexity,
     ReasoningMode,
@@ -36,7 +41,11 @@ from metadata import (
     metadata_summary,
 )
 from core.reasoning import resolve_reasoning_policy
-from tools.mutation_descriptor import FILE_MUTATION_TOOLS
+from tools.command_tool import ExecutionMode
+from tools.mutation_descriptor import (
+    FILE_MUTATION_TOOLS,
+    PROVIDER_NATIVE_MUTATION_TOOLS,
+)
 
 
 _PROJECTION_MARKERS = (
@@ -52,6 +61,54 @@ _MAX_STRUCTURED_CALLABLE_CHARS = 256
 _MAX_STRUCTURED_CALLSITE_CANDIDATES = 32
 _MAX_STRUCTURED_CALLSITE_CHARS = 256
 _MAX_STRUCTURED_CALLSITE_DEPTH = 3
+_MAX_PROVIDER_ERROR_CHARS = 300
+_PROVIDER_SECRET_PATTERNS = (
+    re.compile(
+        r"(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)([^\s,;]+)"
+    ),
+    re.compile(
+        r"(?i)((?:incorrect\s+)?api[ _-]?key(?:\s+provided)?\s*[:=]\s*)([^\s,;]+)"
+    ),
+    re.compile(
+        r"(?i)((?:token|secret|credential)\s*[:=]\s*)([^\s,;]+)"
+    ),
+)
+_PROVIDER_KEY_SHAPED_SECRET = re.compile(
+    r"(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9_]{8,}|"
+    r"github_pat_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|"
+    r"AKIA[A-Z0-9]{12,})(?![A-Za-z0-9])"
+)
+_PROVIDER_JWT_SECRET = re.compile(
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\."
+    r"[A-Za-z0-9_-]{4,}(?![A-Za-z0-9_-])"
+)
+
+
+def _bounded_provider_error_message(value: Any) -> str:
+    """Return one bounded, single-line provider error fact without credentials."""
+
+    message = " ".join(str(value or "").split())
+    for pattern in _PROVIDER_SECRET_PATTERNS:
+        message = pattern.sub(r"\1<redacted>", message)
+    message = _PROVIDER_KEY_SHAPED_SECRET.sub("<redacted>", message)
+    message = _PROVIDER_JWT_SECRET.sub("<redacted>", message)
+    return message[:_MAX_PROVIDER_ERROR_CHARS]
+
+
+def _provider_exception_type(exc: BaseException) -> str:
+    """Preserve exception identity separately from its sanitized description."""
+
+    return re.sub(r"[^A-Za-z0-9_.]", "", type(exc).__name__)[:128] or "Exception"
+
+
+def _canonical_provider_finish_reason(value: Any) -> str | None:
+    """Return one credential-safe, bounded provider finish-reason fact."""
+
+    sanitized = _bounded_provider_error_message(value).strip().lower()
+    if not sanitized:
+        return None
+    canonical = re.sub(r"[^a-z0-9_.<>-]+", "_", sanitized).strip("_.-")
+    return canonical[:64] or None
 
 
 def _contains_projection_marker(source: str) -> bool:
@@ -643,6 +700,7 @@ class ProviderToolRoundTripResult:
     tool_loop_results: list[ToolEventLoopRunResult]
     rounds_used: int
     error_message: str | None = None
+    exception_type: str | None = None
     attempts: list[ProviderToolAttempt] = field(default_factory=list)
     evidence_coverage: ProviderToolEvidenceCoverage = field(
         default_factory=ProviderToolEvidenceCoverage
@@ -653,6 +711,9 @@ class ProviderToolRoundTripResult:
     outcome_feedback_enabled: bool = False
     reasoning_complexity: ReasoningDecisionComplexity = ReasoningDecisionComplexity.STANDARD
     reasoning_mode: ReasoningMode | None = None
+    mutation_route: bool = False
+    mutation_receipt_observed: bool = False
+    exact_validation_observed: bool = False
 
 
 def build_provider_tool_definitions(
@@ -672,8 +733,11 @@ def build_provider_tool_definitions(
         if not tool_name:
             raise ProviderToolRoundTripError("provider tool names must be non-empty")
         definition = getattr(registry, "get", lambda _name: None)(tool_name)
-        if definition is None:
-            raise ProviderToolRoundTripError(f"cannot expose unknown provider tool: {tool_name}")
+        executor = getattr(registry, "get_executor", lambda _name: None)(tool_name)
+        if definition is None or executor is None:
+            raise ProviderToolRoundTripError(
+                f"cannot expose unknown or unexecutable provider tool: {tool_name}"
+            )
         contract = getattr(definition, "contract_metadata", None)
         if contract is None:
             raise ProviderToolRoundTripError(f"tool has no typed contract: {tool_name}")
@@ -685,29 +749,7 @@ def build_provider_tool_definitions(
             for requirement in (getattr(contract, "conditional_requirements", []) or [])
             if isinstance(requirement, dict)
         ]
-        field_names: list[str] = []
-        conditional_fields = [
-            field
-            for requirement in conditional_requirements
-            for field in [
-                *(requirement.get("when", {}) or {}).keys(),
-                *(requirement.get("required", []) or []),
-                *[
-                    field
-                    for group in (requirement.get("required_any_of", []) or [])
-                    for field in group
-                ],
-            ]
-        ]
-        for field_name in [
-            *required_fields,
-            *[field for group in any_of for field in group],
-            *defaults,
-            *conditional_fields,
-        ]:
-            field_name = str(field_name)
-            if field_name and field_name not in field_names:
-                field_names.append(field_name)
+        field_names = list(provider_tool_wire_fields(definition))
         properties = {
             field_name: _provider_field_schema(field_name, defaults.get(field_name))
             for field_name in field_names
@@ -814,6 +856,7 @@ class ProviderToolRoundTripRunner:
         self.validation_command = validation_command or None
         self.validation_cwd = validation_cwd or self.project_path
         self._validation_commands_used = 0
+        self._exact_validation_observed = False
         self.max_no_progress_rounds = max_no_progress_rounds
         self.context_max_prompt_tokens = context_max_prompt_tokens
         self.initial_context_candidates = list(initial_context_candidates or [])
@@ -858,6 +901,24 @@ class ProviderToolRoundTripRunner:
     def _result(self, **kwargs: Any) -> ProviderToolRoundTripResult:
         """Return a result with bounded per-request context evidence attached."""
 
+        final_response = kwargs.get("final_response")
+        if final_response is not None:
+            kwargs["final_response"] = final_response.model_copy(
+                update={
+                    "finish_reason": _canonical_provider_finish_reason(
+                        getattr(final_response, "finish_reason", None)
+                    )
+                }
+            )
+        error_message = kwargs.get("error_message")
+        if error_message is not None:
+            kwargs["error_message"] = _bounded_provider_error_message(error_message)
+        exception_type = kwargs.get("exception_type")
+        if exception_type is not None:
+            kwargs["exception_type"] = re.sub(
+                r"[^A-Za-z0-9_.]", "", str(exception_type)
+            )[:128] or "Exception"
+
         return ProviderToolRoundTripResult(
             request_diagnostics=[dict(item) for item in self._request_diagnostics],
             budget_diagnostics=[dict(item) for item in self._budget_diagnostics],
@@ -865,8 +926,31 @@ class ProviderToolRoundTripRunner:
             outcome_feedback_enabled=self._outcome_feedback_enabled(),
             reasoning_complexity=self._reasoning_complexity(),
             reasoning_mode=getattr(self._request_reasoning_policy(), "mode", None),
+            mutation_route=self._mutation_route_enabled(),
+            mutation_receipt_observed=self._post_mutation_receipt is not None,
+            exact_validation_observed=self._exact_validation_observed,
             **kwargs,
         )
+
+    @staticmethod
+    def _authority_failure_result(
+        messages: Sequence[LLMMessage],
+    ) -> ProviderToolRoundTripResult:
+        """Reject malformed authority without consulting runtime policy state."""
+
+        return ProviderToolRoundTripResult(
+            success=False,
+            final_response=None,
+            messages=list(messages),
+            tool_loop_results=[],
+            rounds_used=0,
+            error_message="ProviderToolAuthorityFlagInvalid",
+        )
+
+    def _mutation_route_enabled(self) -> bool:
+        """Return whether this runner is authorized to perform a mutation."""
+
+        return bool(self.allow_mutations and self._mutation_tools_exposed())
 
     def _outcome_feedback_enabled(self) -> bool:
         """Return the typed feedback route actually attached to this runner."""
@@ -908,8 +992,10 @@ class ProviderToolRoundTripRunner:
                 reserved=requested_limit,
                 actual=actual_completion_tokens,
             )
-        finish_reason = getattr(error, "finish_reason", None) or getattr(response, "finish_reason", None)
-        finish_reason = str(finish_reason) if finish_reason is not None else None
+        finish_reason = _canonical_provider_finish_reason(
+            getattr(error, "finish_reason", None)
+            or getattr(response, "finish_reason", None)
+        )
         outcome = (
             ToolEventCompletionOutcome.TRUNCATED
             if finish_reason and finish_reason.lower() in {"length", "max_tokens"}
@@ -945,7 +1031,7 @@ class ProviderToolRoundTripRunner:
                 "provider_cap_hit": outcome is ToolEventCompletionOutcome.TRUNCATED,
                 "outcome_feedback_enabled": self._outcome_feedback_enabled(),
                 "provider_attempt_failed": True,
-                "error_type": type(error).__name__,
+                "error_type": _provider_exception_type(error),
             }
         )
 
@@ -1014,6 +1100,11 @@ class ProviderToolRoundTripRunner:
         current_messages = list(messages)
         loop_results: list[ToolEventLoopRunResult] = []
         last_response: LLMResponse | None = None
+        if not isinstance(self.allow_mutations, bool) or not isinstance(
+            self.user_confirmed,
+            bool,
+        ):
+            return self._authority_failure_result(current_messages)
         mutation_boundary_error = self._mutation_boundary_error()
         if mutation_boundary_error is not None:
             return self._result(
@@ -1170,7 +1261,9 @@ class ProviderToolRoundTripRunner:
                         "budget_tokens_remaining_after": budget.tool_event_completion_tokens_remaining,
                         "recovery_bonus_before": recovery_bonus_before,
                         "recovery_bonus_after": budget.tool_event_completion_recovery_bonus,
-                        "finish_reason": response.finish_reason,
+                        "finish_reason": _canonical_provider_finish_reason(
+                            response.finish_reason
+                        ),
                         "outcome": outcome.value,
                         "provider_cap_hit": str(response.finish_reason or "").lower()
                         in {"length", "max_tokens"},
@@ -1206,6 +1299,7 @@ class ProviderToolRoundTripRunner:
                     tool_loop_results=loop_results,
                     rounds_used=round_index,
                     error_message=f"provider round-trip request failed: {exc}",
+                    exception_type=_provider_exception_type(exc),
                     attempts=list(self._attempt_ledger),
                     evidence_coverage=self._evidence_coverage(),
                 )
@@ -1227,11 +1321,23 @@ class ProviderToolRoundTripRunner:
                     tool_loop_results=loop_results,
                     rounds_used=round_index,
                     error_message=f"provider round-trip request failed: {exc}",
+                    exception_type=_provider_exception_type(exc),
                     attempts=list(self._attempt_ledger),
                     evidence_coverage=self._evidence_coverage(),
                 )
             last_response = response
             if not response.tool_calls:
+                if self._mutation_route_enabled() and not self._mutation_completion_evidence_ready():
+                    return self._result(
+                        success=False,
+                        final_response=response,
+                        messages=current_messages,
+                        tool_loop_results=loop_results,
+                        rounds_used=round_index,
+                        error_message="ProviderToolMutationCompletionEvidenceRequired",
+                        attempts=list(self._attempt_ledger),
+                        evidence_coverage=self._evidence_coverage(),
+                    )
                 if self._finalization_pending:
                     self._finalization_pending = False
                     if not str(response.content or "").strip():
@@ -1272,10 +1378,9 @@ class ProviderToolRoundTripRunner:
                     response.tool_calls,
                     round_index=round_index,
                 )
-                admitted_tool_calls = [
-                    self._prepare_provider_tool_call(call)
-                    for call in new_tool_calls[:max_calls]
-                ]
+                # Validate the provider's original wire arguments before any
+                # project-owned context, path, or runtime handles are bound.
+                admitted_tool_calls = list(new_tool_calls[:max_calls])
                 admissions = admit_provider_tool_calls(
                     admitted_tool_calls,
                     task_id=str(getattr(self.task, "id", "unknown")),
@@ -1283,6 +1388,11 @@ class ProviderToolRoundTripRunner:
                     round_index=round_index,
                     registry=self.runtime.tool_registry,
                     budget=self._runtime_budget(),
+                    advertised_tool_names=[
+                        str(tool.function.name)
+                        for tool in (getattr(request, "tools", None) or [])
+                    ],
+                    allow_mutations=self.allow_mutations,
                     user_confirmed=self.user_confirmed,
                     read_scope=self.read_scope,
                     write_scope=self.write_scope,
@@ -1290,6 +1400,13 @@ class ProviderToolRoundTripRunner:
                     validation_command=self.validation_command,
                     validation_cwd=self.validation_cwd,
                     validation_commands_used=self._validation_commands_used,
+                    required_reads_complete=(
+                        self._all_scoped_reads_complete()
+                        if self.read_scope
+                        else True
+                    ),
+                    require_mutation_before_validation=self._mutation_route_enabled(),
+                    mutation_observed=self._post_mutation_receipt is not None,
                 )
                 admissions = [
                     self._bind_project_path(admission, round_index=round_index)
@@ -1302,9 +1419,21 @@ class ProviderToolRoundTripRunner:
                     and admission.tool_call.tool_name == "command_executor"
                     and self.validation_command
                 )
+                execution_admissions = [
+                    *(
+                        admission
+                        for admission in admissions
+                        if admission.status == "admitted"
+                    ),
+                    *(
+                        admission
+                        for admission in admissions
+                        if admission.status != "admitted"
+                    ),
+                ]
                 loop_result = ToolEventLoopRunner(self.owner).run_provider_tool_calls(
                     self.task,
-                    admissions,
+                    execution_admissions,
                     round_index=round_index,
                 )
                 self._redact_internal_generated_units(loop_result)
@@ -1316,6 +1445,7 @@ class ProviderToolRoundTripRunner:
                     tool_loop_results=loop_results,
                     rounds_used=round_index,
                     error_message=f"provider tool admission/execution failed: {exc}",
+                    exception_type=_provider_exception_type(exc),
                     attempts=list(self._attempt_ledger),
                     evidence_coverage=self._evidence_coverage(),
                 )
@@ -1328,8 +1458,11 @@ class ProviderToolRoundTripRunner:
             )
             mutation_receipt = self._mutation_receipt_from_loop_result(loop_result)
             validation_observed = self._validation_succeeded_in_loop(loop_result)
-            if mutation_receipt is not None and not validation_observed:
+            if validation_observed:
+                self._exact_validation_observed = True
+            if mutation_receipt is not None:
                 self._post_mutation_receipt = mutation_receipt
+            if mutation_receipt is not None and not validation_observed:
                 self._post_mutation_active = True
                 self._post_mutation_wire_messages = []
             try:
@@ -1393,6 +1526,7 @@ class ProviderToolRoundTripRunner:
                     tool_loop_results=loop_results,
                     rounds_used=round_index,
                     error_message=f"provider tool result round-trip failed: {exc}",
+                    exception_type=_provider_exception_type(exc),
                     attempts=list(self._attempt_ledger),
                     evidence_coverage=self._evidence_coverage(),
                 )
@@ -1626,6 +1760,16 @@ class ProviderToolRoundTripRunner:
 
         return self._all_scoped_reads_complete() and self._has_bounded_projection()
 
+    def _mutation_completion_evidence_ready(self) -> bool:
+        """Require declared reads, scoped mutation, and exact validation."""
+
+        reads_ready = not self.read_scope or self._all_scoped_reads_complete()
+        return bool(
+            reads_ready
+            and self._post_mutation_receipt is not None
+            and self._exact_validation_observed
+        )
+
     def _source_page_read_cap(self) -> int:
         return min(self._MAX_SOURCE_PAGE_READS, max(1, self.max_rounds - 2))
 
@@ -1650,23 +1794,84 @@ class ProviderToolRoundTripRunner:
         return bool(self.tools)
 
     def _mutation_boundary_error(self) -> str | None:
+        unsupported = self._unsupported_mutation_tools_exposed()
+        if unsupported:
+            return "ProviderMutationToolUnsupported"
+        if self.allow_mutations and not self._mutation_tools_exposed():
+            return "ProviderMutationToolRequired"
         if not self._mutation_tools_exposed():
             return None
         if not self.allow_mutations:
             return "ProviderToolMutationOptInRequired"
         if not self.user_confirmed:
             return "ProviderToolMutationConfirmationRequired"
+        if not str(self.validation_command or "").strip():
+            return "ProviderMutationValidationCommandRequired"
+        if not self._validation_tool_exposed():
+            return "ProviderMutationValidationToolRequired"
+        if self.read_scope and not self._read_tool_exposed():
+            return "ProviderMutationReadToolRequired"
         return None
 
     def _mutation_tools_exposed(self) -> bool:
         registry = getattr(self.runtime, "tool_registry", None)
+        if registry is None:
+            return False
         for tool in self.tools:
             name = str(getattr(getattr(tool, "function", None), "name", "") or "")
-            if name in FILE_MUTATION_TOOLS:
+            definition = registry.get(name) if hasattr(registry, "get") else None
+            executor = registry.get_executor(name) if hasattr(registry, "get_executor") else None
+            if (
+                name in PROVIDER_NATIVE_MUTATION_TOOLS
+                and definition is not None
+                and executor is not None
+            ):
                 return True
-            definition = registry.get(name) if registry is not None and hasattr(registry, "get") else None
+        return False
+
+    def _unsupported_mutation_tools_exposed(self) -> tuple[str, ...]:
+        """Return mutators lacking the full provider checkpoint/receipt lifecycle."""
+
+        registry = getattr(self.runtime, "tool_registry", None)
+        unsupported: list[str] = []
+        for tool in self.tools:
+            name = str(getattr(getattr(tool, "function", None), "name", "") or "")
+            definition = (
+                registry.get(name)
+                if registry is not None and hasattr(registry, "get")
+                else None
+            )
             capabilities = set(getattr(definition, "capabilities", []) or []) if definition else set()
-            if capabilities & {ToolCapability.FILE_WRITE, ToolCapability.FILE_DELETE}:
+            mutating = bool(
+                name in FILE_MUTATION_TOOLS
+                or capabilities & {ToolCapability.FILE_WRITE, ToolCapability.FILE_DELETE}
+            )
+            if mutating and name not in PROVIDER_NATIVE_MUTATION_TOOLS:
+                unsupported.append(name)
+        return tuple(dict.fromkeys(unsupported))
+
+    def _validation_tool_exposed(self) -> bool:
+        registry = getattr(self.runtime, "tool_registry", None)
+        if registry is None:
+            return False
+        for tool in self.tools:
+            name = str(getattr(getattr(tool, "function", None), "name", "") or "")
+            definition = registry.get(name) if hasattr(registry, "get") else None
+            executor = registry.get_executor(name) if hasattr(registry, "get_executor") else None
+            if name == "command_executor" and definition is not None and executor is not None:
+                return True
+        return False
+
+    def _read_tool_exposed(self) -> bool:
+        registry = getattr(self.runtime, "tool_registry", None)
+        if registry is None:
+            return False
+        for tool in self.tools:
+            name = str(getattr(getattr(tool, "function", None), "name", "") or "")
+            definition = registry.get(name) if hasattr(registry, "get") else None
+            executor = registry.get_executor(name) if hasattr(registry, "get_executor") else None
+            capabilities = set(getattr(definition, "capabilities", []) or []) if definition else set()
+            if executor is not None and capabilities == {ToolCapability.FILE_READ}:
                 return True
         return False
 
@@ -1676,18 +1881,39 @@ class ProviderToolRoundTripRunner:
         if self._finalization_pending:
             return []
         if self._post_mutation_active:
+            if not str(self.validation_command or "").strip():
+                return []
             return [
                 tool
                 for tool in self.tools
                 if str(getattr(getattr(tool, "function", None), "name", ""))
                 == "command_executor"
             ]
+        if (
+            self._mutation_tools_exposed()
+            and self.read_scope
+            and not self._all_scoped_reads_complete()
+        ):
+            registry = getattr(self.runtime, "tool_registry", None)
+            return [
+                tool
+                for tool in self.tools
+                if registry is not None
+                and (
+                    definition := registry.get(
+                        str(getattr(getattr(tool, "function", None), "name", ""))
+                    )
+                )
+                is not None
+                and ToolCapability.FILE_READ
+                in set(getattr(definition, "capabilities", []) or [])
+            ]
         if self._mutation_tools_exposed() and self._all_scoped_reads_complete():
             return [
                 tool
                 for tool in self.tools
                 if str(getattr(getattr(tool, "function", None), "name", ""))
-                not in {"file_reader", "command_executor"}
+                in PROVIDER_NATIVE_MUTATION_TOOLS
             ]
         return list(self.tools)
 
@@ -2307,14 +2533,14 @@ class ProviderToolRoundTripRunner:
                 runtime_handles["_post_processing_write_scope"] = tuple(self.write_scope)
             updates["runtime_handles"] = runtime_handles
             if input_metadata.tool_name == "code_unit_generator":
-                grounding_source_ids = input_metadata.runtime_handles.get(
-                    "_generator_grounding_source_ids"
-                )
-                if not str(input_metadata.context or "").strip():
-                    grounded_context, source_ids = self._declared_generator_context()
-                    if grounded_context:
-                        updates["context"] = grounded_context
-                        grounding_source_ids = source_ids
+                grounding_source_ids = None
+                grounded_context, source_ids = self._declared_generator_context()
+                if grounded_context:
+                    # Project-owned declared evidence supersedes explanatory
+                    # provider context; the provider cannot manufacture the
+                    # internal grounding handles used by the generator.
+                    updates["context"] = grounded_context
+                    grounding_source_ids = source_ids
                 if isinstance(grounding_source_ids, list) and grounding_source_ids:
                     runtime_handles["_generator_grounding_enforced"] = True
                     prompt_context = dict(input_metadata.prompt_context)
@@ -2357,58 +2583,6 @@ class ProviderToolRoundTripRunner:
             else None
         )
         return admission.model_copy(update={"tool_call": tool_call, "selection": selection})
-
-    def _prepare_provider_tool_call(self, call: Any) -> Any:
-        """Supply safe generator defaults before typed admission.
-
-        ``code_unit_generator`` is a mutating-capable nested tool, so its
-        declared write target must be present before admission can apply the
-        write-scope predicate.  The provider may omit it; only a single
-        declared target is eligible for this deterministic binding.  The
-        completed read evidence is similarly injected before admission and is
-        marked as an internal lineage handle, never as provider authority.
-        """
-
-        if getattr(getattr(call, "function", None), "name", "") != "code_unit_generator":
-            return call
-        raw_arguments = str(getattr(call.function, "arguments", "") or "").strip()
-        try:
-            arguments = json.loads(raw_arguments) if raw_arguments else {}
-        except json.JSONDecodeError:
-            return call
-        if not isinstance(arguments, dict):
-            return call
-
-        changed = False
-        # A provider-supplied context is explanatory input, not authority. If
-        # exact declared evidence is complete, always replace it with the
-        # typed source-linked projection so the semantic gate cannot be
-        # bypassed by a plausible-looking summary or invented name. Explicit
-        # context remains compatible for calls with no completed evidence.
-        grounded_context, source_ids = self._declared_generator_context()
-        if grounded_context:
-            arguments["context"] = grounded_context
-            arguments["_generator_grounding_source_ids"] = source_ids
-            arguments["_generator_grounding_enforced"] = True
-            changed = True
-        elif not str(arguments.get("context") or "").strip():
-            # There is no authoritative evidence to inject. Leave the
-            # existing behavior (empty context) unchanged.
-            pass
-        if not str(arguments.get("file_path") or "").strip():
-            write_targets = [
-                self._canonical_path(path)
-                for path in (self.write_scope or ())
-                if str(path or "").strip()
-            ]
-            if len(write_targets) == 1:
-                arguments["file_path"] = write_targets[0]
-                changed = True
-        if not changed:
-            return call
-        encoded = json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
-        function = call.function.model_copy(update={"arguments": encoded})
-        return call.model_copy(update={"function": function})
 
     def _declared_generator_context(self) -> tuple[str, list[str]]:
         """Build bounded generator grounding from completed typed read evidence.
@@ -2823,7 +2997,10 @@ class ProviderToolRoundTripRunner:
         loop_result: ToolEventLoopRunResult,
     ) -> dict[str, Any] | None:
         for item in loop_result.tool_results:
-            if not item.get("success") or item.get("tool") not in FILE_MUTATION_TOOLS:
+            if (
+                not item.get("success")
+                or item.get("tool") not in PROVIDER_NATIVE_MUTATION_TOOLS
+            ):
                 continue
             receipt = self._mutation_receipt(item)
             if receipt is not None:
@@ -2880,7 +3057,10 @@ class ProviderToolRoundTripRunner:
     def _mutation_receipt(self, item: Mapping[str, Any]) -> dict[str, Any] | None:
         """Return bounded post-write evidence without copying generated code."""
 
-        if not item.get("success") or item.get("tool") not in FILE_MUTATION_TOOLS:
+        if (
+            not item.get("success")
+            or item.get("tool") not in PROVIDER_NATIVE_MUTATION_TOOLS
+        ):
             return None
         input_metadata = item.get("input_metadata")
         if not isinstance(input_metadata, Mapping):
@@ -3673,6 +3853,7 @@ class ProviderToolRoundTripRunner:
             return False
         return failure.error_type in {
             "InvalidToolArguments",
+            "ProviderToolUndeclaredArgument",
             "MissingRequiredInput",
             "MissingRequiredInputGroup",
             "UnknownTool",
@@ -3731,21 +3912,37 @@ class ProviderToolRoundTripRunner:
 def _provider_field_schema(field_name: str, default: Any = None) -> dict[str, Any]:
     lowered = field_name.lower()
     if lowered == "mode":
-        # Validation commands are a typed execution boundary.  Exposing a
-        # free-form string lets providers invent values such as ``standard``
-        # that the admission layer must reject after mutation.  Keep the wire
-        # schema aligned with the accepted command-tool modes and let the
-        # admission layer retain the final fail-closed check.
+        # Expose the command tool's real runtime enum. Mutation validation is a
+        # narrower phase-specific boundary and independently requires
+        # ``automatic`` during admission.
         schema = {
             "type": "string",
-            "enum": ["automatic", "execute", "run", "exec"],
+            "enum": [mode.value for mode in ExecutionMode],
         }
-    elif lowered.endswith(("_paths", "_files")) or lowered in {"files", "file_paths"}:
+    elif lowered == "read_mode":
+        schema = {
+            "type": "string",
+            "enum": [mode.value for mode in FileReadMode],
+        }
+    elif lowered == "safe_search":
+        schema = {
+            "type": "string",
+            "enum": ["off", "moderate", "strict"],
+        }
+    elif lowered in {"file_paths", "files", "written_files", "entry_files"} or (
+        lowered.endswith("_paths") and not lowered.startswith("max_")
+    ):
         field_type = "array"
         schema: dict[str, Any] = {"type": field_type, "items": {"type": "string"}}
-    elif lowered in {"recursive", "overwrite", "create_dirs", "follow_redirects", "safe_search"}:
+    elif lowered in {"recursive", "overwrite", "create_dirs", "follow_redirects"}:
         schema = {"type": "boolean"}
-    elif lowered.endswith(("_lines", "_size_mb", "_tokens", "_results", "_pages", "_seconds", "_depth", "_offset", "_files")) or lowered in {"timeout", "limit"}:
+    elif lowered == "max_size_mb":
+        schema = {"type": "number", "minimum": 0}
+    elif lowered in {"max_lines", "max_files", "line_start", "line_end"}:
+        schema = {"type": "integer", "minimum": 1}
+    elif lowered == "offset":
+        schema = {"type": "integer", "minimum": 0}
+    elif lowered.endswith(("_lines", "_tokens", "_results", "_pages", "_seconds", "_depth")) or lowered in {"timeout", "limit"}:
         schema = {"type": "integer"}
     elif lowered in {"patch", "attributes", "validation_context", "artifact_ref"}:
         schema = {"type": "object"}

@@ -7,7 +7,6 @@ import hashlib
 import os
 import re
 import shlex
-import sys
 import time
 import uuid
 from types import SimpleNamespace
@@ -54,6 +53,8 @@ from metadata import (
     ReferenceInsightMetadata,
     ResultStatus,
     SuccessMetricMetadata,
+    TaskAdmissionGrant,
+    TaskApprovalGrant,
     TaskResultMetadata,
     TextArtifactMetadata,
     TaskGraphEdgeMetadata,
@@ -87,6 +88,8 @@ from ui.iteration_dashboard import IterationDashboardAdapter
 from autonomous_iteration.project_iteration import ProjectIterationHelper
 from autonomous_iteration.tool_io import ExecutionToolIO
 from autonomous_iteration.runtime_controller import AgentRuntimeController
+from autonomous_iteration.application import HarnessApplication
+from autonomous_iteration.run_coordinator import RunCoordinator
 from runtime_diagnostics.llm_proxy import TrajectoryLLMClientProxy
 from runtime_diagnostics.hooks import RuntimeDiagnosticsHooks, get_default_hooks
 
@@ -190,6 +193,19 @@ class IntelligentAutopilot:
             self.runtime_diagnostics_hooks = get_default_hooks()
         else:
             self.runtime_diagnostics_hooks = None
+        if self.runtime_diagnostics_hooks is not None:
+            if getattr(self.runtime_diagnostics_hooks, "coordinator", None) is None:
+                self.runtime_diagnostics_hooks.coordinator = RunCoordinator(
+                    self.runtime_diagnostics_hooks.recorder.evidence_store
+                )
+            self.harness_application = HarnessApplication(
+                coordinator=self.runtime_diagnostics_hooks.coordinator,
+                engine="pi",
+            )
+        else:
+            self.harness_application = HarnessApplication(
+                engine="pi",
+            )
         self._project_improvement_iterations_prompted = False
         self._project_environments: dict[str, dict[str, Any]] = {}
 
@@ -504,17 +520,119 @@ class IntelligentAutopilot:
         self._current_goal = goal
         self._current_task_id = str(context.get("task_id") or self.session_id)
         if self.runtime_diagnostics_hooks:
-            self.runtime_diagnostics_hooks.on_task_received(
+            evidence_run_id = self.runtime_diagnostics_hooks.on_task_received(
                 task_id=self._current_task_id,
                 source=str(context.get("source") or "interactive"),
                 raw_input=goal,
                 extra={"tags": list(context.get("tags") or [])},
                 session_id=self.session_id,
             )
+            if evidence_run_id:
+                context["evidence_run_id"] = evidence_run_id
+        else:
+            evidence_run = self.harness_application.start(
+                self._current_task_id,
+                source=str(context.get("source") or "interactive"),
+                raw_input=goal,
+                goal=goal,
+                session_id=self.session_id,
+                route="autonomous_iteration",
+            )
+            self.harness_application.canonical(
+                evidence_run,
+                event_type="task_received",
+                payload={"tags": list(context.get("tags") or [])},
+                producer="application_entry",
+                idempotency_key=f"task-received:{evidence_run.run_id}",
+            )
+            context["evidence_run_id"] = evidence_run.run_id
 
-        mode = "enhanced_ui" if self.use_enhanced_ui and self.enhanced_ui and self.tracker else "standard"
         try:
-            return self.runtime_controller.run(goal, context, mode=mode)
+            evidence_run_id = str(context.get("evidence_run_id") or "")
+            if evidence_run_id and self.harness_application.engine.value == "pi":
+                from autonomous_iteration.action_gateway import ActionGateway
+                from autonomous_iteration.engines import PiRpcEngine, PiSidecarConfig
+                from autonomous_iteration.verification import CompletionProfile
+
+                raw_admission = context.get("task_admission")
+                loose_scope_supplied = any(
+                    context.get(key)
+                    for key in ("read_files", "write_files", "validation_command")
+                )
+                if raw_admission is None:
+                    if loose_scope_supplied:
+                        raise ValueError(
+                            "Pi scoped execution requires a TaskAdmissionGrant; loose task fields are not authority"
+                        )
+                    admission = None
+                    read_files: tuple[str, ...] = ()
+                    write_files: tuple[str, ...] = ()
+                    project_root = str(context.get("project_path") or "")
+                elif not isinstance(raw_admission, TaskAdmissionGrant):
+                    raise TypeError("task_admission must be a validated TaskAdmissionGrant")
+                else:
+                    admission = raw_admission
+                    supplied_task_id = str(context.get("task_id") or "").strip()
+                    if supplied_task_id and supplied_task_id != admission.task_id:
+                        raise ValueError("task admission task identity mismatch")
+                    supplied_project = str(context.get("project_path") or "").strip()
+                    if supplied_project and Path(supplied_project).expanduser().resolve(strict=False) != Path(
+                        admission.project_root
+                    ).expanduser().resolve(strict=False):
+                        raise ValueError("task admission project identity mismatch")
+                    read_files = tuple(admission.read_files)
+                    write_files = tuple(admission.write_files)
+                    project_root = admission.project_root
+                gateway = ActionGateway(
+                    self.harness_application.coordinator,
+                    self.tool_executor,
+                )
+                if write_files:
+                    raw_approval = context.get("task_approval")
+                    if not isinstance(raw_approval, TaskApprovalGrant):
+                        raise PermissionError("Pi mutation requires a TaskApprovalGrant")
+                    if admission is None:
+                        raise PermissionError("Pi mutation requires a TaskAdmissionGrant")
+                    if (
+                        raw_approval.admission_id != admission.admission_id
+                        or raw_approval.task_id != admission.task_id
+                        or raw_approval.project_root != admission.project_root
+                        or raw_approval.protocol_version != admission.protocol_version
+                    ):
+                        raise PermissionError("Pi mutation approval does not match task admission")
+                    action_handler = gateway.pi_action_handler(
+                        self.harness_application.coordinator.attach_run(evidence_run_id),
+                        admission=admission,
+                        consent=raw_approval.bind_run(evidence_run_id),
+                    )
+                    profile = CompletionProfile.MUTATION
+                elif read_files:
+                    action_handler = gateway.pi_read_handler(
+                        self.harness_application.coordinator.attach_run(evidence_run_id),
+                        admission=admission,
+                    )
+                    profile = CompletionProfile.READ_ONLY
+                else:
+                    action_handler = None
+                    profile = CompletionProfile.READ_ONLY
+                engine = PiRpcEngine(
+                    self.harness_application.coordinator,
+                    PiSidecarConfig(
+                        provider=str(os.getenv("OPENPILOT_PI_PROVIDER") or ""),
+                        model=str(os.getenv("OPENPILOT_PI_MODEL") or ""),
+                        cwd=project_root,
+                        enable_read_tool=bool(read_files),
+                        enable_mutation_tools=bool(write_files),
+                    ),
+                )
+                return self.harness_application.run_pi(
+                    evidence_run_id,
+                    engine=engine,
+                    prompt=goal,
+                    action_handler=action_handler,
+                    profile=profile,
+                )
+            raise RuntimeError("Pi execution requires a Harness Evidence Run")
         except Exception as e:
             if self.enhanced_ui:
                 self.enhanced_ui.log_activity("error", f"Execution failed: {str(e)}")

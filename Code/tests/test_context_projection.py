@@ -133,7 +133,7 @@ def _fixture() -> tuple[dict, SessionIngressState]:
     context = {
         "context_request_hash": "sha256:" + "3" * 64,
         "session_turn_source_hash": session_turn_ledger_hash(ingress),
-        "session_constraints_hash": constraints.canonical_hash,
+        "session_constraints_hash": constraints.authority_hash,
         "context_selection": selection.to_json_dict(),
         "selected_context_candidates": [candidate.model_dump(mode="json") for candidate in selected],
         "context_compactions": [binding.model_dump(mode="json")],
@@ -170,3 +170,27 @@ def test_projection_rejects_stale_or_incomplete_selected_view() -> None:
     incomplete["selected_context_candidates"] = incomplete["selected_context_candidates"][:-1]
     with pytest.raises(DerivedContextProjectionError, match="match selection"):
         build_derived_context_projection(incomplete, ingress)
+
+
+def test_projection_reuses_unchanged_constraints_when_only_cursor_advances() -> None:
+    context, ingress = _fixture()
+    cursor_advanced = ingress.model_copy(
+        update={
+            "session_constraints": ingress.session_constraints.model_copy(
+                update={"processed_through_turn": 50}
+            )
+        }
+    )
+
+    projection = build_derived_context_projection(context, cursor_advanced)
+
+    assert projection.session_constraints_hash == ingress.session_constraints.authority_hash
+    changed = cursor_advanced.model_copy(
+        update={
+            "session_constraints": cursor_advanced.session_constraints.model_copy(
+                update={"revision": 2}
+            )
+        }
+    )
+    with pytest.raises(DerivedContextProjectionError, match="constraint hash is stale"):
+        build_derived_context_projection(context, changed)

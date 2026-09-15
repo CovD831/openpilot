@@ -5,12 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
+import uuid
 
 from pydantic import BaseModel, Field
 
-from autonomous_iteration.intelligent_autopilot import IntelligentAutopilot
-from core.openpilot_log import OpenPilotLogger
-from runtime_diagnostics.hooks import RuntimeDiagnosticsHooks
+from autonomous_iteration.pi_task_runner import PiTaskRunner
+from metadata import TaskAdmissionGrant, TaskApprovalGrant
 from runtime_diagnostics.raw_task import RawTaskInput
 from runtime_diagnostics.recorder import DiagnosticRecorder
 from runtime_diagnostics.task_pool import load_raw_tasks
@@ -20,6 +20,8 @@ ExecutorFn = Callable[[str, dict[str, Any]], dict[str, Any]]
 
 
 class TaskPoolRunResult(BaseModel):
+    run_id: str
+    execution_run_id: str | None = None
     task_id: str
     source: str
     success: bool
@@ -47,8 +49,17 @@ class RuntimeTaskPoolRunner:
 
     def run_task(self, task: RawTaskInput) -> TaskPoolRunResult:
         started_at = datetime.now(UTC).isoformat()
+        runtime_session_id = uuid.uuid4().hex
+        run = self.recorder.start_run(
+            task.task_id,
+            source=task.source,
+            raw_input=task.raw_input,
+            session_id=runtime_session_id,
+        )
         context = {
             "task_id": task.task_id,
+            "run_id": run.run_id,
+            "session_id": runtime_session_id,
             "source": task.source,
             "attachments": task.attachments,
             "tags": task.tags,
@@ -58,6 +69,8 @@ class RuntimeTaskPoolRunner:
             {
                 "event": "task_pool_item_started",
                 "task_id": task.task_id,
+                "run_id": run.run_id,
+                "session_id": runtime_session_id,
                 "source": task.source,
                 "tags": task.tags,
                 "started_at": started_at,
@@ -66,8 +79,15 @@ class RuntimeTaskPoolRunner:
         try:
             result = self.executor(task.raw_input, context)
             success = bool(result.get("success")) if isinstance(result, dict) else bool(result)
+            execution_run_id = (
+                str(result.get("run_id") or "").strip()
+                if isinstance(result, dict)
+                else ""
+            )
             result_summary = _result_summary(result)
             run_result = TaskPoolRunResult(
+                run_id=run.run_id,
+                execution_run_id=execution_run_id or None,
                 task_id=task.task_id,
                 source=task.source,
                 success=success,
@@ -78,6 +98,8 @@ class RuntimeTaskPoolRunner:
             )
         except Exception as exc:
             run_result = TaskPoolRunResult(
+                run_id=run.run_id,
+                execution_run_id=None,
                 task_id=task.task_id,
                 source=task.source,
                 success=False,
@@ -90,6 +112,9 @@ class RuntimeTaskPoolRunner:
             {
                 "event": "task_pool_item_finished",
                 "task_id": task.task_id,
+                "run_id": run.run_id,
+                "execution_run_id": run_result.execution_run_id,
+                "session_id": runtime_session_id,
                 "source": task.source,
                 "success": run_result.success,
                 "error": run_result.error,
@@ -101,33 +126,41 @@ class RuntimeTaskPoolRunner:
         return run_result
 
 
-def build_autopilot_executor(
-    *,
-    llm_client: Any,
-    console: Any | None = None,
-    logger: OpenPilotLogger | None = None,
-    recorder: DiagnosticRecorder | None = None,
-    use_enhanced_ui: bool = False,
-    **autopilot_kwargs: Any,
-) -> ExecutorFn:
-    """Build an executor that runs tasks through IntelligentAutopilot.
+def build_pi_executor(*, runner: PiTaskRunner | None = None) -> ExecutorFn:
+    """Build a diagnostics executor that uses the same typed Pi boundary as the CLI.
 
-    This intentionally reuses the normal runtime path. Diagnostics hooks are
-    injected explicitly and do not rely on environment-variable activation.
+    Raw task-pool text is not authority. Callers must attach the immutable
+    ``TaskAdmissionGrant`` produced by task admission and, for mutations, the
+    matching ``TaskApprovalGrant`` and conversation identity.
     """
-    recorder = recorder or DiagnosticRecorder()
-    hooks = RuntimeDiagnosticsHooks(recorder)
+    pi_runner = runner or PiTaskRunner()
 
     def _execute(goal: str, context: dict[str, Any]) -> dict[str, Any]:
-        autopilot = IntelligentAutopilot(
-            llm_client=llm_client,
-            console=console,
-            logger=logger,
-            use_enhanced_ui=use_enhanced_ui,
-            runtime_diagnostics_hooks=hooks,
-            **autopilot_kwargs,
+        admission = context.get("task_admission")
+        if not isinstance(admission, TaskAdmissionGrant):
+            raise TypeError("Pi diagnostics execution requires a validated TaskAdmissionGrant")
+        supplied_task_id = str(context.get("task_id") or "").strip()
+        if supplied_task_id and supplied_task_id != admission.task_id:
+            raise ValueError("Pi diagnostics task identity does not match TaskAdmissionGrant")
+        supplied_project_path = str(context.get("project_path") or "").strip()
+        if supplied_project_path and (
+            Path(supplied_project_path).expanduser().resolve(strict=False)
+            != Path(admission.project_root).expanduser().resolve(strict=False)
+        ):
+            raise ValueError("Pi diagnostics project identity does not match TaskAdmissionGrant")
+        approval = context.get("task_approval")
+        if approval is not None and not isinstance(approval, TaskApprovalGrant):
+            raise TypeError("Pi diagnostics execution requires a validated TaskApprovalGrant")
+        conversation_id = str(
+            context.get("conversation_id") or context.get("session_id") or ""
+        ).strip()
+        return pi_runner.run(
+            goal,
+            admission,
+            approval=approval,
+            source=str(context.get("source") or "runtime_diagnostics"),
+            conversation_id=conversation_id,
         )
-        return autopilot.execute(goal, context=context)
 
     return _execute
 

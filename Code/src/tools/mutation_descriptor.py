@@ -14,6 +14,16 @@ FILE_MUTATION_TOOLS = {
     "bug_fix_tool",
 }
 
+# Provider-native execution has a narrower lifecycle than the general tool
+# planner: every accepted mutation must support checkpointing, an explicit
+# single-file receipt, and exact post-mutation validation.  Keep this set as
+# the one authority shared by provider entry, routing, and receipt collection.
+PROVIDER_NATIVE_MUTATION_TOOLS = frozenset(
+    {
+        "file_patch_writer",
+    }
+)
+
 
 def file_mutation_targets(selection: Any) -> list[str]:
     """Return the explicit filesystem targets owned by a mutating selection."""

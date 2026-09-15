@@ -1018,6 +1018,9 @@ class AutonomousIterationAgent:
             "goal_id",
             "description",
             "target_files",
+            "read_files",
+            "write_files",
+            "validation_command",
             "acceptance_criteria",
             "risk_notes",
             "evidence_ids",
@@ -1300,6 +1303,22 @@ class AutonomousIterationAgent:
             ): str(path)
             for path in project_state.safe_target_files
         }
+        project_files = {
+            str(
+                (Path(path).expanduser() if Path(path).expanduser().is_absolute() else project_root / path)
+                .resolve(strict=False)
+            ): str(path)
+            for path in [
+                *project_state.safe_target_files,
+                *project_state.written_files,
+                *[
+                    str(summary.get("path") or summary.get("name") or "")
+                    for summary in project_state.file_summaries
+                    if isinstance(summary, dict)
+                ],
+            ]
+            if str(path).strip()
+        }
         requested_targets = self._coerce_string_list(raw_task.get("target_files"))
         target_files = []
         for path in requested_targets:
@@ -1315,6 +1334,51 @@ class AutonomousIterationAgent:
             return None
         if not target_files:
             target_files = project_state.safe_target_files[:1]
+
+        def canonicalize_paths(raw_value: Any, allowed: dict[str, str]) -> tuple[list[str], bool]:
+            values = self._coerce_string_list(raw_value)
+            result: list[str] = []
+            for path in values:
+                candidate = Path(path).expanduser()
+                canonical = str(
+                    (candidate if candidate.is_absolute() else project_root / candidate)
+                    .resolve(strict=False)
+                )
+                if canonical not in allowed:
+                    return [], False
+                relative_or_original = allowed[canonical]
+                if relative_or_original not in result:
+                    result.append(relative_or_original)
+                if len(result) >= 16:
+                    break
+            return result, True
+
+        reads_present = "read_files" in raw_task
+        writes_present = "write_files" in raw_task
+        read_files, reads_valid = canonicalize_paths(
+            raw_task.get("read_files"), project_files
+        ) if reads_present else (list(target_files), True)
+        write_files, writes_valid = canonicalize_paths(
+            raw_task.get("write_files"), safe_targets
+        ) if writes_present else (list(target_files), True)
+        if not reads_valid or not writes_valid:
+            return None
+        target_set = set(target_files)
+        if any(path not in target_set for path in write_files):
+            return None
+
+        validation_context = project_state.validation_context if isinstance(project_state.validation_context, dict) else {}
+        authoritative_validation = str(
+            project_state.run_command
+            or validation_context.get("run_command")
+            or ""
+        ).strip()
+        requested_validation = str(raw_task.get("validation_command") or "").strip()
+        if requested_validation and authoritative_validation and requested_validation != authoritative_validation:
+            return None
+        if requested_validation and not authoritative_validation:
+            return None
+        validation_command = requested_validation or authoritative_validation
         criteria = self._bounded_unique_strings(
             [*goal.acceptance_criteria, *self._coerce_string_list(raw_task.get("acceptance_criteria"))],
             limit=8,
@@ -1348,6 +1412,9 @@ class AutonomousIterationAgent:
                 "iteration": completed_iteration,
                 "description": description,
                 "target_files": target_files,
+                "read_files": read_files,
+                "write_files": write_files,
+                "validation_command": validation_command,
                 "acceptance_criteria": criteria,
             },
             ensure_ascii=False,
@@ -1359,6 +1426,9 @@ class AutonomousIterationAgent:
             goal_id=goal.id,
             description=description,
             target_files=target_files,
+            read_files=read_files,
+            write_files=write_files,
+            validation_command=validation_command,
             acceptance_criteria=criteria,
             risk_notes=risk_notes,
             evidence_ids=evidence_ids,
@@ -1380,11 +1450,16 @@ class AutonomousIterationAgent:
         )
 
     def _fallback_task(self, goal: ImprovementGoal, project_state: ProjectStateSnapshot) -> DesignedImprovementTask:
+        targets = project_state.safe_target_files[:1]
+        validation_context = project_state.validation_context if isinstance(project_state.validation_context, dict) else {}
         return DesignedImprovementTask(
             id=f"task_{uuid.uuid4().hex[:8]}",
             goal_id=goal.id,
             description=goal.title,
-            target_files=project_state.safe_target_files[:1],
+            target_files=targets,
+            read_files=targets,
+            write_files=targets,
+            validation_command=str(project_state.run_command or validation_context.get("run_command") or ""),
             acceptance_criteria=goal.acceptance_criteria,
             risk_notes=[],
         )
@@ -1436,11 +1511,16 @@ class AutonomousIterationAgent:
             risk_notes.append("Validation issue target files: " + ", ".join(target_files[:5]))
         if intent is not None:
             risk_notes.extend(intent.non_regression_constraints[:3])
+        validation_context = project_state.validation_context if isinstance(project_state.validation_context, dict) else {}
+        normalized_targets = list(target_files)
         return DesignedImprovementTask(
             id=f"repair_task_{uuid.uuid4().hex[:8]}",
             goal_id=goal.id,
             description=f"Fix the validation failure: {goal.title}",
-            target_files=target_files,
+            target_files=normalized_targets,
+            read_files=normalized_targets,
+            write_files=normalized_targets,
+            validation_command=str(project_state.run_command or validation_context.get("run_command") or evaluation.run_command or ""),
             acceptance_criteria=goal.acceptance_criteria,
             risk_notes=risk_notes,
         )

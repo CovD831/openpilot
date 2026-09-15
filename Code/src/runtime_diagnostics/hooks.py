@@ -22,6 +22,7 @@ from metadata import (
     ToolExecutionEnvelopeMetadata,
 )
 from metadata.base import json_safe
+from evidence_core import EvidenceAuthority
 
 from runtime_diagnostics.collector import collect_from_failure, collect_from_runtime_state, collect_from_tool_error, suspicious_success_signal
 from runtime_diagnostics.judge import judge_signal
@@ -36,9 +37,16 @@ class RuntimeDiagnosticsHooks:
     failures.
     """
 
-    def __init__(self, recorder: DiagnosticRecorder | None = None, *, enabled: bool = True):
+    def __init__(
+        self,
+        recorder: DiagnosticRecorder | None = None,
+        *,
+        enabled: bool = True,
+        coordinator: Any | None = None,
+    ):
         self.recorder = recorder or DiagnosticRecorder()
         self.enabled = enabled
+        self.coordinator = coordinator
 
     def _root_task_id(self, *, task_id: str = "", session_id: str = "") -> str:
         """Resolve the durable root task id for trajectory correlation.
@@ -85,6 +93,54 @@ class RuntimeDiagnosticsHooks:
     def _json_text(self, value: Any) -> str:
         return json.dumps(json_safe(value), ensure_ascii=False, indent=2, sort_keys=True)
 
+    @staticmethod
+    def _tool_input_value(tool_call: Any, name: str, default: Any = None) -> Any:
+        input_metadata = getattr(tool_call, "input_metadata", None)
+        if input_metadata is None:
+            return default
+        value = getattr(input_metadata, name, default)
+        if value not in (None, "", [], {}):
+            return value
+        attributes = getattr(input_metadata, "attributes", {}) or {}
+        return attributes.get(name, default)
+
+    @staticmethod
+    def _is_mutation_tool(tool_name: str) -> bool:
+        return tool_name in {"file_writer", "file_patch_writer", "file_delete_tool", "code_editor"}
+
+    def _record_mutation_requested(self, tool_call: ToolCallMetadata) -> None:
+        if not self._is_mutation_tool(tool_call.tool_name):
+            return
+        path = self._tool_input_value(tool_call, "file_path", "")
+        self._record_event(
+            tool_call.task_id or tool_call.session_id,
+            event_type="mutation_requested",
+            session_id=tool_call.session_id,
+            phase="act",
+            summary=f"{tool_call.tool_name} mutation requested",
+            payload={
+                "action": {"kind": "write", "tool_name": tool_call.tool_name},
+                "path": str(path or ""),
+                "call_id": tool_call.call_id,
+                "step_id": tool_call.step_id,
+            },
+        )
+
+    def _record_validation_started(self, tool_call: ToolCallMetadata) -> None:
+        if tool_call.tool_name != "command_executor":
+            return
+        command = self._tool_input_value(tool_call, "command", "") or self._tool_input_value(tool_call, "requested_command", "")
+        if not command:
+            return
+        self._record_event(
+            tool_call.task_id or tool_call.session_id,
+            event_type="validation_started",
+            session_id=tool_call.session_id,
+            phase="verify",
+            summary="validation started",
+            payload={"command": str(command), "call_id": tool_call.call_id, "step_id": tool_call.step_id},
+        )
+
     def _record_event(
         self,
         task_key: str,
@@ -103,7 +159,7 @@ class RuntimeDiagnosticsHooks:
         if not self.enabled:
             return None
         try:
-            return self.recorder.record_event(
+            event = self.recorder.record_event(
                 task_key,
                 event_type=event_type,
                 payload=payload or {},
@@ -116,6 +172,39 @@ class RuntimeDiagnosticsHooks:
                 route=route,
                 payload_kind=str(getattr(payload, "kind", "") or ""),
                 idempotency_key=idempotency_key,
+            )
+            if self.coordinator is None:
+                return event
+            if event_type == "task_finished":
+                event_types = {
+                    item.event_type
+                    for item in self.recorder.evidence_reader.events(event.run_id)
+                }
+                profile = "mutation" if "mutation_requested" in event_types else "read_only"
+                _decision, semantic = self.coordinator.complete_from_observation(
+                    event.run_id,
+                    observation=event,
+                    profile=profile,
+                )
+                return semantic
+            authority = EvidenceAuthority.DERIVED
+            if event_type == "mutation_receipt":
+                authority = EvidenceAuthority.RECEIPT
+            elif event_type == "verification_state_changed":
+                authority = EvidenceAuthority.VERIFIED
+            return self.coordinator.map_semantic(
+                event.run_id,
+                event_type=event.event_type,
+                source_observation_id=event.event_id,
+                source_observation=event,
+                payload=event.payload,
+                authority=authority,
+                call_id=event.call_id,
+                idempotency_key=f"semantic:{event.event_id}",
+                phase=event.phase,
+                summary=event.summary,
+                task_id=event.task_id,
+                session_id=event.session_id,
             )
         except Exception:
             return None
@@ -138,9 +227,9 @@ class RuntimeDiagnosticsHooks:
         raw_input: str,
         extra: dict[str, Any] | None = None,
         session_id: str = "",
-    ) -> None:
+    ) -> str | None:
         if not self.enabled:
-            return
+            return None
         log_event = LogEventMetadata(
             source_type="system",
             source_name="openpilot",
@@ -155,14 +244,26 @@ class RuntimeDiagnosticsHooks:
             },
         )
         log_event = self._with_correlation(log_event, task_id=task_id, session_id=session_id)
+        try:
+            run = self.recorder.load_run(session_id) if session_id else None
+            if run is None:
+                run = self.recorder.start_run(
+                    task_id,
+                    source=source,
+                    raw_input=raw_input,
+                    session_id=session_id,
+                )
+        except Exception:
+            return None
         self._record_event(
-            task_id,
+            run.run_id,
             event_type="task_received",
             source=source,
             raw_input=raw_input,
             session_id=session_id,
             payload=log_event,
         )
+        return run.run_id
 
     def on_checkpoint_created(self, checkpoint: RuntimeCheckpointMetadata) -> None:
         if not self.enabled:
@@ -570,6 +671,8 @@ class RuntimeDiagnosticsHooks:
             step_id=tool_call.step_id,
             call_id=tool_call.call_id,
         )
+        self._record_mutation_requested(tool_call)
+        self._record_validation_started(tool_call)
         self._record_event(
             tool_call.task_id or tool_call.session_id,
             event_type="tool_called",
@@ -597,13 +700,67 @@ class RuntimeDiagnosticsHooks:
             step_id=derived_step_id,
             call_id=derived_call_id,
         )
+        # The transport envelope can report success even when the typed tool
+        # result contains a failed command (for example exit_code=1). Evidence
+        # must reflect the operation's semantic result, not transport status.
+        effective_success = self._effective_tool_success(tool_execution)
         self._record_event(
             derived_task_id or derived_session_id,
-            event_type="tool_succeeded",
+            event_type="tool_succeeded" if effective_success else "tool_failed",
             session_id=derived_session_id,
-            summary=f"{tool_execution.tool_name} succeeded",
+            summary=(f"{tool_execution.tool_name} succeeded" if effective_success else f"{tool_execution.tool_name} failed"),
             payload=tool_execution,
         )
+        if self._is_mutation_tool(tool_execution.tool_name):
+            self._record_event(
+                derived_task_id or derived_session_id,
+                event_type="mutation_receipt",
+                session_id=derived_session_id,
+                phase="act",
+                summary=f"{tool_execution.tool_name} mutation receipt",
+                payload={
+                    "call_id": derived_call_id,
+                    "success": effective_success,
+                    "path": str(self._tool_input_value(tool_execution, "file_path", "")),
+                    "tool_name": tool_execution.tool_name,
+                },
+            )
+        if tool_execution.tool_name == "command_executor":
+            command = ""
+            command = str(self._tool_input_value(tool_execution, "command", "") or self._tool_input_value(tool_execution, "requested_command", ""))
+            if command:
+                self._record_event(
+                    derived_task_id or derived_session_id,
+                    event_type="validation_completed",
+                    session_id=derived_session_id,
+                    phase="verify",
+                    summary="validation completed",
+                    payload={
+                        "command": command,
+                        "success": effective_success,
+                        "call_id": derived_call_id,
+                    },
+                )
+
+    @staticmethod
+    def _effective_tool_success(tool_execution: ToolExecutionEnvelopeMetadata) -> bool:
+        """Resolve semantic success from a tool envelope and its typed result."""
+        if not bool(tool_execution.success):
+            return False
+        output = tool_execution.output_metadata.result if tool_execution.output_metadata else None
+        if output is None:
+            return bool(tool_execution.success)
+        nested_success = getattr(output, "success", None)
+        if nested_success is not None and not bool(nested_success):
+            return False
+        exit_code = getattr(output, "exit_code", None)
+        if exit_code is not None:
+            try:
+                if int(exit_code) != 0:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        return True
 
     def on_task_finished(
         self,
@@ -616,21 +773,55 @@ class RuntimeDiagnosticsHooks:
     ):
         if not self.enabled:
             return
+        # Fail closed when an exact validation event recorded a failure. A
+        # completed runtime session is not evidence that the requested task
+        # succeeded.
+        effective_success = bool(success)
+        validation_failed = False
+        try:
+            events = self.recorder.load_trajectory_events(task_id or session_id, limit=0)
+            validation_events = [
+                event for event in events
+                if event.get("event_type") == "validation_completed"
+                and isinstance(event.get("payload"), dict)
+            ]
+            # A runtime may validate an intermediate receipt before running
+            # the task's exact command. Only the latest validation outcome is
+            # authoritative for final task completion.
+            validation_failed = bool(validation_events) and validation_events[-1]["payload"].get("success") is False
+            if validation_failed:
+                effective_success = False
+        except Exception:
+            pass
+        effective_summary = dict(summary or {})
+        if validation_failed:
+            previous_status = str(effective_summary.get("verification_status") or "")
+            effective_summary["verification_status"] = "failed"
+            effective_summary.setdefault("completion_reason", "exact validation failed")
+            if previous_status != "failed":
+                self.on_verification_state_changed(
+                    task_id=task_id,
+                    session_id=session_id,
+                    previous_status=previous_status,
+                    verification_status="failed",
+                    phase=str(effective_summary.get("phase") or "verify"),
+                    reason="exact validation reported failure",
+                )
         return self._record_event(
             task_id or session_id,
             event_type="task_finished",
             session_id=session_id,
-            phase=str((summary or {}).get("phase") or ""),
+            phase=str(effective_summary.get("phase") or ""),
             payload=self._with_correlation(
                 LogEventMetadata(
                     source_type="system",
                     source_name="openpilot",
-                    phase=str((summary or {}).get("phase") or ""),
+                    phase=str(effective_summary.get("phase") or ""),
                     event_type="task_finished",
-                    success=success,
+                    success=effective_success,
                     output_summary={
                         "task_id": task_id,
-                        "summary": summary or {},
+                        "summary": effective_summary,
                         "session_id": session_id,
                         "finalization_id": finalization_id,
                     },

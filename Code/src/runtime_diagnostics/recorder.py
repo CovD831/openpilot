@@ -5,17 +5,26 @@ from __future__ import annotations
 import json
 import fcntl
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from metadata import ProblemJudgmentMetadata, ProblemSignalMetadata
 from metadata.base import json_safe
 
+from evidence_core.store.fs_store import EvidenceStore
+from evidence_core.reader import EvidenceReader
+from evidence_core.conformance import EvidenceConformanceResult, validate_trajectory_conformance
 from runtime_diagnostics.models import ArtifactRecord, DiagnosticRecord, EventRecord, RunRecord, RunSummaryRecord
 
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "runtime_diagnostics"
+
+
+def _is_json_object(line: str) -> bool:
+    try:
+        return isinstance(json.loads(line), dict)
+    except json.JSONDecodeError:
+        return False
 
 
 class DiagnosticRecorder:
@@ -25,7 +34,9 @@ class DiagnosticRecorder:
         self.data_dir = Path(data_dir)
         self.issues_file = self.data_dir / "issues.jsonl"
         self.runs_file = self.data_dir / "runs.jsonl"
-        self.trajectory_dir = self.data_dir / "task_trajectory"
+        self._trajectory_store = EvidenceStore(self.data_dir)
+        self._evidence_reader = EvidenceReader(self._trajectory_store)
+        self.trajectory_dir = self._trajectory_store.trajectory_dir
         self._run_ids_by_key: dict[str, str] = {}
         self._event_sequences: dict[str, int] = {}
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -52,7 +63,12 @@ class DiagnosticRecorder:
         return self.record_signal(signal, judgment)
 
     def record_run(self, payload: dict[str, Any], *, mirror_to_trajectory: bool = True) -> None:
-        self._append_jsonl(self.runs_file, payload)
+        """Record a legacy runtime event through Evidence Core.
+
+        ``runs.jsonl`` is retained as a read-only compatibility location for
+        older data, but new runtime facts have exactly one writer: the
+        Evidence Core event store.
+        """
         if mirror_to_trajectory:
             self._record_event_from_legacy_payload(payload)
 
@@ -66,66 +82,38 @@ class DiagnosticRecorder:
         session_id: str = "",
         route: str = "",
     ) -> RunRecord:
-        task_key = str(task_key or "").strip() or "unknown"
-        existing_run_id = self._run_ids_by_key.get(task_key)
-        if existing_run_id is None and session_id:
-            existing_run_id = self._run_ids_by_key.get(str(session_id))
-        if existing_run_id is None:
-            direct_run = self.load_run(task_key)
-            if direct_run is not None and direct_run.run_id == task_key:
-                existing_run_id = direct_run.run_id
-        if existing_run_id:
-            run = self.load_run(existing_run_id)
-            if run is None:
-                self._run_ids_by_key.pop(task_key, None)
-            else:
-                self._register_run_alias(existing_run_id, task_key)
-                if session_id:
-                    self._register_run_alias(existing_run_id, str(session_id))
-                return self.update_run(
-                    existing_run_id,
-                    task_id=run.task_id or task_key,
-                    session_id=run.session_id or str(session_id or ""),
-                    source=run.source or source,
-                    raw_input=run.raw_input or raw_input,
-                    goal=run.goal or goal,
-                    route=run.route or route,
-                )
-
-        run = RunRecord(
-            task_id=task_key,
-            session_id=str(session_id or ""),
+        return self._trajectory_store.ensure_run(
+            task_key,
             source=source,
             raw_input=raw_input,
             goal=goal,
+            session_id=session_id,
             route=route,
         )
-        run_dir = self._run_dir(run.run_id)
-        run_dir.mkdir(parents=True, exist_ok=True)
-        self._write_json(self._run_file(run.run_id), run.model_dump(mode="python"))
-        self._register_run_alias(run.run_id, task_key)
-        if session_id:
-            self._register_run_alias(run.run_id, str(session_id))
-        self._event_sequences.setdefault(run.run_id, 0)
-        return run
+
+    def start_run(
+        self,
+        task_id: str,
+        *,
+        source: str = "",
+        raw_input: str = "",
+        goal: str = "",
+        session_id: str = "",
+        route: str = "",
+    ) -> RunRecord:
+        """Create a new execution Run; never reuse task/session aliases."""
+
+        return self._trajectory_store.start_run(
+            task_id,
+            source=source,
+            raw_input=raw_input,
+            goal=goal,
+            session_id=session_id,
+            route=route,
+        )
 
     def update_run(self, run_key: str, **fields: Any) -> RunRecord:
-        run_id = self._resolve_run_id(run_key)
-        if run_id is None:
-            run = self.ensure_run(str(run_key))
-            run_id = run.run_id
-        run = self.load_run(run_id) or RunRecord(run_id=run_id, task_id=str(run_key))
-        data = run.model_dump(mode="python")
-        for key, value in fields.items():
-            if value in (None, ""):
-                continue
-            data[key] = value
-        updated = RunRecord.model_validate(data)
-        self._write_json(self._run_file(run_id), updated.model_dump(mode="python"))
-        self._register_run_alias(run_id, updated.task_id)
-        if updated.session_id:
-            self._register_run_alias(run_id, updated.session_id)
-        return updated
+        return self._trajectory_store.update_run(run_key, **fields)
 
     def attach_existing_run(
         self,
@@ -133,30 +121,43 @@ class DiagnosticRecorder:
         *,
         expected_task_id: str = "",
         expected_session_id: str = "",
+        resume_attempt_id: str = "",
     ) -> RunRecord:
         """Bind persisted run aliases in a replacement process without creating a run."""
-        run = self.load_run(run_id)
-        if run is None or run.run_id != str(run_id):
-            raise ValueError(f"existing run not found: {run_id}")
-        if expected_task_id and run.task_id != str(expected_task_id):
-            raise ValueError("existing run task identity does not match")
-        if expected_session_id and run.session_id != str(expected_session_id):
-            raise ValueError("existing run session identity does not match")
-        self._register_run_alias(run.run_id, run.run_id)
-        self._register_run_alias(run.run_id, run.task_id)
-        if run.session_id:
-            self._register_run_alias(run.run_id, run.session_id)
-        return run
+        return self._trajectory_store.attach_existing_run(
+            run_id,
+            expected_task_id=expected_task_id,
+            expected_session_id=expected_session_id,
+            resume_attempt_id=resume_attempt_id,
+        )
 
     def load_run(self, run_key: str) -> RunRecord | None:
-        run_id = self._resolve_run_id(run_key) or str(run_key)
-        path = self._run_file(run_id)
-        if not path.exists():
-            return None
-        try:
-            return RunRecord.model_validate(json.loads(path.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError, ValueError):
-            return None
+        return self._trajectory_store.load_run(run_key)
+
+    @property
+    def evidence_store(self) -> EvidenceStore:
+        """Expose the neutral Evidence Core store for adapter consumers."""
+
+        return self._trajectory_store
+
+    @property
+    def evidence_reader(self) -> EvidenceReader:
+        """Read-only projection boundary for diagnostics consumers."""
+
+        return self._evidence_reader
+
+    def validate_trajectory(
+        self,
+        run_key: str,
+        *,
+        require_mutation_chain: bool = False,
+    ) -> EvidenceConformanceResult:
+        """Validate a persisted trajectory without consulting legacy JSONL logs."""
+
+        return validate_trajectory_conformance(
+            self._trajectory_store.load_trajectory_events(run_key),
+            require_mutation_chain=require_mutation_chain,
+        )
 
     def record_event(
         self,
@@ -174,55 +175,21 @@ class DiagnosticRecorder:
         summary: str = "",
         idempotency_key: str = "",
     ) -> EventRecord:
-        normalized_payload_kind, normalized_payload = self._normalize_event_payload(payload_kind=payload_kind, payload=payload)
-        resolved_task_key = str(self._payload_task_id(normalized_payload) or task_key or self._payload_session_id(normalized_payload) or "").strip()
-        resolved_session_id = str(session_id or self._payload_session_id(normalized_payload) or "")
-        run = self.ensure_run(
-            resolved_task_key or "unknown",
-            source=source or self._payload_source(normalized_payload),
-            raw_input=raw_input or self._payload_raw_input(normalized_payload),
-            goal=goal or self._payload_goal(normalized_payload),
-            session_id=resolved_session_id or str(normalized_payload.get("session_id") or ""),
-            route=route or self._payload_route(normalized_payload),
+        return self._store_trajectory_event(
+            task_key,
+            event_type=event_type,
+            payload=payload,
+            payload_kind=payload_kind,
+            source=source,
+            raw_input=raw_input,
+            goal=goal,
+            route=route,
+            session_id=session_id,
+            phase=phase,
+            summary=summary,
+            idempotency_key=idempotency_key,
+            write_legacy_run=False,
         )
-        normalized_payload = self._normalize_payload_identity(
-            normalized_payload,
-            root_task_id=run.task_id,
-            session_id=run.session_id or resolved_session_id,
-        )
-        with self._event_write_lock(run.run_id):
-            event = self._find_idempotent_event(run.run_id, event_type, idempotency_key)
-            created = event is None
-            if event is None:
-                sequence = self._next_event_sequence(run.run_id)
-                event = EventRecord(
-                    run_id=run.run_id,
-                    sequence=sequence,
-                    event_type=event_type,
-                    idempotency_key=idempotency_key,
-                    task_id=run.task_id,
-                    session_id=run.session_id or resolved_session_id,
-                    phase=phase or str(normalized_payload.get("phase") or self._payload_phase(normalized_payload) or ""),
-                    summary=summary or self._default_summary(event_type, normalized_payload),
-                    payload_kind=normalized_payload_kind,
-                    payload=normalized_payload,
-                )
-                self._append_jsonl(self._events_file(run.run_id), event.model_dump(mode="python"))
-        if created:
-            legacy_payload = {
-                "run_id": run.run_id,
-                "event_id": event.event_id,
-                "sequence": event.sequence,
-                "event": event_type,
-                "payload_kind": normalized_payload_kind,
-                "payload": normalized_payload,
-            }
-            legacy_payload.setdefault("task_id", run.task_id)
-            if run.session_id:
-                legacy_payload.setdefault("session_id", run.session_id)
-            self.record_run(legacy_payload, mirror_to_trajectory=False)
-        self._apply_run_update_from_event(run, event)
-        return event
 
     def _find_idempotent_event(
         self,
@@ -244,6 +211,73 @@ class DiagnosticRecorder:
                 return event
         return None
 
+    def _store_trajectory_event(
+        self,
+        task_key: str,
+        *,
+        event_type: str,
+        payload: Any = None,
+        payload_kind: str = "",
+        source: str = "",
+        raw_input: str = "",
+        goal: str = "",
+        route: str = "",
+        session_id: str = "",
+        phase: str = "",
+        summary: str = "",
+        idempotency_key: str = "",
+        write_legacy_run: bool = False,
+    ) -> EventRecord:
+        normalized_payload_kind, normalized_payload = self._normalize_event_payload(payload_kind=payload_kind, payload=payload)
+        resolved_task_key = str(self._payload_task_id(normalized_payload) or task_key or self._payload_session_id(normalized_payload) or "").strip()
+        resolved_session_id = str(session_id or self._payload_session_id(normalized_payload) or "")
+        run = self.load_run(resolved_session_id) if resolved_session_id else None
+        if run is None:
+            run = self.ensure_run(
+                resolved_task_key or "unknown",
+                source=source or self._payload_source(normalized_payload),
+                raw_input=raw_input or self._payload_raw_input(normalized_payload),
+                goal=goal or self._payload_goal(normalized_payload),
+                session_id=resolved_session_id or str(normalized_payload.get("session_id") or ""),
+                route=route or self._payload_route(normalized_payload),
+            )
+        normalized_payload = self._normalize_payload_identity(
+            normalized_payload,
+            root_task_id=run.task_id,
+            session_id=run.session_id or resolved_session_id,
+        )
+        existing = self._trajectory_store.find_event(run.run_id, event_type, idempotency_key) if idempotency_key else None
+        event = self._trajectory_store.append_event(
+            run.run_id,
+            event_type=event_type,
+            payload=normalized_payload,
+            payload_kind=normalized_payload_kind,
+            source=source or self._payload_source(normalized_payload),
+            raw_input=raw_input or self._payload_raw_input(normalized_payload),
+            goal=goal or self._payload_goal(normalized_payload),
+            route=route or self._payload_route(normalized_payload),
+            task_id=run.task_id,
+            session_id=run.session_id or resolved_session_id,
+            phase=phase or str(normalized_payload.get("phase") or self._payload_phase(normalized_payload) or ""),
+            summary=summary or self._default_summary(event_type, normalized_payload),
+            idempotency_key=idempotency_key,
+            call_id=self._payload_call_id(normalized_payload),
+        )
+        if write_legacy_run and existing is None:
+            legacy_payload = {
+                "run_id": run.run_id,
+                "event_id": event.event_id,
+                "sequence": event.sequence,
+                "event": event_type,
+                "payload_kind": normalized_payload_kind,
+                "payload": normalized_payload,
+            }
+            legacy_payload.setdefault("task_id", run.task_id)
+            if run.session_id:
+                legacy_payload.setdefault("session_id", run.session_id)
+            self._append_jsonl(self.runs_file, legacy_payload)
+        return event
+
     def record_artifact(
         self,
         run_key: str,
@@ -254,27 +288,14 @@ class DiagnosticRecorder:
         content_type: str = "text/plain",
         source_event_id: str = "",
     ) -> ArtifactRecord:
-        run = self.ensure_run(str(run_key))
-        artifact_id = filename or f"{kind}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S_%f')}"
-        artifact_path = self._artifacts_dir(run.run_id) / artifact_id
-        artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(content, bytes):
-            artifact_path.write_bytes(content)
-            byte_count = len(content)
-        else:
-            artifact_path.write_text(content, encoding="utf-8")
-            byte_count = len(content.encode("utf-8"))
-        artifact = ArtifactRecord(
-            run_id=run.run_id,
+        return self._trajectory_store.record_artifact(
+            run_key,
             kind=kind,
-            path=str(artifact_path),
+            content=content,
+            filename=filename,
             content_type=content_type,
-            bytes=byte_count,
             source_event_id=source_event_id,
         )
-        self._append_jsonl(self._artifacts_index_file(run.run_id), artifact.model_dump(mode="python"))
-        self._refresh_summary(run.run_id)
-        return artifact
 
     def load_recent_records(self, limit: int = 100) -> list[dict[str, Any]]:
         if not self.issues_file.exists():
@@ -290,42 +311,51 @@ class DiagnosticRecorder:
         return records
 
     def load_run_events(self, limit: int = 100) -> list[dict[str, Any]]:
-        if not self.runs_file.exists():
-            return []
-        lines = [line for line in self.runs_file.read_text(encoding="utf-8").splitlines() if line.strip()]
-        selected = lines[-limit:] if limit > 0 else lines
+        """Return the global runtime event projection from Evidence Core.
+
+        The old ``runs.jsonl`` stream is merged as a read-only compatibility
+        source so legacy-only runs remain discoverable in mixed directories.
+        """
         events: list[dict[str, Any]] = []
-        for line in selected:
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
+        for summary in self._evidence_reader.list_runs():
+            for event in self._evidence_reader.events(summary.run_id):
+                payload = dict(event.payload or {})
+                events.append(
+                    {
+                        "run_id": event.run_id,
+                        "event_id": event.event_id,
+                        "sequence": event.sequence,
+                        "event": event.event_type,
+                        "payload_kind": event.payload_kind,
+                        "payload": payload,
+                        "task_id": event.task_id,
+                        "session_id": event.session_id,
+                        "phase": event.phase,
+                    }
+                )
+        legacy_events: list[dict[str, Any]] = []
+        if self.runs_file.exists():
+            for line in self.runs_file.read_text(encoding="utf-8").splitlines():
+                if line.strip() and _is_json_object(line):
+                    legacy_events.append(json.loads(line))
+        merged: list[dict[str, Any]] = []
+        seen_event_ids: set[str] = set()
+        for item in [*legacy_events, *events]:
+            event_id = str(item.get("event_id") or "")
+            if event_id and event_id in seen_event_ids:
                 continue
-        return events
+            if event_id:
+                seen_event_ids.add(event_id)
+            merged.append(item)
+        return merged[-limit:] if limit > 0 else merged
 
     def load_trajectory_events(self, run_key: str, limit: int = 0) -> list[dict[str, Any]]:
-        run_id = self._resolve_run_id(run_key) or str(run_key)
-        path = self._events_file(run_id)
-        if not path.exists():
-            return []
-        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        selected = lines[-limit:] if limit > 0 else lines
-        events: list[dict[str, Any]] = []
-        for line in selected:
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return events
+        events = self._evidence_reader.events(run_key, limit=limit)
+        return [event.model_dump(mode="python") for event in events]
 
     def load_run_summary(self, run_key: str) -> RunSummaryRecord | None:
-        run_id = self._resolve_run_id(run_key) or str(run_key)
-        path = self._summary_file(run_id)
-        if not path.exists():
-            return None
-        try:
-            return RunSummaryRecord.model_validate(json.loads(path.read_text(encoding="utf-8")))
-        except (json.JSONDecodeError, OSError, ValueError):
-            return None
+        replay = self._evidence_reader.replay(run_key)
+        return replay["summary"] if replay is not None else None
 
     def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -338,47 +368,21 @@ class DiagnosticRecorder:
         if not event_type or not task_id:
             return
         session_id = str(payload.get("session_id") or "")
-        if event_type == "task_received":
-            self.ensure_run(
-                task_id,
-                source=str(payload.get("source") or ""),
-                raw_input=str(payload.get("raw_input") or ""),
-                session_id=session_id,
-            )
-        else:
-            self.ensure_run(task_id, session_id=session_id)
-        run_id = self._resolve_run_id(session_id) or self._resolve_run_id(task_id)
-        if run_id is None:
-            return
-        normalized_payload_kind, normalized_payload = self._normalize_event_payload(
-            payload_kind=str(payload.get("payload_kind") or ""),
+        self._store_trajectory_event(
+            task_id,
+            event_type=event_type,
             payload=payload.get("payload") if "payload" in payload else payload,
+            payload_kind=str(payload.get("payload_kind") or ""),
+            source=str(payload.get("source") or ""),
+            raw_input=str(payload.get("raw_input") or ""),
+            goal=str(payload.get("goal") or ""),
+            route=str(payload.get("route") or ""),
+            session_id=session_id,
+            phase=str(payload.get("phase") or ""),
+            summary=str(payload.get("summary") or ""),
+            idempotency_key=str(payload.get("idempotency_key") or ""),
+            write_legacy_run=False,
         )
-        run = self.load_run(run_id)
-        root_task_id = run.task_id if run else task_id
-        resolved_session_id = (run.session_id if run else "") or session_id
-        normalized_payload = self._normalize_payload_identity(
-            normalized_payload,
-            root_task_id=root_task_id,
-            session_id=resolved_session_id,
-        )
-        with self._event_write_lock(run_id):
-            event = EventRecord(
-                run_id=run_id,
-                sequence=self._next_event_sequence(run_id),
-                event_type=event_type,
-                task_id=root_task_id,
-                session_id=resolved_session_id,
-                phase=str(payload.get("phase") or normalized_payload.get("phase") or ""),
-                summary=self._default_summary(event_type, normalized_payload),
-                payload_kind=normalized_payload_kind,
-                payload=normalized_payload,
-            )
-            self._append_jsonl(self._events_file(run_id), event.model_dump(mode="python"))
-        run = self.load_run(run_id)
-        if run:
-            self._apply_run_update_from_event(run, event)
-        self._refresh_summary(run_id)
 
     def _apply_run_update_from_event(self, run: RunRecord, event: EventRecord) -> None:
         event_type = event.event_type
@@ -538,6 +542,12 @@ class DiagnosticRecorder:
 
     def _payload_phase(self, payload: dict[str, Any]) -> str:
         return str(payload.get("phase") or "")
+
+    def _payload_call_id(self, payload: dict[str, Any]) -> str:
+        correlation = payload.get("correlation")
+        if isinstance(correlation, dict) and correlation.get("execution_id"):
+            return str(correlation["execution_id"])
+        return str(payload.get("call_id") or "")
 
     def _with_payload_correlation(self, payload: dict[str, Any], *, task_id: str = "", session_id: str = "") -> dict[str, Any]:
         correlation = payload.get("correlation")

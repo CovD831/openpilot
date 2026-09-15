@@ -42,7 +42,7 @@ __all__ = [
     "load_raw_tasks",
     "RuntimeTaskPoolRunner",
     "TaskPoolRunResult",
-    "build_autopilot_executor",
+    "build_pi_executor",
     "RunRecord",
     "EventRecord",
     "ArtifactRecord",
@@ -52,7 +52,7 @@ __all__ = [
 
 
 def __getattr__(name: str):
-    if name in {"RuntimeTaskPoolRunner", "TaskPoolRunResult", "build_autopilot_executor"}:
+    if name in {"RuntimeTaskPoolRunner", "TaskPoolRunResult", "build_pi_executor"}:
         module = import_module("runtime_diagnostics.runner")
         return getattr(module, name)
     if name == "TrajectoryLLMClientProxy":

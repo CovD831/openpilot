@@ -202,8 +202,7 @@ def test_autopilot_keeps_conversation_identity_separate_from_run_identity(tmp_pa
         pass
 
     autopilot = IntelligentAutopilot(FakeLLM(), log_file=tmp_path / "autopilot.jsonl")
-    captured: dict[str, object] = {}
-    autopilot.runtime_controller.run = lambda goal, context, mode="standard": captured.update(context) or {"success": True}
+    autopilot.harness_application.run_pi = lambda *_args, **_kwargs: {"success": True}
 
     ingress = _state()
     autopilot.execute(
@@ -211,9 +210,9 @@ def test_autopilot_keeps_conversation_identity_separate_from_run_identity(tmp_pa
         context={"session_ingress_state": ingress},
     )
 
-    assert captured["conversation_id"] == "conversation-1"
-    assert captured["run_id"] == autopilot.session_id
-    assert captured["session_constraints"].session_id == "conversation-1"
+    assert autopilot._current_execution_context["conversation_id"] == "conversation-1"
+    assert autopilot._current_execution_context["run_id"] == autopilot.session_id
+    assert autopilot._current_execution_context["session_constraints"].session_id == "conversation-1"
     assert autopilot.session_id != autopilot.conversation_id
 
 

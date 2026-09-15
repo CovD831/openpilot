@@ -201,6 +201,9 @@ def test_task_designer_schema_requests_one_identity_free_bounded_delta(tmp_path)
     assert '"evidence_ids"' in schema.content
     assert '"description"' in schema.content
     assert '"target_files"' in schema.content
+    assert '"read_files"' in schema.content
+    assert '"write_files"' in schema.content
+    assert '"validation_command"' in schema.content
     assert '"acceptance_criteria"' in schema.content
     assert '"risk_notes"' in schema.content
 
@@ -247,6 +250,67 @@ def test_task_delta_accepts_header_evidence_and_rejects_domain_ids_together(tmp_
     task = agent._design_tasks(_state(tmp_path), goal, report, 0)[0]
 
     assert task.evidence_ids == ["iteration_task_design:validation"]
+
+
+def test_task_designer_preserves_typed_execution_handoff(tmp_path) -> None:
+    payload = {
+        "task": _task_delta(
+            read_files=["README.md"],
+            write_files=["README.md"],
+            validation_command="python -m pytest -q",
+        )
+    }
+    agent = AutonomousIterationAgent(_Evaluator(), llm_client=_TaskDeltaLLM(payload))
+
+    task = agent._design_tasks(_state(tmp_path), _goal(), _report(), 0)[0]
+
+    assert task.read_files == [str(tmp_path / "README.md")]
+    assert task.write_files == [str(tmp_path / "README.md")]
+    assert task.validation_command == "python -m pytest -q"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"write_files": ["module_0.py"]},
+        {"read_files": ["not-in-project.py"]},
+        {"validation_command": "python -m pytest -q tests/other.py"},
+    ],
+)
+def test_task_designer_rejects_contradictory_execution_handoff(tmp_path, override) -> None:
+    payload = {"task": _task_delta(**override)}
+    agent = AutonomousIterationAgent(_Evaluator(), llm_client=_TaskDeltaLLM(payload))
+
+    assert agent._design_tasks(_state(tmp_path), _goal(), _report(), 0) == []
+
+
+def test_execution_handoff_round_trips_and_legacy_snapshot_migrates() -> None:
+    task = {
+        "id": "task-1",
+        "goal_id": "goal-1",
+        "description": "Run the focused validation.",
+        "target_files": [],
+        "read_files": [],
+        "write_files": [],
+        "validation_command": "python -m compileall -q src",
+        "acceptance_criteria": ["the command passes"],
+        "risk_notes": [],
+        "evidence_ids": [],
+    }
+    from autonomous_iteration.models import DesignedImprovementTask
+
+    restored = DesignedImprovementTask.model_validate(task)
+    assert restored.model_dump(mode="json") == task
+    legacy = DesignedImprovementTask.model_validate(
+        {
+            "id": "legacy",
+            "goal_id": "goal-1",
+            "description": "Legacy task",
+        }
+    )
+    assert legacy.read_files == []
+    assert legacy.write_files == []
+    assert legacy.validation_command == ""
 
 
 def test_single_target_task_design_uses_routine_reasoning_policy(tmp_path) -> None:

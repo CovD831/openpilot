@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from metadata.base import JsonValue, MetadataBase, MetadataKind
 
@@ -88,6 +88,166 @@ class ResolutionPlanMetadata(MetadataBase):
     acceptance_check: str = ""
 
 
+class ValidationGrant(BaseModel):
+    """One admitted exact validation capability owned by a task admission."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    command: str = Field(min_length=1)
+    cwd: str = Field(min_length=1)
+    timeout_seconds: int = Field(default=120, ge=1, le=900)
+
+    @model_validator(mode="after")
+    def _grant_is_non_blank(self) -> "ValidationGrant":
+        if not self.command.strip() or not self.cwd.strip():
+            raise ValueError("validation grant command and cwd must be non-empty")
+        return self
+
+
+class FileMutationPrecondition(BaseModel):
+    """Immutable identity snapshot of one admitted regular-file mutation target."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    path: str = Field(min_length=1)
+    device: int = Field(ge=0)
+    inode: int = Field(ge=0)
+    size_bytes: int = Field(ge=0)
+    mtime_ns: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _precondition_is_canonical(self) -> "FileMutationPrecondition":
+        from pathlib import Path
+
+        if not self.path.strip() or not Path(self.path).is_absolute():
+            raise ValueError("file mutation precondition path must be absolute and non-empty")
+        return self
+
+
+class TaskApprovalGrant(BaseModel):
+    """One explicit user approval for a pending mutation proposal.
+
+    This record is deliberately narrower than a task admission: it names an
+    already-admitted proposal but carries no file or command authority of its
+    own. The execution entry binds it to the newly created Run before any
+    mutation reaches Action Gateway.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    approval_id: str = Field(min_length=1)
+    proposal_id: str = Field(min_length=1)
+    admission_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1)
+    project_root: str = Field(min_length=1)
+    conversation_id: str = Field(min_length=1)
+    protocol_version: Literal["cli-v2"] = "cli-v2"
+
+    @model_validator(mode="after")
+    def _approval_is_complete(self) -> "TaskApprovalGrant":
+        if any(
+            not str(value).strip()
+            for value in (
+                self.approval_id,
+                self.proposal_id,
+                self.admission_id,
+                self.task_id,
+                self.project_root,
+                self.conversation_id,
+            )
+        ):
+            raise ValueError("task approval fields must be non-empty")
+        return self
+
+    def bind_run(self, run_id: str) -> "TaskConsentReference":
+        return TaskConsentReference(
+            consent_id=f"consent_{self.approval_id}",
+            approval_id=self.approval_id,
+            proposal_id=self.proposal_id,
+            admission_id=self.admission_id,
+            task_id=self.task_id,
+            project_root=self.project_root,
+            conversation_id=self.conversation_id,
+            run_id=run_id,
+            protocol_version=self.protocol_version,
+        )
+
+
+class TaskConsentReference(BaseModel):
+    """Run-bound projection of one approved mutation proposal."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    consent_id: str = Field(min_length=1)
+    approval_id: str = Field(min_length=1)
+    proposal_id: str = Field(min_length=1)
+    admission_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1)
+    project_root: str = Field(min_length=1)
+    conversation_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    protocol_version: Literal["cli-v2"] = "cli-v2"
+
+    @model_validator(mode="after")
+    def _consent_is_complete(self) -> "TaskConsentReference":
+        if any(
+            not str(value).strip()
+            for value in (
+                self.consent_id,
+                self.approval_id,
+                self.proposal_id,
+                self.admission_id,
+                self.task_id,
+                self.project_root,
+                self.conversation_id,
+                self.run_id,
+            )
+        ):
+            raise ValueError("task consent fields must be non-empty")
+        return self
+
+
+class TaskAdmissionGrant(BaseModel):
+    """Immutable, project-bound authority snapshot for one admitted task plan."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    admission_id: str = Field(min_length=1)
+    task_id: str = Field(min_length=1)
+    project_root: str = Field(min_length=1)
+    protocol_version: Literal["cli-v2"] = "cli-v2"
+    policy_revision: int = Field(default=1, ge=1)
+    read_files: list[str] = Field(default_factory=list)
+    write_files: list[str] = Field(default_factory=list)
+    validation: ValidationGrant | None = None
+    write_preconditions: list[FileMutationPrecondition] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _grant_has_a_complete_mutation_chain(self) -> "TaskAdmissionGrant":
+        if any(not str(path).strip() for path in (*self.read_files, *self.write_files)):
+            raise ValueError("task admission scopes must not contain blank paths")
+        if len(self.read_files) != len(set(self.read_files)):
+            raise ValueError("task admission read scope must be unique")
+        if len(self.write_files) != len(set(self.write_files)):
+            raise ValueError("task admission write scope must be unique")
+        if self.write_files:
+            if self.validation is None:
+                raise ValueError("mutation task admission requires a validation grant")
+            if not set(self.write_files).issubset(set(self.read_files)):
+                raise ValueError("mutation task admission requires read-before-write scope")
+            if [precondition.path for precondition in self.write_preconditions] != self.write_files:
+                raise ValueError(
+                    "mutation task admission requires one matching file precondition per write target"
+                )
+        elif self.validation is not None or self.write_preconditions:
+            raise ValueError("read-only task admission cannot carry mutation authority")
+        return self
+
+    @property
+    def is_mutation(self) -> bool:
+        return bool(self.write_files)
+
+
 class TaskGraphNodeMetadata(MetadataBase):
     """Typed graph metadata for a decomposed task."""
 
@@ -109,6 +269,22 @@ class TaskGraphNodeMetadata(MetadataBase):
     tags: list[str] = Field(default_factory=list)
     problem_resolution_depth: int = Field(default=0, ge=0)
     problem_resolution_parent_task_id: str | None = None
+    admission: TaskAdmissionGrant | None = None
+
+    @model_validator(mode="after")
+    def _admission_matches_task_plan(self) -> "TaskGraphNodeMetadata":
+        if self.admission is None:
+            return self
+        if self.admission.task_id != self.task_id:
+            raise ValueError("task admission task_id must match task graph node")
+        if self.admission.read_files != self.read_files:
+            raise ValueError("task admission read scope must match task graph node")
+        if self.admission.write_files != self.write_files:
+            raise ValueError("task admission write scope must match task graph node")
+        expected_validation = self.admission.validation.command if self.admission.validation else ""
+        if self.validation_command != expected_validation:
+            raise ValueError("task admission validation command must match task graph node")
+        return self
 
 
 class TaskGraphEdgeMetadata(MetadataBase):

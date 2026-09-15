@@ -3,16 +3,29 @@
 from __future__ import annotations
 
 import ast
+import errno
 import json
+import os
 from pathlib import Path
 from typing import Any
 
 from memory.project_path_resolver import ensure_resolved_path
-from metadata import ToolContractMetadata, ToolInputMetadata, ToolResultMetadata, metadata_tool_result
+from metadata import (
+    FileMutationPrecondition,
+    ToolContractMetadata,
+    ToolInputMetadata,
+    ToolResultMetadata,
+    metadata_tool_result,
+)
 
 from core.tool_contracts import PermissionLevel, ToolCapability, ToolDefinition, ToolFailureMode
 from memory.project_index import ProjectIndexManager
 from tools.file_indexing import refresh_after_file_change
+from utils.file_mutation_preconditions import (
+    FileMutationPreconditionError,
+    assert_file_mutation_precondition,
+    file_mutation_precondition_from_stat,
+)
 
 
 FILE_PATCH_WRITER_DEFINITION = ToolDefinition(
@@ -63,21 +76,19 @@ FILE_PATCH_WRITER_DEFINITION = ToolDefinition(
 def file_patch_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultMetadata:
     params = input_metadata.to_params()
     project_path = params.get("project_path")
-    file_path = (
-        ensure_resolved_path(
-            params["file_path"],
-            project_path,
-            operation="patch",
-            intent_kind="existing_file",
-        )
-        if project_path
-        else Path(str(params["file_path"])).expanduser()
-    )
+    file_path = _secure_patch_target_path(params["file_path"], project_path)
     encoding = str(params.get("encoding") or "utf-8")
-    if not file_path.exists() or not file_path.is_file():
-        raise FileNotFoundError(f"Patch target file not found: {file_path}")
+    expected_precondition = _coerce_file_mutation_precondition(
+        params.get("_file_mutation_precondition")
+    )
 
-    original = file_path.read_text(encoding=encoding)
+    original, read_stat = _read_text_no_follow(file_path, encoding=encoding)
+    if expected_precondition is not None:
+        assert_file_mutation_precondition(
+            file_path,
+            expected_precondition,
+            observed=read_stat,
+        )
     operation_kind = str(params.get("operation_kind") or params.get("patch_mode") or "modify_symbol")
     patch = params.get("patch") if isinstance(params.get("patch"), dict) else {}
     if patch:
@@ -107,7 +118,13 @@ def file_patch_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultM
     if file_path.suffix == ".py":
         ast.parse(updated)
 
-    file_path.write_text(updated, encoding=encoding)
+    bytes_written = _write_text_no_follow(
+        file_path,
+        updated,
+        encoding=encoding,
+        expected_precondition=expected_precondition,
+        read_stat=read_stat,
+    )
     index_update: dict[str, Any] = {}
     warnings: list[str] = []
     post_processing_scope = params.get("_post_processing_write_scope")
@@ -122,7 +139,7 @@ def file_patch_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultM
             for item in post_processing_scope
             if str(item or "").strip()
         }
-        if not derived_targets.intersection(authorized_targets):
+        if not derived_targets.issubset(authorized_targets):
             index_update = {
                 "skipped": True,
                 "reason": "post_processing_target_outside_declared_write_scope",
@@ -144,13 +161,112 @@ def file_patch_writer_executor(input_metadata: ToolInputMetadata) -> ToolResultM
 
     return {
         "file_path": str(file_path.absolute()),
-        "bytes_written": file_path.stat().st_size,
+        "bytes_written": bytes_written,
         "created": False,
         "operation_kind": operation_kind,
         "changed_ranges": changed_ranges,
         "index_update": index_update,
         "warnings": warnings,
     }
+
+
+def _secure_patch_target_path(raw_path: Any, project_path: Any) -> Path:
+    candidate = Path(str(raw_path)).expanduser()
+    if project_path:
+        project_root = Path(str(project_path)).expanduser().resolve(strict=False)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        lexical_path = candidate.absolute()
+        resolved = ensure_resolved_path(
+            lexical_path,
+            project_root,
+            operation="patch",
+            intent_kind="existing_file",
+        ).absolute()
+        if lexical_path != resolved:
+            raise PermissionError(
+                "file patch target must be a canonical non-symbolic-link project file"
+            )
+        return lexical_path
+    return candidate.absolute()
+
+
+def _coerce_file_mutation_precondition(value: Any) -> FileMutationPrecondition | None:
+    if value is None:
+        return None
+    if isinstance(value, FileMutationPrecondition):
+        return value
+    if isinstance(value, dict):
+        try:
+            return FileMutationPrecondition.model_validate(value)
+        except ValueError as exc:
+            raise PermissionError("file mutation precondition is invalid") from exc
+    raise PermissionError("file mutation precondition is invalid")
+
+
+def _read_text_no_follow(file_path: Path, *, encoding: str) -> tuple[str, os.stat_result]:
+    descriptor = _open_no_follow(file_path, os.O_RDONLY)
+    try:
+        observed = os.fstat(descriptor)
+        file_mutation_precondition_from_stat(file_path, observed)
+        with os.fdopen(descriptor, "rb", closefd=True) as handle:
+            descriptor = -1
+            return handle.read().decode(encoding), observed
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _write_text_no_follow(
+    file_path: Path,
+    updated: str,
+    *,
+    encoding: str,
+    expected_precondition: FileMutationPrecondition | None,
+    read_stat: os.stat_result,
+) -> int:
+    descriptor = _open_no_follow(file_path, os.O_WRONLY)
+    try:
+        observed = os.fstat(descriptor)
+        read_precondition = file_mutation_precondition_from_stat(file_path, read_stat)
+        assert_file_mutation_precondition(
+            file_path,
+            read_precondition,
+            observed=observed,
+        )
+        if expected_precondition is not None:
+            assert_file_mutation_precondition(
+                file_path,
+                expected_precondition,
+                observed=observed,
+            )
+        payload = updated.encode(encoding)
+        os.ftruncate(descriptor, 0)
+        view = memoryview(payload)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise OSError("file patch write did not make progress")
+            view = view[written:]
+        os.fsync(descriptor)
+        return len(payload)
+    finally:
+        os.close(descriptor)
+
+
+def _open_no_follow(file_path: Path, flags: int) -> int:
+    no_follow = getattr(os, "O_NOFOLLOW", None)
+    if no_follow is None:
+        raise PermissionError("secure no-follow file patching is unavailable on this platform")
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    try:
+        return os.open(str(file_path), flags | no_follow | close_on_exec)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise PermissionError(
+                f"file mutation target must not be a symbolic link: {file_path}"
+            ) from exc
+        raise
 
 
 def _split_lines(text: str) -> list[str]:

@@ -35,7 +35,11 @@ def _trajectory_events(autopilot: IntelligentAutopilot) -> list[dict]:
     assert hooks is not None
     run = hooks.recorder.load_run("module-tool-session")
     assert run is not None
-    return hooks.recorder.load_trajectory_events(run.run_id)
+    return [
+        event
+        for event in hooks.recorder.load_trajectory_events(run.run_id)
+        if event["layer"] == "semantic"
+    ]
 
 
 def test_module_owned_project_state_reader_persists_started_and_succeeded_events(tmp_path) -> None:

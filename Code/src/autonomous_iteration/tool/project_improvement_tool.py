@@ -400,7 +400,7 @@ def project_improvement_tool_executor(input_metadata: ToolInputMetadata) -> Tool
     if session_ingress_state is not None and not isinstance(session_ingress_state, SessionIngressState):
         raise TypeError("session ingress state must be a validated SessionIngressState")
     if session_ingress_state is not None:
-        if session_constraints is not None and session_constraints.canonical_hash != session_ingress_state.session_constraints.canonical_hash:
+        if session_constraints is not None and session_constraints.authority_hash != session_ingress_state.session_constraints.authority_hash:
             raise ValueError("session ingress and explicit constraints differ")
         session_constraints = session_ingress_state.session_constraints
         expected_turn_hash = str(input_metadata.session_turn_source_hash or "")
@@ -413,7 +413,7 @@ def project_improvement_tool_executor(input_metadata: ToolInputMetadata) -> Tool
             raise ValueError("context projection requires session ingress and constraints")
         if context_projection.session_turn_source_hash != session_turn_ledger_hash(session_ingress_state):
             raise ValueError("context projection turn source hash mismatch")
-        if context_projection.session_constraints_hash != session_constraints.canonical_hash:
+        if context_projection.session_constraints_hash != session_constraints.authority_hash:
             raise ValueError("context projection constraint hash mismatch")
     runtime_budget = params.get("_runtime_budget")
     if not isinstance(runtime_budget, RuntimeBudgetMetadata):

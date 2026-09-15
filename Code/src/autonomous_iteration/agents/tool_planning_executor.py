@@ -17,7 +17,12 @@ from autonomous_iteration.runtime_controller import ToolRouter, apply_read_only_
 from autonomous_iteration.task_models import Task, TaskExecutionContext, TaskExecutionResult, TaskStatus
 from core.config import ProviderToolExecutionBudget, ProviderToolExecutionBudgetProfile
 from core.llm import LLMMessage, LLMRequest
-from core.provider_tool_roundtrip import ProviderToolRoundTripRunner, build_provider_tool_definitions
+from core.provider_tool_roundtrip import (
+    ProviderToolRoundTripRunner,
+    _bounded_provider_error_message,
+    _canonical_provider_finish_reason,
+    build_provider_tool_definitions,
+)
 from core.reasoning import reasoning_policy_for_decision
 from core.tool_event_loop import ToolEventLoopRunner
 from memory.context_assembly import build_context_llm_request
@@ -48,7 +53,10 @@ from metadata import (
     ToolInputMetadata,
 )
 from core.tool_contracts import ToolCapability
-from tools.mutation_descriptor import FILE_MUTATION_TOOLS
+from tools.mutation_descriptor import (
+    FILE_MUTATION_TOOLS,
+    PROVIDER_NATIVE_MUTATION_TOOLS,
+)
 
 
 NEED_ATTRIBUTE_FIELDS = {
@@ -602,22 +610,10 @@ class ToolPlanningTaskExecutor:
         started_at = datetime.now()
         settings = getattr(getattr(self.runtime, "llm_client", None), "settings", None)
         enabled = bool(getattr(settings, "provider_tool_execution_enabled", False))
-        try:
-            budget_profile = ProviderToolExecutionBudget.for_profile(
-                getattr(
-                    settings,
-                    "provider_tool_execution_budget_profile",
-                    ProviderToolExecutionBudgetProfile.CANARY,
-                )
-            )
-        except (TypeError, ValueError) as exc:
-            budget_profile = None
-            budget_profile_error = str(exc)
-        else:
-            budget_profile_error = None
 
         def failure_result(error_type: str, message: str, *, details: dict[str, Any] | None = None) -> TaskExecutionResult:
             duration = (datetime.now() - started_at).total_seconds()
+            message = _bounded_provider_error_message(message)
             failure = FailureMetadata(
                 error_type=error_type,
                 error_message=message,
@@ -637,6 +633,44 @@ class ToolPlanningTaskExecutor:
                 ),
                 attributes={"provider_tool_execution": True, "provider_tool_execution_enabled": enabled},
             )
+
+        def bounded_exception_message(prefix: str, exc: Exception) -> str:
+            """Keep provider boundary failures typed, bounded, and log-safe."""
+
+            detail = str(exc) or type(exc).__name__
+            return _bounded_provider_error_message(f"{prefix}: {detail}")
+
+        invalid_authority_fields = [
+            field_name
+            for field_name, value in (
+                ("allow_mutations", allow_mutations),
+                ("user_confirmed", user_confirmed),
+            )
+            if not isinstance(value, bool)
+        ]
+        if invalid_authority_fields:
+            return failure_result(
+                "ProviderToolAuthorityFlagInvalid",
+                "Provider-native authority flags must be explicit booleans.",
+                details={
+                    "invalid_field": invalid_authority_fields[0],
+                    "invalid_fields": invalid_authority_fields,
+                },
+            )
+
+        try:
+            budget_profile = ProviderToolExecutionBudget.for_profile(
+                getattr(
+                    settings,
+                    "provider_tool_execution_budget_profile",
+                    ProviderToolExecutionBudgetProfile.CANARY,
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            budget_profile = None
+            budget_profile_error = str(exc)
+        else:
+            budget_profile_error = None
 
         if not enabled:
             return failure_result(
@@ -705,16 +739,72 @@ class ToolPlanningTaskExecutor:
         if registry is None:
             return failure_result("ProviderToolRegistryMissing", "Provider-native task execution requires a tool registry.")
         mutation_tools = []
+        unsupported_mutation_tools = []
         for tool_name in normalized_tools:
             definition = registry.get(tool_name) if hasattr(registry, "get") else None
+            executor = registry.get_executor(tool_name) if hasattr(registry, "get_executor") else None
             capabilities = set(getattr(definition, "capabilities", []) or []) if definition is not None else set()
-            if tool_name in FILE_MUTATION_TOOLS or ToolCapability.FILE_WRITE in capabilities or ToolCapability.FILE_DELETE in capabilities:
+            mutating = bool(
+                tool_name in FILE_MUTATION_TOOLS
+                or ToolCapability.FILE_WRITE in capabilities
+                or ToolCapability.FILE_DELETE in capabilities
+            )
+            if mutating and tool_name not in PROVIDER_NATIVE_MUTATION_TOOLS:
+                unsupported_mutation_tools.append(tool_name)
+            if (
+                tool_name in PROVIDER_NATIVE_MUTATION_TOOLS
+                and definition is not None
+                and executor is not None
+            ):
                 mutation_tools.append(tool_name)
+        if unsupported_mutation_tools:
+            return failure_result(
+                "ProviderMutationToolUnsupported",
+                "Provider-native mutation requires a fully supported checkpoint, receipt, and validation lifecycle.",
+                details={"unsupported_mutation_tools": unsupported_mutation_tools},
+            )
+        if allow_mutations and not mutation_tools:
+            return failure_result(
+                "ProviderMutationToolRequired",
+                "Provider-native mutation tasks require the fully supported file_patch_writer tool.",
+            )
         if mutation_tools and (not allow_mutations or not user_confirmed):
             return failure_result(
                 "ProviderMutationConfirmationRequired",
                 "Provider-native mutation tasks require explicit allow_mutations and user_confirmed=True.",
                 details={"mutation_tools": mutation_tools},
+            )
+        if allow_mutations and not str(getattr(task, "validation_command", "") or "").strip():
+            return failure_result(
+                "ProviderMutationValidationCommandRequired",
+                "Provider-native mutation tasks require a non-empty exact validation_command.",
+            )
+        validation_definition = registry.get("command_executor") if hasattr(registry, "get") else None
+        validation_executor = (
+            registry.get_executor("command_executor")
+            if hasattr(registry, "get_executor")
+            else None
+        )
+        if allow_mutations and (
+            "command_executor" not in normalized_tools
+            or validation_definition is None
+            or validation_executor is None
+        ):
+            return failure_result(
+                "ProviderMutationValidationToolRequired",
+                "Provider-native mutation tasks require command_executor for exact validation.",
+            )
+        read_tools = []
+        for tool_name in normalized_tools:
+            definition = registry.get(tool_name) if hasattr(registry, "get") else None
+            executor = registry.get_executor(tool_name) if hasattr(registry, "get_executor") else None
+            capabilities = set(getattr(definition, "capabilities", []) or []) if definition is not None else set()
+            if executor is not None and capabilities == {ToolCapability.FILE_READ}:
+                read_tools.append(tool_name)
+        if allow_mutations and not read_tools:
+            return failure_result(
+                "ProviderMutationReadToolRequired",
+                "Provider-native mutation tasks require a registered executable read-only FILE_READ tool.",
             )
 
         try:
@@ -792,7 +882,7 @@ class ToolPlanningTaskExecutor:
                     "command_executor for reading. command_executor is reserved for the exact "
                     "typed validation_command after the scoped mutation. Follow this bounded "
                     "workflow exactly: read each authorized source once, then issue one scoped "
-                    "file_writer or file_patch_writer call for the authorized target, then run "
+                    "file_patch_writer call for the authorized target, then run "
                     "the exact validation command. A file_reader result is complete when "
                     "evidence_status=complete and projection_status=inline or "
                     "projection_status=bounded_window; "
@@ -834,7 +924,7 @@ class ToolPlanningTaskExecutor:
                     *support_context_candidates,
                     *(initial_context_candidates or []),
                 ]
-            roundtrip = ProviderToolRoundTripRunner(
+            roundtrip_runner = ProviderToolRoundTripRunner(
                 self,
                 task,
                 tools=tools,
@@ -850,14 +940,27 @@ class ToolPlanningTaskExecutor:
                 context_max_prompt_tokens=budget_profile.context_max_prompt_tokens,
                 initial_context_candidates=effective_initial_context_candidates,
                 bounded_read_windows=list(getattr(task, "read_windows", []) or []),
-            ).run(
+            )
+        except Exception as exc:
+            return failure_result(
+                "ProviderToolTaskSetupFailed",
+                bounded_exception_message("Provider tool setup failed", exc),
+                details={"phase": "setup", "exception_type": type(exc).__name__},
+            )
+
+        try:
+            roundtrip = roundtrip_runner.run(
                 [
                     LLMMessage(role="system", content=system_prompt),
                     LLMMessage(role="user", content=user_prompt),
                 ]
             )
         except Exception as exc:
-            return failure_result("ProviderToolTaskSetupFailed", str(exc))
+            return failure_result(
+                "ProviderToolTaskRuntimeFailed",
+                bounded_exception_message("Provider tool runtime failed", exc),
+                details={"phase": "runtime", "exception_type": type(exc).__name__},
+            )
 
         duration = (datetime.now() - started_at).total_seconds()
         loop_payload = [loop.loop_metadata.to_json_dict() for loop in roundtrip.tool_loop_results]
@@ -874,6 +977,13 @@ class ToolPlanningTaskExecutor:
             self._reasoning_complexity_for_task(task),
         )
         reasoning_mode = getattr(roundtrip, "reasoning_mode", None)
+        mutation_route = bool(getattr(roundtrip, "mutation_route", False))
+        mutation_receipt_observed = bool(
+            getattr(roundtrip, "mutation_receipt_observed", False)
+        )
+        exact_validation_observed = bool(
+            getattr(roundtrip, "exact_validation_observed", False)
+        )
         output = {
             "provider_tool_execution": True,
             "rounds_used": roundtrip.rounds_used,
@@ -908,6 +1018,11 @@ class ToolPlanningTaskExecutor:
                 if hasattr(reasoning_mode, "value")
                 else None
             ),
+            "completion_evidence": {
+                "mutation_route": mutation_route,
+                "mutation_receipt_observed": mutation_receipt_observed,
+                "exact_validation_observed": exact_validation_observed,
+            },
             "requested_max_rounds": max_rounds,
             "effective_max_rounds": effective_rounds,
             "budget_limits": {
@@ -957,7 +1072,13 @@ class ToolPlanningTaskExecutor:
         """Build a typed result from already-computed provider round-trip evidence."""
         success = bool(getattr(roundtrip, "success", False))
         if not success:
-            error_message = str(getattr(roundtrip, "error_message", "") or "Provider-native task failed.")
+            error_message = _bounded_provider_error_message(
+                getattr(roundtrip, "error_message", "")
+                or "Provider-native task failed."
+            )
+            runner_exception_type = str(
+                getattr(roundtrip, "exception_type", "") or ""
+            )[:128]
             coverage = getattr(roundtrip, "evidence_coverage", None)
             if hasattr(coverage, "to_json_dict"):
                 coverage = coverage.to_json_dict()
@@ -973,10 +1094,51 @@ class ToolPlanningTaskExecutor:
                     "rounds_used": int(getattr(roundtrip, "rounds_used", 0) or 0),
                     "tool_loops": loop_payload,
                     "provider_stop_reason": (
-                        getattr(getattr(roundtrip, "final_response", None), "finish_reason", None)
+                        _canonical_provider_finish_reason(
+                            getattr(
+                                getattr(roundtrip, "final_response", None),
+                                "finish_reason",
+                                None,
+                            )
+                        )
                     ),
                     "runner_error": error_message,
+                    "runner_exception_type": runner_exception_type or None,
                     "evidence_coverage": coverage,
+                },
+            )
+            return TaskExecutionResult(
+                task_id=task.id,
+                status=TaskStatus.FAILED,
+                error=error_message,
+                duration=duration,
+                result_metadata=TaskResultMetadata(
+                    task_id=task.id,
+                    status=ResultStatus.FAIL,
+                    failure=failure,
+                    duration=duration,
+                ),
+                attributes=dict(output),
+            )
+        mutation_route = bool(getattr(roundtrip, "mutation_route", False))
+        mutation_receipt_observed = bool(
+            getattr(roundtrip, "mutation_receipt_observed", False)
+        )
+        exact_validation_observed = bool(
+            getattr(roundtrip, "exact_validation_observed", False)
+        )
+        if mutation_route and not (
+            mutation_receipt_observed and exact_validation_observed
+        ):
+            error_message = "ProviderToolMutationCompletionEvidenceRequired"
+            failure = FailureMetadata(
+                error_type=error_message,
+                error_message=error_message,
+                recoverable=False,
+                details={
+                    "mutation_route": True,
+                    "mutation_receipt_observed": mutation_receipt_observed,
+                    "exact_validation_observed": exact_validation_observed,
                 },
             )
             return TaskExecutionResult(
@@ -1105,7 +1267,7 @@ Important:
                 states.append(ingress.session_constraints)
         if not states:
             return None
-        if len({state.canonical_hash for state in states}) != 1:
+        if len({state.authority_hash for state in states}) != 1:
             raise ValueError("conflicting session constraint states in task context")
         return states[0]
 

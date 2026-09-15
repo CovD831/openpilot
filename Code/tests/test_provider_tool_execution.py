@@ -137,6 +137,7 @@ def test_provider_bridge_executes_admitted_call_and_accounts_state() -> None:
         round_index=1,
         registry=runtime.tool_registry,
         budget=runtime.runtime_controller.state.budget,
+        advertised_tool_names=["file_reader"],
     )
     result = ToolEventLoopRunner(_Owner(runtime)).run_provider_tool_calls(Task(id="task-1", description="read"), admissions)
 
@@ -165,6 +166,7 @@ def test_provider_bridge_never_executes_blocked_admission() -> None:
         round_index=1,
         registry=runtime.tool_registry,
         budget=runtime.runtime_controller.state.budget,
+        advertised_tool_names=["file_reader"],
     )
     result = ToolEventLoopRunner(_Owner(runtime)).run_provider_tool_calls(Task(id="task-2", description="read"), admissions)
 
@@ -195,7 +197,10 @@ def test_provider_bridge_checkpoint_denial_prevents_mutation() -> None:
         round_index=1,
         registry=runtime.tool_registry,
         budget=runtime.runtime_controller.state.budget,
+        advertised_tool_names=["file_writer"],
+        allow_mutations=True,
         user_confirmed=True,
+        write_scope=["note.txt"],
     )
     result = ToolEventLoopRunner(_Owner(runtime)).run_provider_tool_calls(Task(id="task-3", description="write"), admissions)
 
@@ -215,6 +220,7 @@ def test_provider_bridge_observation_failure_does_not_apply_state() -> None:
         round_index=1,
         registry=runtime.tool_registry,
         budget=runtime.runtime_controller.state.budget,
+        advertised_tool_names=["file_reader"],
     )
     result = ToolEventLoopRunner(_Owner(runtime)).run_provider_tool_calls(Task(id="task-4", description="read"), admissions)
 
@@ -233,6 +239,7 @@ def test_provider_bridge_preserves_provider_id_on_execution_failure() -> None:
         round_index=1,
         registry=runtime.tool_registry,
         budget=runtime.runtime_controller.state.budget,
+        advertised_tool_names=["file_reader"],
     )
     result = ToolEventLoopRunner(_Owner(runtime)).run_provider_tool_calls(Task(id="task-5", description="read"), admissions)
 

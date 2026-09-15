@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -345,6 +346,9 @@ def test_command_registry_hides_removed_agent_and_autopilot_commands() -> None:
     assert "/autopilot" not in names
     assert "/agent" not in help_text
     assert "/autopilot" not in help_text
+    assert "/approve" in names
+    assert "/constraints" in names
+    assert "/approve" in help_text
     assert "task classifier" in help_text.lower()
 
 
@@ -469,16 +473,49 @@ def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> No
 
     runtime_options = enhanced_cli.OpenPilotRuntimeOptions()
 
+    proposal = SimpleNamespace(
+        proposal_id="proposal-1",
+        is_mutation=False,
+    )
+
     def fake_agent(task, ui, llm_client=None, logger=None):
         calls.append(("agent", task))
         return "agent-result"
 
-    def fake_autopilot(goal, ui, tracker, llm_client, logger, runtime_options, context=None):
-        calls.append(("autopilot", goal, dict(context or {})))
-        return "autopilot-result"
+    class Controller:
+        def propose(self, goal, *, project_root, conversation_id):
+            calls.append(("propose", goal, str(project_root), conversation_id))
+            return proposal
+
+        def execute(self, proposal_id, *, conversation_id, approval=None):
+            calls.append(("execute", proposal_id, conversation_id, approval))
+            return {"success": True, "response": "pi-result"}
+
+    controller_factory_calls = []
+
+    def new_controller(**kwargs):
+        controller_factory_calls.append(kwargs)
+        return Controller()
 
     monkeypatch.setattr(enhanced_cli, "_execute_agent_generator", fake_agent)
-    monkeypatch.setattr(enhanced_cli, "_execute_autopilot", fake_autopilot)
+    monkeypatch.setattr(enhanced_cli, "_new_cli_interaction_controller", new_controller)
+    monkeypatch.setattr(enhanced_cli, "_show_task_proposal", lambda *_args: None)
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_execute_autopilot",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("legacy fallback used")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        enhanced_cli,
+        "_classify_task_route",
+        lambda task: TaskRouteMetadata(
+            route="agent_generator" if "agent" in task else "autonomous_iteration",
+            confidence=1.0,
+            reason="test",
+        ),
+    )
+    monkeypatch.setattr(enhanced_cli, "_show_task_route", lambda *_args: None)
 
     assert (
         enhanced_cli._execute_goal_interactive(
@@ -502,13 +539,14 @@ def test_execute_goal_interactive_routes_with_task_classifier(monkeypatch) -> No
             logger=None,
             runtime_options=runtime_options,
         )
-        == "autopilot-result"
+        == {"success": True, "response": "pi-result"}
     )
-    assert calls[-1][0:2] == ("autopilot", "帮我做一个项目")
-    assert calls[-1][2]["source"] == "interactive"
-    assert str(calls[-1][2]["task_id"]).startswith("cli_")
+    assert [call[0] for call in calls[-2:]] == ["propose", "execute"]
+    assert calls[-2][1] == "帮我做一个项目"
     assert calls[0] == ("agent", "生成一个可复用的研究报告 agent")
-    assert len(calls) == 2
+    assert len(calls) == 3
+    assert controller_factory_calls
+    assert all(call["llm_client"] is not None for call in controller_factory_calls)
 
 
 def test_execute_goal_interactive_intercepts_shell_activation(monkeypatch) -> None:

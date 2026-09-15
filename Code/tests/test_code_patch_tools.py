@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from metadata import ReasoningMode, ReasoningPolicy, RuntimeBudgetMetadata, ToolInputMetadata
+from metadata import (
+    FileMutationPrecondition,
+    ReasoningMode,
+    ReasoningPolicy,
+    RuntimeBudgetMetadata,
+    ToolInputMetadata,
+)
 from tools.code_editor import code_editor_executor
 from tools.code_unit_generator import code_unit_generator_executor
 from tools.file_delete_tool import file_delete_tool_executor
@@ -82,6 +88,58 @@ def test_file_patch_writer_inserts_generated_unit_without_rewriting_existing_con
     assert "def existing():" in updated
     assert "def added():" in updated
     assert result.result.attributes["changed_ranges"] == [{"line_start": 4, "line_end": 5}]
+
+
+def test_file_patch_writer_rejects_a_drifted_runtime_file_precondition(tmp_path) -> None:
+    target = tmp_path / "app.py"
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    stat = target.stat()
+    precondition = FileMutationPrecondition(
+        path=str(target.resolve()),
+        device=stat.st_dev,
+        inode=stat.st_ino,
+        size_bytes=stat.st_size,
+        mtime_ns=stat.st_mtime_ns,
+    )
+    target.write_text("VALUE = externally changed\n", encoding="utf-8")
+
+    with pytest.raises(PermissionError, match="file mutation precondition"):
+        file_patch_writer_executor(
+            ToolInputMetadata.from_mapping(
+                "file_patch_writer",
+                {
+                    "file_path": str(target),
+                    "line_start": 1,
+                    "line_end": 1,
+                    "replacement_text": "VALUE = 2",
+                    "_file_mutation_precondition": precondition,
+                },
+            )
+        )
+
+    assert target.read_text(encoding="utf-8") == "VALUE = externally changed\n"
+
+
+def test_file_patch_writer_refuses_a_symbolic_link_target(tmp_path) -> None:
+    protected = tmp_path / "protected.py"
+    protected.write_text("VALUE = 1\n", encoding="utf-8")
+    target = tmp_path / "app.py"
+    target.symlink_to(protected)
+
+    with pytest.raises(PermissionError, match="symbolic link"):
+        file_patch_writer_executor(
+            ToolInputMetadata.from_mapping(
+                "file_patch_writer",
+                {
+                    "file_path": str(target),
+                    "line_start": 1,
+                    "line_end": 1,
+                    "replacement_text": "VALUE = 2",
+                },
+            )
+        )
+
+    assert protected.read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
 def test_code_unit_generator_inherits_parent_reasoning_policy_and_completion_cap() -> None:
@@ -495,6 +553,38 @@ def test_provider_scoped_patch_skips_undeclared_index_and_sketch_writes(tmp_path
 
     assert "def added():" in target.read_text(encoding="utf-8")
     assert not (project / "sketch.json").exists()
+    assert result.result.attributes["index_update"]["skipped"] is True
+
+
+def test_provider_scoped_patch_requires_all_derived_targets_before_refresh(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    project = tmp_path / "provider-partial-scope"
+    project.mkdir()
+    target = project / "app.py"
+    target.write_text("def existing():\n    return 1\n", encoding="utf-8")
+    refresh_calls: list[Path] = []
+    monkeypatch.setattr(
+        "tools.file_patch_writer.refresh_after_file_change",
+        lambda path: refresh_calls.append(Path(path)) or {},
+    )
+
+    result = file_patch_writer_executor(
+        ToolInputMetadata.from_mapping(
+            "file_patch_writer",
+            {
+                "file_path": str(target),
+                "operation_kind": "add_symbol",
+                "generated_unit": "def added():\n    return 2",
+                # Authorizing only the sketch cannot authorize a refresh that
+                # may also write the content-index artifact.
+                "_post_processing_write_scope": [str(project / "sketch.json")],
+            },
+        )
+    )
+
+    assert refresh_calls == []
     assert result.result.attributes["index_update"]["skipped"] is True
 
 

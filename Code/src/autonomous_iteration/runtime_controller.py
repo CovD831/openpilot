@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Literal
 
 from autonomous_iteration.checkpoint_store import RuntimeCheckpointStore
+from autonomous_iteration.supervisor import RuntimeSupervisor
 from autonomous_iteration.task_models import (
     Task,
     TaskDecompositionResult,
@@ -2549,6 +2550,9 @@ class AgentRuntimeController:
             session_bootstrap_sink=self._persist_session_bootstrap,
         )
         self.checkpoint_store = checkpoint_store
+        self.supervisor = (
+            RuntimeSupervisor(checkpoint_store) if checkpoint_store is not None else None
+        )
         self._checkpoint_fault_injector = checkpoint_fault_injector
         self._finalization_fault_injector = finalization_fault_injector
         self.state: RuntimeStateMetadata | None = None
@@ -2669,12 +2673,12 @@ class AgentRuntimeController:
         state.phase = AgentPhase.UNDERSTAND_PROJECT if context.get("project_path") else AgentPhase.UNDERSTAND_TASK
         self._emit_runtime_phase_change("", _phase_value(state.phase), state.verification_status, state.completion_reason, state)
         self._configure_checkpointing(context, read_only_mode=read_only_mode)
-        if self._checkpointing_enabled and self.checkpoint_store is not None and self._checkpoint_run_id:
-            acquire_lease = getattr(self.checkpoint_store, "try_acquire_run_lease", None)
-            if callable(acquire_lease):
-                self._run_lease_handle = acquire_lease(self._checkpoint_run_id)
-                if self._run_lease_handle is None:
-                    raise RuntimeError("runtime run lease is already active")
+        if self._checkpointing_enabled and self.supervisor is not None and self._checkpoint_run_id:
+            self._run_lease_handle = self.supervisor.try_acquire_run_lease(
+                self._checkpoint_run_id
+            )
+            if self._run_lease_handle is None:
+                raise RuntimeError("runtime run lease is already active")
         self._persist_checkpoint(
             state,
             reason="task state initialized",
@@ -2730,13 +2734,15 @@ class AgentRuntimeController:
     ) -> dict[str, Any]:
         """Resume one explicitly identified read-only checkpoint after preflight."""
         context = dict(context or {})
-        store = self.checkpoint_store
+        store = self.supervisor
         if store is None:
             hooks = getattr(self.runtime, "runtime_diagnostics_hooks", None)
             recorder = getattr(hooks, "recorder", None)
             if recorder is not None:
-                store = RuntimeCheckpointStore(recorder.trajectory_dir)
-                self.checkpoint_store = store
+                checkpoint_store = RuntimeCheckpointStore(recorder.trajectory_dir)
+                self.checkpoint_store = checkpoint_store
+                store = RuntimeSupervisor(checkpoint_store)
+                self.supervisor = store
         if store is None:
             raise ValueError("resume requires a checkpoint store")
         self._run_lease_handle = store.try_acquire_run_lease(run_id)
@@ -2761,7 +2767,7 @@ class AgentRuntimeController:
         self._checkpoint_status = CheckpointStatus.DURABLE
         self._checkpoint_run_id = checkpoint.run_id
         self._checkpoint_context = context
-        self._resume_attempt_id = uuid.uuid4().hex
+        self._resume_attempt_id = store.new_resume_attempt_id()
         self._resume_source_checkpoint_id = checkpoint.checkpoint_id
         self._active_session_cursor = (
             checkpoint.session_cursor.model_copy(deep=True)
@@ -2961,7 +2967,7 @@ class AgentRuntimeController:
                 phase=AgentPhase.RECOVER,
                 project_improvement_policy=_project_improvement_policy(self.runtime),
             )
-        self._resume_attempt_id = uuid.uuid4().hex
+        self._resume_attempt_id = store.new_resume_attempt_id()
         self._checkpoint_status = CheckpointStatus.PENDING
         decision = RuntimeResumeDecisionMetadata(
             checkpoint_id=checkpoint_id,
@@ -2999,11 +3005,9 @@ class AgentRuntimeController:
         return self._resume_terminal_result(decision, success=False, status="waiting_retry")
 
     def _release_run_lease(self) -> None:
-        store = self.checkpoint_store
+        store = self.supervisor
         if store is not None and self._run_lease_handle is not None:
-            release_lease = getattr(store, "release_run_lease", None)
-            if callable(release_lease):
-                release_lease(self._run_lease_handle)
+            store.release_run_lease(self._run_lease_handle)
         self._run_lease_handle = None
 
     def _resume_unavailable_checkpoint(
@@ -3014,7 +3018,7 @@ class AgentRuntimeController:
         context: dict[str, Any],
     ) -> dict[str, Any]:
         """Return a typed assessment when the requested checkpoint cannot be loaded."""
-        self._resume_attempt_id = uuid.uuid4().hex
+        self._resume_attempt_id = store.new_resume_attempt_id()
         fallback_checkpoint = store.load_latest(run_id)
         hooks = getattr(self.runtime, "runtime_diagnostics_hooks", None)
         recorder = getattr(hooks, "recorder", None)
@@ -3148,7 +3152,7 @@ class AgentRuntimeController:
                 binding.artifact
                 for binding in checkpoint.prompt_context_snapshot.compaction_bindings
             )
-        artifact_loader = getattr(self.checkpoint_store, "load_recovery_artifact", None)
+        artifact_loader = getattr(self.supervisor, "load_recovery_artifact", None)
         replay_artifacts_valid = not replay_references or (
             callable(artifact_loader)
             and all(
@@ -3879,6 +3883,22 @@ class AgentRuntimeController:
 
     def _emit_resume_decision(self, decision: RuntimeResumeDecisionMetadata) -> None:
         hooks = getattr(self.runtime, "runtime_diagnostics_hooks", None)
+        recorder = getattr(hooks, "recorder", None)
+        if (
+            recorder is not None
+            and decision.reason_code != RecoveryReasonCode.RUN_LEASE_ACTIVE
+        ):
+            try:
+                run = recorder.load_run(decision.session_id or decision.run_id)
+                if run is not None:
+                    recorder.attach_existing_run(
+                        run.run_id,
+                        expected_task_id=run.task_id,
+                        expected_session_id=run.session_id,
+                        resume_attempt_id=decision.resume_attempt_id,
+                    )
+            except (OSError, ValueError):
+                pass
         if hooks and hasattr(hooks, "on_resume_preflight_completed"):
             hooks.on_resume_preflight_completed(decision)
 
@@ -3926,10 +3946,10 @@ class AgentRuntimeController:
     ) -> DurableArtifactReference | None:
         if not self._checkpointing_enabled:
             return None
-        if self.state is None or self.checkpoint_store is None or not self._checkpoint_run_id:
+        if self.state is None or self.supervisor is None or not self._checkpoint_run_id:
             return None
         record = ContextCompactionRecord.model_validate(payload)
-        return self.checkpoint_store.save_recovery_artifact(
+        return self.supervisor.save_recovery_artifact(
             self._checkpoint_run_id,
             kind="context_compaction",
             payload=record.model_dump(mode="json"),
@@ -3946,7 +3966,7 @@ class AgentRuntimeController:
     ) -> bool:
         if not self._checkpointing_enabled:
             return True
-        if self.state is None or self.checkpoint_store is None or not self._checkpoint_run_id:
+        if self.state is None or self.supervisor is None or not self._checkpoint_run_id:
             self._record_checkpoint_failure(
                 CheckpointBoundary.CONTEXT_ASSEMBLED,
                 "context snapshot store or runtime state unavailable",
@@ -3962,13 +3982,13 @@ class AgentRuntimeController:
                 for item in payload.get("context_compactions") or []
             ]
             for binding in compaction_bindings:
-                compacted_payload = self.checkpoint_store.load_recovery_artifact(
+                compacted_payload = self.supervisor.load_recovery_artifact(
                     self._checkpoint_run_id,
                     binding.artifact,
                 )
                 if compacted_payload != binding.record.model_dump(mode="json"):
                     raise ValueError("context compaction artifact does not match its record")
-            reference = self.checkpoint_store.save_recovery_artifact(
+            reference = self.supervisor.save_recovery_artifact(
                 self._checkpoint_run_id,
                 kind="prompt_context",
                 payload=payload,
@@ -4000,7 +4020,7 @@ class AgentRuntimeController:
         if (
             not self._prompt_context_replay_enabled
             or snapshot is None
-            or self.checkpoint_store is None
+            or self.supervisor is None
             or not self._checkpoint_run_id
         ):
             return None
@@ -4008,7 +4028,7 @@ class AgentRuntimeController:
             raise RuntimeError(
                 "checkpointed prompt context request does not match the resumed request"
             )
-        payload = self.checkpoint_store.load_recovery_artifact(
+        payload = self.supervisor.load_recovery_artifact(
             self._checkpoint_run_id,
             snapshot.context_artifact,
         )
@@ -4031,7 +4051,7 @@ class AgentRuntimeController:
         ):
             raise RuntimeError("checkpointed prompt context evidence does not match its snapshot")
         for binding in compaction_bindings:
-            compacted_payload = self.checkpoint_store.load_recovery_artifact(
+            compacted_payload = self.supervisor.load_recovery_artifact(
                 self._checkpoint_run_id,
                 binding.artifact,
             )
@@ -4065,8 +4085,9 @@ class AgentRuntimeController:
                     break
         if run is not None:
             self._checkpoint_run_id = str(run.run_id)
-        if self.checkpoint_store is None and recorder is not None:
+        if self.supervisor is None and recorder is not None:
             self.checkpoint_store = RuntimeCheckpointStore(recorder.trajectory_dir)
+            self.supervisor = RuntimeSupervisor(self.checkpoint_store)
 
     def _persist_checkpoint(
         self,
@@ -4097,7 +4118,7 @@ class AgentRuntimeController:
     ) -> bool:
         if not self._checkpointing_enabled:
             return True
-        if self.checkpoint_store is None or not self._checkpoint_run_id:
+        if self.supervisor is None or not self._checkpoint_run_id:
             self._record_checkpoint_failure(safe_boundary, "checkpoint store or run identity unavailable")
             return False
         generation = self._checkpoint_generation + 1
@@ -4207,7 +4228,10 @@ class AgentRuntimeController:
                 checkpoint,
             )
         try:
-            saved = self.checkpoint_store.save(checkpoint, expected_generation=self._checkpoint_generation)
+            saved = self.supervisor.save(
+                checkpoint,
+                expected_generation=self._checkpoint_generation,
+            )
         except Exception as exc:
             self._record_checkpoint_failure(safe_boundary, str(exc))
             return False
@@ -4486,9 +4510,9 @@ class AgentRuntimeController:
             self._active_session_cursor is None and self._active_session_bootstrap is None
         ):
             return True
-        if self.checkpoint_store is None or not self._checkpoint_run_id:
+        if self.supervisor is None or not self._checkpoint_run_id:
             return False
-        reference = self.checkpoint_store.save_recovery_artifact(
+        reference = self.supervisor.save_recovery_artifact(
             self._checkpoint_run_id,
             kind="llm_response",
             payload=response.model_dump(mode="json"),
@@ -4524,7 +4548,7 @@ class AgentRuntimeController:
         request_hash: str,
     ) -> LLMResponse | None:
         """Return one checksum-verified observed response for the identical call position."""
-        if self.checkpoint_store is None or not self._checkpoint_run_id:
+        if self.supervisor is None or not self._checkpoint_run_id:
             return None
         entry = next(
             (
@@ -4539,7 +4563,7 @@ class AgentRuntimeController:
         )
         if entry is None:
             return None
-        payload = self.checkpoint_store.load_recovery_artifact(
+        payload = self.supervisor.load_recovery_artifact(
             self._checkpoint_run_id,
             entry.response_artifact,
         )
@@ -4682,7 +4706,7 @@ class AgentRuntimeController:
         )
         action["observed_failure"] = failure
         if mutation_class == "read_only":
-            if self.checkpoint_store is None or not self._checkpoint_run_id:
+            if self.supervisor is None or not self._checkpoint_run_id:
                 return False
             output = getattr(execution_result, "output_metadata", None)
             result_value = getattr(output, "result", None)
@@ -4692,7 +4716,7 @@ class AgentRuntimeController:
                 "result": result_value.to_json_dict() if isinstance(result_value, FileArtifactMetadata) else None,
                 "failure": failure.to_json_dict() if isinstance(failure, FailureMetadata) else None,
             }
-            reference = self.checkpoint_store.save_recovery_artifact(
+            reference = self.supervisor.save_recovery_artifact(
                 self._checkpoint_run_id,
                 kind="read_tool_result",
                 payload=payload,
@@ -4729,7 +4753,7 @@ class AgentRuntimeController:
 
     def replay_tool_result(self, tool_call: Any, selection: ToolSelection) -> Any | None:
         """Load one checksum-verified read result for an identical deterministic call."""
-        if selection.tool_name not in READ_TOOLS or self.checkpoint_store is None or not self._checkpoint_run_id:
+        if selection.tool_name not in READ_TOOLS or self.supervisor is None or not self._checkpoint_run_id:
             return None
         call_id = str(getattr(tool_call, "call_id", "") or "")
         input_hash = str(self._tool_input_hash(selection.input_metadata) or "")
@@ -4745,7 +4769,7 @@ class AgentRuntimeController:
         )
         if entry is None:
             return None
-        payload = self.checkpoint_store.load_recovery_artifact(
+        payload = self.supervisor.load_recovery_artifact(
             self._checkpoint_run_id,
             entry.result_artifact,
         )
@@ -4870,7 +4894,7 @@ class AgentRuntimeController:
         report = self.reporter.report(state).model_copy(
             update={"state_hash": cursor.report_source_hash}
         )
-        save_artifact = getattr(self.checkpoint_store, "save_recovery_artifact", None)
+        save_artifact = getattr(self.supervisor, "save_recovery_artifact", None)
         if not callable(save_artifact):
             raise RuntimeError("finalization requires a durable report artifact store")
         reference = save_artifact(
@@ -4891,9 +4915,9 @@ class AgentRuntimeController:
         self,
         cursor: RuntimeFinalizationCursor | None,
     ) -> RuntimeReportMetadata | None:
-        if cursor is None or cursor.report_artifact is None or self.checkpoint_store is None:
+        if cursor is None or cursor.report_artifact is None or self.supervisor is None:
             return None
-        load_artifact = getattr(self.checkpoint_store, "load_recovery_artifact", None)
+        load_artifact = getattr(self.supervisor, "load_recovery_artifact", None)
         if not callable(load_artifact):
             return None
         payload = load_artifact(self._checkpoint_run_id, cursor.report_artifact)

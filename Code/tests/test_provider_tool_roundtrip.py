@@ -42,6 +42,7 @@ from metadata import (
     FileArtifactMetadata,
     FileReadWindowSpec,
     FileReadWindow,
+    ReasoningDecisionComplexity,
     ReasoningMode,
     ReasoningPolicy,
     ResultStatus,
@@ -58,6 +59,12 @@ from tools.tool_registry import ToolRegistry
 from tools.tool_selection import SelectionReason, ToolSelection
 from tools.command_tool import COMMAND_EXECUTOR_DEFINITION
 from tools.file_patch_writer import FILE_PATCH_WRITER_DEFINITION
+from tools.file_delete_tool import FILE_DELETE_TOOL_DEFINITION
+from tools.file_writer import FILE_WRITER_DEFINITION
+from tools.mutation_descriptor import (
+    FILE_MUTATION_TOOLS,
+    PROVIDER_NATIVE_MUTATION_TOOLS,
+)
 from tools.code_unit_generator import (
     CODE_UNIT_GENERATOR_DEFINITION,
     _validate_grounded_python_unit,
@@ -237,7 +244,13 @@ def _registry(tool_name: str = "file_reader") -> ToolRegistry:
                 input_metadata_type="ToolInputMetadata",
                 output_metadata_type="ToolResultMetadata",
                 required_input_fields=["file_path"],
-                input_defaults={"read_mode": "full", "encoding": "utf-8"},
+                input_defaults={
+                    "read_mode": "full",
+                    "encoding": "utf-8",
+                    "max_size_mb": 10,
+                    "max_lines": None,
+                    "offset": 0,
+                },
             ),
         ),
         lambda _input: None,
@@ -270,6 +283,17 @@ def _tool_response(*, call_id: str = "ds-read-1") -> LLMResponse:
                 ),
             )
         ],
+        model="deepseek-v4-flash",
+        provider="deepseek",
+        finish_reason="tool_calls",
+    )
+
+
+def _provider_calls_response(*calls: LLMToolCall) -> LLMResponse:
+    return LLMResponse(
+        content="",
+        reasoning_content="Use the selected tools.",
+        tool_calls=list(calls),
         model="deepseek-v4-flash",
         provider="deepseek",
         finish_reason="tool_calls",
@@ -371,6 +395,225 @@ def test_roundtrip_requires_tool_choice_for_tool_phase_requests(monkeypatch) -> 
     assert result.request_diagnostics[1]["tool_choice"] == "required"
 
 
+def test_mutation_route_fails_closed_when_provider_returns_no_tool_call(monkeypatch, tmp_path) -> None:
+    """A tool-choice hint cannot substitute for mutation and validation evidence."""
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    llm = _LLM(
+        [
+            LLMResponse(
+                content="I completed the requested change.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="stop",
+            )
+        ]
+    )
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    runtime = _runtime(llm, registry, _Executor())
+    validation_command = "python -m pytest -q"
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(
+            id="task-mutation-no-tool",
+            description="Modify README.md",
+            kind="implement",
+            read_files=["README.md"],
+            write_files=["README.md"],
+            validation_command=validation_command,
+        ),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_reader", "file_patch_writer", "command_executor"],
+        ),
+        max_rounds=2,
+        allow_mutations=True,
+        user_confirmed=True,
+        read_scope=[str(tmp_path / "README.md")],
+        write_scope=[str(tmp_path / "README.md")],
+        project_path=str(tmp_path),
+        validation_command=validation_command,
+        validation_cwd=str(tmp_path),
+    ).run([LLMMessage(role="user", content="Modify README.md")])
+
+    assert result.success is False
+    assert result.error_message == "ProviderToolMutationCompletionEvidenceRequired"
+    assert result.mutation_route is True
+    assert result.mutation_receipt_observed is False
+    assert result.exact_validation_observed is False
+
+
+def test_mutation_and_exact_validation_in_same_round_preserve_completion_evidence(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    validation_command = "python -m pytest -q"
+    target = tmp_path / "README.md"
+    same_round = LLMResponse(
+        content="",
+        reasoning_content="Apply the scoped patch and run the exact validation.",
+        tool_calls=[
+            LLMToolCall(
+                id="same-round-write",
+                function=LLMToolFunctionCall(
+                    name="file_patch_writer",
+                    arguments=json.dumps(
+                        {
+                            "file_path": str(target),
+                            "operation_kind": "modify_symbol",
+                            "symbol_name": "README",
+                            "replacement_text": "after",
+                        }
+                    ),
+                ),
+            ),
+            LLMToolCall(
+                id="same-round-validation",
+                function=LLMToolFunctionCall(
+                    name="command_executor",
+                    arguments=json.dumps(
+                        {"command": validation_command, "mode": "automatic"}
+                    ),
+                ),
+            ),
+        ],
+        model="deepseek-v4-flash",
+        provider="deepseek",
+        finish_reason="tool_calls",
+    )
+    llm = _LLM(
+        [
+            same_round,
+            LLMResponse(
+                content="Mutation and validation completed.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="stop",
+            ),
+        ]
+    )
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    runtime = _runtime(llm, registry, _Executor())
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(
+            id="task-same-round-mutation-validation",
+            description="Modify README.md and validate it.",
+            kind="implement",
+            write_files=[str(target)],
+            validation_command=validation_command,
+        ),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_patch_writer", "command_executor"],
+        ),
+        max_rounds=2,
+        user_confirmed=True,
+        allow_mutations=True,
+        write_scope=[str(target)],
+        project_path=str(tmp_path),
+        validation_command=validation_command,
+        validation_cwd=str(tmp_path),
+    ).run([LLMMessage(role="user", content="Modify README.md and validate it.")])
+
+    assert result.success is True, result.error_message
+    assert result.mutation_receipt_observed is True
+    assert result.exact_validation_observed is True
+
+
+def test_mutation_route_cannot_skip_declared_reads_before_write_and_validation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    target = tmp_path / "calculator.py"
+    validation_command = "python -m pytest -q tests/test_calculator.py"
+    llm = _LLM(
+        [
+            LLMResponse(
+                content="",
+                reasoning_content="Skip inspection and change the file immediately.",
+                tool_calls=[
+                    LLMToolCall(
+                        id="skip-read-write",
+                        function=LLMToolFunctionCall(
+                            name="file_patch_writer",
+                            arguments=json.dumps(
+                                {
+                                    "file_path": str(target),
+                                    "operation_kind": "modify_symbol",
+                                    "symbol_name": "divide",
+                                    "replacement_text": "def divide(a, b):\n    return a / b",
+                                }
+                            ),
+                        ),
+                    ),
+                    LLMToolCall(
+                        id="skip-read-validation",
+                        function=LLMToolFunctionCall(
+                            name="command_executor",
+                            arguments=json.dumps(
+                                {"command": validation_command, "mode": "automatic"}
+                            ),
+                        ),
+                    ),
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            )
+        ]
+    )
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    executor = _Executor()
+    runtime = _runtime(llm, registry, executor)
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(
+            id="task-declared-read-required",
+            description="Read, modify, and validate calculator.py.",
+            kind="implement",
+            read_files=[str(target)],
+            write_files=[str(target)],
+            validation_command=validation_command,
+        ),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_reader", "file_patch_writer", "command_executor"],
+        ),
+        max_rounds=1,
+        user_confirmed=True,
+        allow_mutations=True,
+        read_scope=[str(target)],
+        write_scope=[str(target)],
+        project_path=str(tmp_path),
+        validation_command=validation_command,
+        validation_cwd=str(tmp_path),
+    ).run([LLMMessage(role="user", content="Read, modify, and validate calculator.py.")])
+
+    assert result.success is False
+    assert result.error_message == (
+        "Tool file_patch_writer was not exposed in this provider request."
+    )
+    assert [tool.function.name for tool in llm.requests[0].tools] == ["file_reader"]
+    assert executor.calls == []
+    assert result.evidence_coverage.completed_read_paths == ()
+
+
 def test_roundtrip_allows_explicitly_disabled_deepseek_continuation(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
@@ -406,7 +649,7 @@ def test_roundtrip_allows_explicitly_disabled_deepseek_continuation(monkeypatch,
         read_scope=[str(target)],
     ).run([LLMMessage(role="user", content="Read README")])
 
-    assert result.success is True
+    assert result.success is True, result.error_message
     assert llm.requests[0].reasoning_policy.mode == ReasoningMode.DISABLED
     assert result.messages[-2].reasoning_content is None
 
@@ -615,6 +858,24 @@ def test_roundtrip_guides_mutation_after_duplicate_complete_reads(monkeypatch, t
             _tool_response(call_id="ds-mutation-read-2"),
             writer_response,
             LLMResponse(
+                content="",
+                reasoning_content="Run the exact validation command now.",
+                tool_calls=[
+                    LLMToolCall(
+                        id="ds-mutation-validation",
+                        function=LLMToolFunctionCall(
+                            name="command_executor",
+                            arguments=json.dumps(
+                                {"command": "python -m pytest -q", "mode": "automatic"}
+                            ),
+                        ),
+                    )
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
                 content="Mutation completed.",
                 model="deepseek-v4-flash",
                 provider="deepseek",
@@ -633,6 +894,7 @@ def test_roundtrip_guides_mutation_after_duplicate_complete_reads(monkeypatch, t
 
     executor = _RecordingCompleteFileExecutor()
     runtime = _runtime(llm, _mutation_registry(), executor)
+    runtime.tool_registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
     result = ProviderToolRoundTripRunner(
         _Owner(runtime),
         Task(
@@ -641,22 +903,24 @@ def test_roundtrip_guides_mutation_after_duplicate_complete_reads(monkeypatch, t
             kind="implement",
             read_files=[str(target)],
             write_files=[str(target)],
+            validation_command="python -m pytest -q",
         ),
         tools=build_provider_tool_definitions(
             runtime.tool_registry,
-            ["file_reader", "file_patch_writer"],
+            ["file_reader", "file_patch_writer", "command_executor"],
         ),
-        max_rounds=4,
+        max_rounds=5,
         user_confirmed=True,
         allow_mutations=True,
         read_scope=[str(target)],
         write_scope=[str(target)],
         project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
     ).run([LLMMessage(role="user", content="Read README, then apply the bounded mutation")])
 
-    assert result.success is True
-    assert len(executor.calls) == 2
-    assert executor.calls[-1].tool_name == "file_patch_writer"
+    assert result.success is True, result.error_message
+    assert len(executor.calls) == 3
+    assert executor.calls[-2].tool_name == "file_patch_writer"
     assert any(
         message.role == "user"
         and "READ_EVIDENCE_READY" in message.content
@@ -698,6 +962,8 @@ def test_mutation_route_hides_command_executor_until_writer_succeeds(monkeypatch
         project_path=str(tmp_path),
         read_scope=[str(target)],
         write_scope=[str(target)],
+        validation_command="python -m pytest -q",
+        validation_cwd=str(tmp_path),
         allow_mutations=True,
         user_confirmed=True,
     )
@@ -705,13 +971,246 @@ def test_mutation_route_hides_command_executor_until_writer_succeeds(monkeypatch
     runner._completed_read_sources[str(target.resolve())] = SimpleNamespace()
 
     pre_writer_tools = [tool.function.name for tool in runner._tools_for_request()]
-    assert "file_reader" not in pre_writer_tools
-    assert "code_unit_generator" in pre_writer_tools
-    assert "file_patch_writer" in pre_writer_tools
-    assert "command_executor" not in pre_writer_tools
+    assert pre_writer_tools == ["file_patch_writer"]
 
     runner._post_mutation_active = True
     assert [tool.function.name for tool in runner._tools_for_request()] == ["command_executor"]
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        ("file_patch_writer", "{}"),
+        ("command_executor", '{"command":"python -m pytest -q","mode":"automatic"}'),
+    ],
+)
+def test_read_only_round_blocks_registered_tools_not_advertised_in_request(
+    monkeypatch,
+    tmp_path,
+    tool_name,
+    arguments,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    response = _provider_calls_response(
+        LLMToolCall(
+            id=f"read-only-hallucinated-{tool_name}",
+            function=LLMToolFunctionCall(name=tool_name, arguments=arguments),
+        )
+    )
+    executor = _Executor()
+    llm = _LLM([response])
+    runtime = _runtime(llm, registry, executor)
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-read-only-surface", description="Read README", kind="inspect"),
+        tools=build_provider_tool_definitions(registry, ["file_reader"]),
+        max_rounds=1,
+        read_scope=[str(tmp_path / "README.md")],
+        project_path=str(tmp_path),
+    ).run([LLMMessage(role="user", content="Read README")])
+
+    assert [tool.function.name for tool in llm.requests[0].tools] == ["file_reader"]
+    assert executor.calls == []
+    assert result.tool_loop_results[0].loop_metadata.recoverable_errors[0].error_type == (
+        "ProviderToolNotAdvertised"
+    )
+
+
+@pytest.mark.parametrize("tool_name", ["file_patch_writer", "command_executor"])
+def test_mutation_read_phase_blocks_tools_not_advertised_in_request(
+    monkeypatch,
+    tmp_path,
+    tool_name,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    target = str(tmp_path / "target.py")
+    response = _provider_calls_response(
+        LLMToolCall(
+            id=f"read-phase-hallucinated-{tool_name}",
+            function=LLMToolFunctionCall(name=tool_name, arguments="{}"),
+        )
+    )
+    executor = _Executor()
+    llm = _LLM([response])
+    runtime = _runtime(llm, registry, executor)
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-mutation-read-surface", description="Read then patch", kind="implement"),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_reader", "file_patch_writer", "command_executor"],
+        ),
+        max_rounds=1,
+        allow_mutations=True,
+        user_confirmed=True,
+        read_scope=[target],
+        write_scope=[target],
+        project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
+    ).run([LLMMessage(role="user", content="Read then patch target.py")])
+
+    assert [tool.function.name for tool in llm.requests[0].tools] == ["file_reader"]
+    assert executor.calls == []
+    assert result.tool_loop_results[0].loop_metadata.recoverable_errors[0].error_type == (
+        "ProviderToolNotAdvertised"
+    )
+
+
+def test_mutation_write_phase_blocks_early_validation_command(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    target = str(tmp_path / "target.py")
+    response = _provider_calls_response(
+        LLMToolCall(
+            id="write-phase-early-command",
+            function=LLMToolFunctionCall(
+                name="command_executor",
+                arguments='{"command":"python -m pytest -q","mode":"automatic"}',
+            ),
+        )
+    )
+    executor = _Executor()
+    llm = _LLM([response])
+    runtime = _runtime(llm, registry, executor)
+
+    runner = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-mutation-write-surface", description="Patch target", kind="implement"),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_reader", "file_patch_writer", "command_executor"],
+        ),
+        max_rounds=1,
+        allow_mutations=True,
+        user_confirmed=True,
+        read_scope=[target],
+        write_scope=[target],
+        project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
+    )
+    runner._completed_read_sources[str((tmp_path / "target.py").resolve())] = SimpleNamespace()
+
+    result = runner.run([LLMMessage(role="user", content="Patch target.py")])
+
+    assert [tool.function.name for tool in llm.requests[0].tools] == ["file_patch_writer"]
+    assert executor.calls == []
+    assert result.tool_loop_results[0].loop_metadata.recoverable_errors[0].error_type == (
+        "ProviderToolNotAdvertised"
+    )
+
+
+def test_post_write_round_blocks_repeat_patch(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    target = str(tmp_path / "target.py")
+    response = _provider_calls_response(
+        LLMToolCall(
+            id="post-write-repeat-patch",
+            function=LLMToolFunctionCall(name="file_patch_writer", arguments="{}"),
+        )
+    )
+    executor = _Executor()
+    llm = _LLM([response])
+    runtime = _runtime(llm, registry, executor)
+    runner = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-post-write-surface", description="Validate patch", kind="implement"),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_patch_writer", "command_executor"],
+        ),
+        max_rounds=1,
+        allow_mutations=True,
+        user_confirmed=True,
+        write_scope=[target],
+        project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
+    )
+    runner._post_mutation_active = True
+    runner._post_mutation_receipt = {"tool": "file_patch_writer", "success": True}
+
+    result = runner.run([LLMMessage(role="user", content="Validate the patch")])
+
+    assert [tool.function.name for tool in llm.requests[0].tools] == ["command_executor"]
+    assert executor.calls == []
+    assert result.tool_loop_results[0].loop_metadata.recoverable_errors[0].error_type == (
+        "ProviderToolNotAdvertised"
+    )
+
+
+def test_invalid_unadvertised_writer_does_not_block_valid_reader_sibling(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    target = str(tmp_path / "README.md")
+    response = _provider_calls_response(
+        LLMToolCall(
+            id="mixed-unadvertised-writer",
+            function=LLMToolFunctionCall(name="file_patch_writer", arguments="{}"),
+        ),
+        LLMToolCall(
+            id="mixed-valid-reader",
+            function=LLMToolFunctionCall(
+                name="file_reader",
+                arguments='{"file_path":"README.md"}',
+            ),
+        ),
+    )
+    executor = _Executor()
+    llm = _LLM([response])
+    runtime = _runtime(llm, registry, executor)
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-mixed-surface", description="Read then patch", kind="implement"),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_reader", "file_patch_writer", "command_executor"],
+        ),
+        max_rounds=1,
+        allow_mutations=True,
+        user_confirmed=True,
+        read_scope=[target],
+        write_scope=[target],
+        project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
+    ).run([LLMMessage(role="user", content="Read then patch README")])
+
+    assert len(executor.calls) == 1
+    assert executor.calls[0].tool_name == "file_reader"
+    assert runtime.runtime_controller.state.budget.tool_calls_used == 1
+    assert runtime.runtime_controller.state.budget.file_edits_used == 0
+    error_types = {
+        error.error_type
+        for error in result.tool_loop_results[0].loop_metadata.recoverable_errors
+    }
+    assert "ProviderToolNotAdvertised" in error_types
 
 
 def test_read_only_command_route_keeps_command_executor(monkeypatch, tmp_path) -> None:
@@ -789,7 +1288,7 @@ def test_patch_writer_schema_accepts_typed_code_artifact_reference() -> None:
     )
 
 
-def test_command_executor_schema_restricts_mode_enum_and_forbids_standard() -> None:
+def test_command_executor_schema_matches_runtime_execution_modes() -> None:
     registry = _registry()
     registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
 
@@ -797,8 +1296,7 @@ def test_command_executor_schema_restricts_mode_enum_and_forbids_standard() -> N
     mode_schema = definition.function.parameters["properties"]["mode"]
 
     assert mode_schema["type"] == "string"
-    assert mode_schema["enum"]
-    assert "automatic" in mode_schema["enum"]
+    assert mode_schema["enum"] == ["dry_run", "interactive", "automatic"]
     assert "standard" not in mode_schema["enum"]
 
 
@@ -940,6 +1438,24 @@ def test_roundtrip_injects_verified_code_artifact_into_patch_writer(monkeypatch,
         [
             writer_response,
             LLMResponse(
+                content="",
+                reasoning_content="Run the exact validation command now.",
+                tool_calls=[
+                    LLMToolCall(
+                        id="ds-artifact-validation",
+                        function=LLMToolFunctionCall(
+                            name="command_executor",
+                            arguments=json.dumps(
+                                {"command": "python -m pytest -q", "mode": "automatic"}
+                            ),
+                        ),
+                    )
+                ],
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="tool_calls",
+            ),
+            LLMResponse(
                 content="Mutation completed.",
                 model="deepseek-v4-flash",
                 provider="deepseek",
@@ -949,6 +1465,7 @@ def test_roundtrip_injects_verified_code_artifact_into_patch_writer(monkeypatch,
     )
     executor = _Executor()
     runtime = _runtime(llm, _mutation_registry(), executor)
+    runtime.tool_registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
     owner = _Owner(runtime)
     runner = ProviderToolRoundTripRunner(
         owner,
@@ -957,16 +1474,18 @@ def test_roundtrip_injects_verified_code_artifact_into_patch_writer(monkeypatch,
             description="Apply generated test",
             kind="implement",
             write_files=[str(tmp_path / "README.md")],
+            validation_command="python -m pytest -q",
         ),
         tools=build_provider_tool_definitions(
             runtime.tool_registry,
-            ["file_patch_writer"],
+            ["file_patch_writer", "command_executor"],
         ),
-        max_rounds=2,
+        max_rounds=3,
         user_confirmed=True,
         allow_mutations=True,
         write_scope=[str(tmp_path / "README.md")],
         project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
     )
     reference = runner._register_code_artifact(
         CodeArtifactMetadata(code=code, language="python"),
@@ -976,7 +1495,7 @@ def test_roundtrip_injects_verified_code_artifact_into_patch_writer(monkeypatch,
     assert reference["sha256"] in runner._code_artifact_ledger
     result = runner.run([LLMMessage(role="user", content="Apply the generated test")])
     assert result.success is True, result.error_message
-    assert executor.calls[-1].input_metadata.generated_unit == code
+    assert executor.calls[-2].input_metadata.generated_unit == code
 
 
 def test_post_mutation_context_is_bounded_and_excludes_generated_unit(monkeypatch, tmp_path) -> None:
@@ -1087,7 +1606,9 @@ def test_post_mutation_context_budget_failure_is_typed(monkeypatch, tmp_path) ->
         finish_reason="tool_calls",
     )
     llm = _LLM([writer_response])
-    runtime = _runtime(llm, _mutation_registry(), _Executor())
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    runtime = _runtime(llm, registry, _Executor())
     runner = ProviderToolRoundTripRunner(
         _Owner(runtime),
         Task(
@@ -1098,8 +1619,8 @@ def test_post_mutation_context_budget_failure_is_typed(monkeypatch, tmp_path) ->
             validation_command="python -m pytest -q",
         ),
         tools=build_provider_tool_definitions(
-            runtime.tool_registry,
-            ["file_patch_writer"],
+            registry,
+            ["file_patch_writer", "command_executor"],
         ),
         max_rounds=2,
         user_confirmed=True,
@@ -1493,7 +2014,7 @@ def test_roundtrip_uses_owner_projected_initial_context_once(monkeypatch) -> Non
         initial_context_candidates=candidates,
     ).run([LLMMessage(role="user", content="This fallback message must not replace the projection.")])
 
-    assert result.success is True
+    assert result.success is True, result.error_message
     assert len(llm.requests) == 2
     first_request = llm.requests[0]
     assert first_request.trace_info["context_purpose"] == ContextRequestPurpose.TOOL_EVENT_DECISION.value
@@ -1847,14 +2368,11 @@ def test_roundtrip_rejects_mutation_tools_without_code_level_opt_in(monkeypatch)
         lambda _settings: _TokenCounter(),
     )
     llm = _LLM([])
-    runtime = _runtime(llm, _registry(), _Executor())
-    mutation_tool = LLMToolDefinition(
-        function=LLMToolFunction(
-            name="file_writer",
-            description="write a file",
-            parameters={"type": "object"},
-        )
-    )
+    runtime = _runtime(llm, _mutation_registry(), _Executor())
+    mutation_tool = build_provider_tool_definitions(
+        runtime.tool_registry,
+        ["file_patch_writer"],
+    )[0]
     result = ProviderToolRoundTripRunner(
         _Owner(runtime),
         Task(id="task-direct-mutation-boundary", description="Write README"),
@@ -1874,14 +2392,11 @@ def test_roundtrip_rejects_mutation_tools_without_user_confirmation(monkeypatch)
         lambda _settings: _TokenCounter(),
     )
     llm = _LLM([])
-    runtime = _runtime(llm, _registry(), _Executor())
-    mutation_tool = LLMToolDefinition(
-        function=LLMToolFunction(
-            name="file_writer",
-            description="write a file",
-            parameters={"type": "object"},
-        )
-    )
+    runtime = _runtime(llm, _mutation_registry(), _Executor())
+    mutation_tool = build_provider_tool_definitions(
+        runtime.tool_registry,
+        ["file_patch_writer"],
+    )[0]
     result = ProviderToolRoundTripRunner(
         _Owner(runtime),
         Task(id="task-direct-confirmation-boundary", description="Write README"),
@@ -2045,9 +2560,10 @@ def test_roundtrip_binds_validation_cwd_to_disposable_project_root(tmp_path) -> 
             contract_metadata=ToolContractMetadata(
                 tool_name="command_executor",
                 input_metadata_type="ToolInputMetadata",
-                output_metadata_type="ToolResultMetadata",
-                required_input_fields=["command"],
-            ),
+                    output_metadata_type="ToolResultMetadata",
+                    required_input_fields=["command"],
+                    input_defaults={"mode": None, "timeout": 30},
+                ),
         ),
         lambda _input: None,
     )
@@ -2075,6 +2591,7 @@ def test_roundtrip_binds_validation_cwd_to_disposable_project_root(tmp_path) -> 
         round_index=1,
         registry=registry,
         budget=RuntimeBudgetMetadata(),
+        advertised_tool_names=["command_executor"],
         user_confirmed=True,
         project_path=str(tmp_path),
         validation_command=command,
@@ -2198,19 +2715,17 @@ def test_roundtrip_binds_generator_to_declared_evidence_and_write_target(tmp_pat
             "read_mode": "adaptive",
         }
     ]
-    provider_call = runner._prepare_provider_tool_call(
-        LLMToolCall(
-            id="generator-grounding-call",
-            function=LLMToolFunctionCall(
-                name="code_unit_generator",
-                arguments=json.dumps(
-                    {
-                        "task_description": "Add one regression test",
-                        "language": "python",
-                    }
-                ),
+    provider_call = LLMToolCall(
+        id="generator-grounding-call",
+        function=LLMToolFunctionCall(
+            name="code_unit_generator",
+            arguments=json.dumps(
+                {
+                    "task_description": "Add one regression test",
+                    "language": "python",
+                }
             ),
-        )
+        ),
     )
     admission = admit_provider_tool_calls(
         [provider_call],
@@ -2219,6 +2734,7 @@ def test_roundtrip_binds_generator_to_declared_evidence_and_write_target(tmp_pat
         round_index=1,
         registry=registry,
         budget=RuntimeBudgetMetadata(),
+        advertised_tool_names=["code_unit_generator"],
         user_confirmed=True,
         project_path=str(tmp_path),
         read_scope=[str(source)],
@@ -2255,21 +2771,18 @@ def test_roundtrip_preserves_explicit_generator_context_and_target(tmp_path) -> 
         read_scope=[str(source)],
         write_scope=[str(target)],
     )
-    provider_call = runner._prepare_provider_tool_call(
-        LLMToolCall(
-            id="generator-explicit-call",
-            function=LLMToolFunctionCall(
-                name="code_unit_generator",
-                arguments=json.dumps(
-                    {
-                        "task_description": "Add one regression test",
-                        "language": "python",
-                        "file_path": str(target),
-                        "context": "explicit provider context",
-                    }
-                ),
+    provider_call = LLMToolCall(
+        id="generator-explicit-call",
+        function=LLMToolFunctionCall(
+            name="code_unit_generator",
+            arguments=json.dumps(
+                {
+                    "task_description": "Add one regression test",
+                    "language": "python",
+                    "context": "explicit provider context",
+                }
             ),
-        )
+        ),
     )
     admission = admit_provider_tool_calls(
         [provider_call],
@@ -2278,6 +2791,7 @@ def test_roundtrip_preserves_explicit_generator_context_and_target(tmp_path) -> 
         round_index=1,
         registry=registry,
         budget=RuntimeBudgetMetadata(),
+        advertised_tool_names=["code_unit_generator"],
         user_confirmed=True,
         project_path=str(tmp_path),
         read_scope=[str(source)],
@@ -2570,6 +3084,7 @@ def test_mutation_route_emits_read_evidence_ready_before_next_provider_decision(
     registry = _registry()
     registry.register(CODE_UNIT_GENERATOR_DEFINITION, lambda _input: None)
     registry.register(FILE_PATCH_WRITER_DEFINITION, lambda _input: None)
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
     runtime = _runtime(llm, registry, _BoundedExecutor())
     task = Task(
         id="task-read-to-mutation-handoff",
@@ -2585,24 +3100,31 @@ def test_mutation_route_emits_read_evidence_ready_before_next_provider_decision(
             )
         ],
         write_files=[str(target)],
+        validation_command="python -m pytest -q",
     )
     result = ProviderToolRoundTripRunner(
         _Owner(runtime),
         task,
         tools=build_provider_tool_definitions(
             runtime.tool_registry,
-            ["file_reader", "code_unit_generator", "file_patch_writer"],
+            ["file_reader", "code_unit_generator", "file_patch_writer", "command_executor"],
         ),
         max_rounds=3,
         project_path=str(tmp_path),
         read_scope=[str(target)],
         write_scope=[str(target)],
+        validation_command=task.validation_command,
+        validation_cwd=str(tmp_path),
         bounded_read_windows=task.read_windows,
         allow_mutations=True,
         user_confirmed=True,
     ).run([LLMMessage(role="user", content="Read the declared window and add one bounded test.")])
 
-    assert result.success is True
+    assert result.success is False
+    assert result.error_message == "ProviderToolMutationCompletionEvidenceRequired"
+    assert result.mutation_route is True
+    assert result.mutation_receipt_observed is False
+    assert result.exact_validation_observed is False
     assert len(llm.requests) == 2
     handoff_messages = [
         message
@@ -2735,8 +3257,9 @@ def test_result_projection_keeps_undeclared_partial_page_as_partial_preview(
 
 def test_declared_window_matching_supports_two_exact_windows_for_one_path(tmp_path) -> None:
     target = tmp_path / "target.py"
+    registry = _generator_registry()
     runner = ProviderToolRoundTripRunner(
-        _Owner(_runtime(_LLM([]), _registry(), _Executor())),
+        _Owner(_runtime(_LLM([]), registry, _Executor())),
         Task(id="task-two-windows", description="Read header and body windows"),
         tools=build_provider_tool_definitions(
             _registry(),
@@ -3680,8 +4203,8 @@ def test_record_attempts_renders_partial_window_callsite_hints(tmp_path) -> None
     target = tmp_path / "Code" / "tests" / "test_provider_tool_roundtrip.py"
     target.parent.mkdir(parents=True)
     source_lines = Path(__file__).read_text(encoding="utf-8").splitlines()
-    header = "\n".join(source_lines[:320]) + "\n"
-    target.write_text(header + "\n".join(source_lines[320:]), encoding="utf-8")
+    header = "\n".join(source_lines[:400]) + "\n"
+    target.write_text(header + "\n".join(source_lines[400:]), encoding="utf-8")
     runner = ProviderToolRoundTripRunner(
         _Owner(_runtime(_LLM([]), _registry(), _Executor())),
         Task(id="task-record-partial-callsite", description="Use the declared header"),
@@ -3693,7 +4216,7 @@ def test_record_attempts_renders_partial_window_callsite_hints(tmp_path) -> None
                 file_path=str(target),
                 read_mode="adaptive",
                 offset=0,
-                max_lines=320,
+                max_lines=400,
             )
         ],
     )
@@ -3706,7 +4229,7 @@ def test_record_attempts_renders_partial_window_callsite_hints(tmp_path) -> None
                     "file_path": str(target),
                     "read_mode": "adaptive",
                     "offset": 0,
-                    "max_lines": 320,
+                    "max_lines": 400,
                 }
             ),
         ),
@@ -3715,13 +4238,13 @@ def test_record_attempts_renders_partial_window_callsite_hints(tmp_path) -> None
         "kind": "file_artifact",
         "file_path": str(target),
         "content": header,
-        "lines_read": 320,
+        "lines_read": 400,
         "total_lines": len(source_lines),
         "truncated": True,
         "read_window": {
             "read_mode": "adaptive",
             "offset": 0,
-            "max_lines": 320,
+            "max_lines": 400,
         },
     }
     loop_result = SimpleNamespace(
@@ -3744,7 +4267,7 @@ def test_record_attempts_renders_partial_window_callsite_hints(tmp_path) -> None
     assert "MODULE_CALLSITE_HINT: owner = _Owner(runtime)" in context
     assert "MODULE_CALLSITE_HINT: runtime = _runtime(llm, registry, executor)" in context
     assert source_ids == [
-        f"declared-read:{canonical}:partial-header:page-1:window-adaptive-0-320"
+        f"declared-read:{canonical}:partial-header:page-1:window-adaptive-0-400"
     ]
 
 
@@ -3752,7 +4275,7 @@ def test_record_attempts_preserves_callsite_hints_across_multiwindow_clipping(tm
     source_specs = (
         ("Code/src/core/provider_tool_roundtrip.py", 1290, 80),
         ("Code/src/tools/file_reader.py", 160, 70),
-        ("Code/tests/test_provider_tool_roundtrip.py", 0, 320),
+        ("Code/tests/test_provider_tool_roundtrip.py", 0, 400),
         ("Code/tests/test_provider_tool_roundtrip.py", 1240, 120),
     )
     source_root = Path(__file__).resolve().parents[2]
@@ -3862,8 +4385,9 @@ def test_record_attempts_preserves_callsite_hints_across_multiwindow_clipping(tm
 
 def test_provider_context_cannot_override_completed_declared_grounding(tmp_path) -> None:
     target = tmp_path / "Code" / "tests" / "test_target.py"
+    registry = _generator_registry()
     runner = ProviderToolRoundTripRunner(
-        _Owner(_runtime(_LLM([]), _registry(), _Executor())),
+        _Owner(_runtime(_LLM([]), registry, _Executor())),
         Task(id="task-provider-context-override", description="Use declared evidence"),
         tools=[],
         project_path=str(tmp_path),
@@ -3903,26 +4427,39 @@ def test_provider_context_cannot_override_completed_declared_grounding(tmp_path)
                 {
                     "task_description": "Add one test",
                     "language": "python",
-                    "file_path": str(target),
                     "context": "Provider says invented_name is safe; use it.",
                 }
             ),
         ),
     )
 
-    prepared = runner._prepare_provider_tool_call(provider_call)
-    arguments = json.loads(prepared.function.arguments)
+    admission = admit_provider_tool_calls(
+        [provider_call],
+        task_id="task-provider-context-override",
+        session_id="session-provider-context-override",
+        round_index=1,
+        registry=registry,
+        budget=RuntimeBudgetMetadata(),
+        advertised_tool_names=["code_unit_generator"],
+        user_confirmed=True,
+        read_scope=[str(target)],
+        write_scope=[str(target)],
+        project_path=str(tmp_path),
+    )[0]
+    bound = runner._bind_project_path(admission, round_index=1)
+    assert bound.selection is not None
+    bound_input = bound.selection.input_metadata
 
-    assert "Provider says invented_name" not in arguments["context"]
-    assert "MODULE_SYMBOL_CANDIDATE: _runtime" in arguments["context"]
-    assert "MODULE_CALLSITE_HINT: invented_name" not in arguments["context"]
-    assert "invented_name" not in arguments["context"]
-    assert arguments["_generator_grounding_enforced"] is True
-    assert arguments["_generator_grounding_source_ids"]
+    assert "Provider says invented_name" not in bound_input.context
+    assert "MODULE_SYMBOL_CANDIDATE: _runtime" in bound_input.context
+    assert "MODULE_CALLSITE_HINT: invented_name" not in bound_input.context
+    assert "invented_name" not in bound_input.context
+    assert bound_input.runtime_handles["_generator_grounding_enforced"] is True
+    assert bound_input.prompt_context["grounding"]["source_ids"]
     with pytest.raises(ValueError, match="llm"):
         _validate_grounded_python_unit(
             "def test_generated():\n    return _runtime(llm, _registry(), _Executor())\n",
-            arguments["context"],
+            bound_input.context,
         )
 
 
@@ -3959,8 +4496,9 @@ def test_roundtrip_caps_windowed_reads_before_prompt_history_overflows(monkeypat
              model="deepseek-v4-flash",
              provider="deepseek",
              finish_reason="stop",
-         )]
+             )]
     )
+    llm.settings.context_max_prompt_tokens = 20_000
     runtime = _runtime(llm, _registry(), _LargeCompleteFileExecutor())
     target = tmp_path / "README.md"
     result = ProviderToolRoundTripRunner(
@@ -3972,7 +4510,7 @@ def test_roundtrip_caps_windowed_reads_before_prompt_history_overflows(monkeypat
         read_scope=[str(target)],
     ).run([LLMMessage(role="user", content="Read README")])
 
-    assert result.success is True
+    assert result.success is True, result.error_message
     assert result.evidence_coverage.page_reads_by_path == ((str(target.resolve()), 3),)
     assert result.evidence_coverage.page_cap_paths == (str(target.resolve()),)
     assert result.evidence_coverage.page_read_cap == 3
@@ -4327,6 +4865,99 @@ def test_task_executor_provider_entry_is_default_off(monkeypatch) -> None:
     assert llm.requests == []
 
 
+@pytest.mark.parametrize("field_name", ["allow_mutations", "user_confirmed"])
+@pytest.mark.parametrize("invalid_value", [1, "true", "false"])
+def test_task_executor_rejects_non_boolean_authority_before_budget_or_transport(
+    monkeypatch,
+    field_name,
+    invalid_value,
+) -> None:
+    monkeypatch.setattr(
+        ProviderToolExecutionBudget,
+        "for_profile",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("budget profile must not be resolved")
+        ),
+    )
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    runtime = _runtime(llm, _registry(), _Executor())
+    task = Task(id="task-invalid-entry-authority", description="Read README", kind="inspect")
+    authority = {"allow_mutations": False, "user_confirmed": False}
+    authority[field_name] = invalid_value
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(task=task),
+        tool_names=["file_reader"],
+        **authority,  # type: ignore[arg-type]
+    )
+
+    assert result.status == TaskStatus.FAILED
+    assert result.result_metadata.failure.error_type == "ProviderToolAuthorityFlagInvalid"
+    assert result.result_metadata.failure.details["invalid_field"] == field_name
+    assert llm.requests == []
+
+
+def test_task_executor_maps_setup_failure_to_bounded_typed_fact(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    monkeypatch.setattr(
+        "autonomous_iteration.agents.tool_planning_executor.build_provider_tool_definitions",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("authorization=sk-secret\n" + ("x" * 2_000))
+        ),
+    )
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    runtime = _runtime(llm, _registry(), _Executor())
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        Task(id="task-setup-failure", description="Read README"),
+        TaskExecutionContext(task=Task(id="task-setup-failure", description="Read README")),
+        tool_names=["file_reader"],
+    )
+
+    assert result.status == TaskStatus.FAILED
+    assert result.result_metadata.failure.error_type == "ProviderToolTaskSetupFailed"
+    assert result.result_metadata.failure.details["phase"] == "setup"
+    assert "<redacted>" in result.error
+    assert "sk-secret" not in result.error
+    assert "\n" not in result.error
+    assert len(result.error) <= 300
+
+
+def test_task_executor_maps_runtime_failure_separately_from_setup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    monkeypatch.setattr(
+        "autonomous_iteration.agents.tool_planning_executor.ProviderToolRoundTripRunner.run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("runtime failure\n" + ("y" * 2_000))
+        ),
+    )
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    runtime = _runtime(llm, _registry(), _Executor())
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        Task(id="task-runtime-failure", description="Read README"),
+        TaskExecutionContext(task=Task(id="task-runtime-failure", description="Read README")),
+        tool_names=["file_reader"],
+    )
+
+    assert result.status == TaskStatus.FAILED
+    assert result.result_metadata.failure.error_type == "ProviderToolTaskRuntimeFailed"
+    assert result.result_metadata.failure.details["phase"] == "runtime"
+    assert "runtime failure" in result.error
+    assert "\n" not in result.error
+    assert len(result.error) <= 300
+
+
 def test_task_executor_provider_entry_runs_explicit_read_only_canary(monkeypatch) -> None:
     monkeypatch.setattr(
         "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
@@ -4389,7 +5020,9 @@ def test_task_executor_mutation_prompt_treats_declared_bounded_window_as_complet
     llm = _LLM([])
     llm.settings.provider_tool_execution_enabled = True
     llm.settings.provider_tool_execution_budget_profile = "real_mutation"
-    runtime = _runtime(llm, _mutation_registry(), _Executor())
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    runtime = _runtime(llm, registry, _Executor())
     executor = ToolPlanningTaskExecutor(runtime)
     target = tmp_path / "tests" / "test_calculator.py"
     source = tmp_path / "calculator.py"
@@ -4408,7 +5041,7 @@ def test_task_executor_mutation_prompt_treats_declared_bounded_window_as_complet
             task=task,
             parent_context={"goal": task.description, "project_path": str(tmp_path)},
         ),
-        tool_names=["file_reader"],
+        tool_names=["file_reader", "file_patch_writer", "command_executor"],
         user_confirmed=True,
         allow_mutations=True,
         max_rounds=1,
@@ -4883,6 +5516,443 @@ def test_task_executor_blocks_mutation_on_read_only_or_canary_profile(monkeypatc
     assert llm.requests == []
 
 
+def test_task_executor_rejects_mutation_authority_with_read_only_tool_allowlist(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    llm = _LLM(
+        [
+            LLMResponse(
+                content="The implementation is complete.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason="stop",
+            )
+        ]
+    )
+    llm.settings.provider_tool_execution_enabled = True
+    llm.settings.provider_tool_execution_budget_profile = "real_mutation"
+    runtime = _runtime(llm, _mutation_registry(), _Executor())
+    target = tmp_path / "calculator.py"
+    test_file = tmp_path / "tests" / "test_calculator.py"
+    task = Task(
+        id="task-mutation-read-only-allowlist",
+        description="Modify calculator.py and validate it.",
+        kind="implement",
+        read_files=[str(target), str(test_file)],
+        write_files=[str(target)],
+        validation_command="python -m pytest -q tests/test_calculator.py",
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(
+            task=task,
+            parent_context={"goal": task.description, "project_path": str(tmp_path)},
+        ),
+        tool_names=["file_reader"],
+        user_confirmed=True,
+        allow_mutations=True,
+    )
+
+    assert result.status == TaskStatus.FAILED
+    assert result.result_metadata.status == ResultStatus.FAIL
+    assert result.result_metadata.failure.error_type == "ProviderMutationToolRequired"
+    assert llm.requests == []
+
+
+def test_task_executor_rejects_capability_only_provider_mutation_tool(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    llm.settings.provider_tool_execution_budget_profile = "real_mutation"
+    registry = _registry()
+    registry.register(
+        ToolDefinition(
+            name="capability_only_writer",
+            display_name="capability_only_writer",
+            description="Synthetic writer without provider lifecycle support",
+            capabilities=[ToolCapability.FILE_WRITE],
+            permission_level=PermissionLevel.MEDIUM,
+            contract_metadata=ToolContractMetadata(
+                tool_name="capability_only_writer",
+                input_metadata_type="ToolInputMetadata",
+                output_metadata_type="ToolResultMetadata",
+                required_input_fields=["file_path", "content"],
+            ),
+        ),
+        lambda _input: None,
+    )
+    runtime = _runtime(llm, registry, _Executor())
+    target = tmp_path / "calculator.py"
+    task = Task(
+        id="task-capability-only-writer",
+        description="Modify calculator.py and validate it.",
+        kind="implement",
+        read_files=[str(target)],
+        write_files=[str(target)],
+        validation_command="python -m pytest -q",
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(
+            task=task,
+            parent_context={"goal": task.description, "project_path": str(tmp_path)},
+        ),
+        tool_names=["file_reader", "capability_only_writer"],
+        user_confirmed=True,
+        allow_mutations=True,
+    )
+
+    assert result.status == TaskStatus.FAILED
+    assert result.result_metadata.failure.error_type == "ProviderMutationToolUnsupported"
+    assert llm.requests == []
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [FILE_WRITER_DEFINITION, FILE_DELETE_TOOL_DEFINITION],
+    ids=["file-writer-create-boundary", "file-delete-derived-write-boundary"],
+)
+def test_task_executor_rejects_mutators_without_full_provider_lifecycle(
+    monkeypatch,
+    tmp_path,
+    definition,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    llm.settings.provider_tool_execution_budget_profile = "real_mutation"
+    registry = _mutation_registry()
+    registry.register(definition, lambda _input: None)
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    runtime = _runtime(llm, registry, _Executor())
+    target = tmp_path / "calculator.py"
+    task = Task(
+        id=f"task-unsupported-{definition.name}",
+        description="Modify calculator.py and validate it.",
+        kind="implement",
+        read_files=[str(target)],
+        write_files=[str(target)],
+        validation_command="python -m pytest -q",
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(
+            task=task,
+            parent_context={"goal": task.description, "project_path": str(tmp_path)},
+        ),
+        tool_names=["file_reader", definition.name, "command_executor"],
+        user_confirmed=True,
+        allow_mutations=True,
+    )
+
+    assert result.result_metadata.failure.error_type == "ProviderMutationToolUnsupported"
+    assert llm.requests == []
+
+
+def test_provider_native_mutation_set_has_patch_checkpoint_receipt_and_validation(
+    tmp_path,
+) -> None:
+    assert PROVIDER_NATIVE_MUTATION_TOOLS == {"file_patch_writer"}
+    assert PROVIDER_NATIVE_MUTATION_TOOLS.issubset(FILE_MUTATION_TOOLS)
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    runtime = _runtime(_LLM([]), registry, _Executor())
+    target = tmp_path / "calculator.py"
+    selection = ToolSelection(
+        step_id="step-provider-patch-lifecycle",
+        tool_name="file_patch_writer",
+        reason=SelectionReason.CAPABILITY_MATCH,
+        confidence=1.0,
+        input_metadata=ToolInputMetadata(
+            tool_name="file_patch_writer",
+            file_path=str(target),
+            operation_kind="modify_symbol",
+            symbol_name="divide",
+            replacement_text="def divide(a, b):\n    return a / b",
+        ),
+    )
+    assert ToolEventLoopRunner(_Owner(runtime))._requires_edit_guard(selection) is True
+
+    runner = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-patch-lifecycle", description="Patch and validate", kind="implement"),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_patch_writer", "command_executor"],
+        ),
+        allow_mutations=True,
+        user_confirmed=True,
+        write_scope=[str(target)],
+        project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
+    )
+    receipt = runner._mutation_receipt(
+        {
+            "tool": "file_patch_writer",
+            "success": True,
+            "input_metadata": selection.input_metadata.to_params(),
+            "result": {
+                "bytes_written": 42,
+                "attributes": {"changed_ranges": [{"line_start": 1, "line_end": 2}]},
+            },
+        }
+    )
+    assert receipt is not None
+    runner._post_mutation_receipt = receipt
+    runner._exact_validation_observed = True
+    assert runner._mutation_completion_evidence_ready() is True
+
+
+def test_task_executor_requires_exact_validation_binding_for_mutation(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    llm.settings.provider_tool_execution_budget_profile = "real_mutation"
+    runtime = _runtime(llm, _mutation_registry(), _Executor())
+    target = tmp_path / "calculator.py"
+    task = Task(
+        id="task-mutation-missing-validation",
+        description="Modify calculator.py.",
+        kind="implement",
+        read_files=[str(target)],
+        write_files=[str(target)],
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(
+            task=task,
+            parent_context={"goal": task.description, "project_path": str(tmp_path)},
+        ),
+        tool_names=["file_reader", "file_patch_writer"],
+        user_confirmed=True,
+        allow_mutations=True,
+    )
+
+    assert result.status == TaskStatus.FAILED
+    assert result.result_metadata.failure.error_type == "ProviderMutationValidationCommandRequired"
+    assert llm.requests == []
+
+
+def test_task_executor_requires_validation_tool_for_mutation(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    llm.settings.provider_tool_execution_budget_profile = "real_mutation"
+    runtime = _runtime(llm, _mutation_registry(), _Executor())
+    target = tmp_path / "calculator.py"
+    task = Task(
+        id="task-mutation-missing-validation-tool",
+        description="Modify calculator.py and validate it.",
+        kind="implement",
+        read_files=[str(target)],
+        write_files=[str(target)],
+        validation_command="python -m pytest -q",
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(
+            task=task,
+            parent_context={"goal": task.description, "project_path": str(tmp_path)},
+        ),
+        tool_names=["file_reader", "file_patch_writer"],
+        user_confirmed=True,
+        allow_mutations=True,
+    )
+
+    assert result.result_metadata.failure.error_type == "ProviderMutationValidationToolRequired"
+    assert llm.requests == []
+
+
+def test_task_executor_requires_read_tool_for_mutation(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    llm.settings.provider_tool_execution_budget_profile = "real_mutation"
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    runtime = _runtime(llm, registry, _Executor())
+    target = tmp_path / "calculator.py"
+    task = Task(
+        id="task-mutation-missing-read-tool",
+        description="Modify calculator.py and validate it.",
+        kind="implement",
+        read_files=[str(target)],
+        write_files=[str(target)],
+        validation_command="python -m pytest -q",
+    )
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(
+            task=task,
+            parent_context={"goal": task.description, "project_path": str(tmp_path)},
+        ),
+        tool_names=["file_patch_writer", "command_executor"],
+        user_confirmed=True,
+        allow_mutations=True,
+    )
+
+    assert result.result_metadata.failure.error_type == "ProviderMutationReadToolRequired"
+    assert llm.requests == []
+
+
+def test_mutation_runner_without_validation_binding_never_exposes_command(tmp_path) -> None:
+    registry = _mutation_registry()
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    runtime = _runtime(_LLM([]), registry, _Executor())
+    runner = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-unbound-validation", description="Modify README", kind="implement"),
+        tools=build_provider_tool_definitions(
+            registry,
+            ["file_patch_writer", "command_executor"],
+        ),
+        allow_mutations=True,
+        user_confirmed=True,
+        write_scope=[str(tmp_path / "README.md")],
+        project_path=str(tmp_path),
+    )
+
+    runner._post_mutation_active = True
+
+    assert runner._mutation_boundary_error() == "ProviderMutationValidationCommandRequired"
+    assert "command_executor" not in [
+        tool.function.name for tool in runner._tools_for_request()
+    ]
+
+
+def test_direct_mutation_runner_requires_supported_mutation_tool(tmp_path) -> None:
+    runtime = _runtime(_LLM([]), _registry(), _Executor())
+    runner = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-direct-missing-mutator", description="Modify README", kind="implement"),
+        tools=build_provider_tool_definitions(runtime.tool_registry, ["file_reader"]),
+        allow_mutations=True,
+        user_confirmed=True,
+        read_scope=[str(tmp_path / "README.md")],
+        write_scope=[str(tmp_path / "README.md")],
+        project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
+        validation_cwd=str(tmp_path),
+    )
+
+    assert runner._mutation_boundary_error() == "ProviderMutationToolRequired"
+
+
+@pytest.mark.parametrize("field_name", ["allow_mutations", "user_confirmed"])
+@pytest.mark.parametrize("invalid_value", [1, "true", "false"])
+def test_direct_runner_rejects_non_boolean_authority_before_request(
+    monkeypatch,
+    field_name,
+    invalid_value,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    llm = _LLM([])
+    registry = _mutation_registry()
+    runtime = _runtime(llm, registry, _Executor())
+    authority = {"allow_mutations": True, "user_confirmed": True}
+    authority[field_name] = invalid_value
+    runner = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-invalid-runner-authority", description="Read README", kind="inspect"),
+        tools=build_provider_tool_definitions(registry, ["file_patch_writer"]),
+        max_rounds=1,
+        **authority,  # type: ignore[arg-type]
+    )
+    monkeypatch.setattr(
+        runner,
+        "_runtime_budget",
+        lambda: (_ for _ in ()).throw(AssertionError("runtime budget must not be read")),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_reasoning_complexity",
+        lambda: (_ for _ in ()).throw(AssertionError("reasoning complexity must not be read")),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_request_reasoning_policy",
+        lambda: (_ for _ in ()).throw(AssertionError("reasoning policy must not be read")),
+    )
+
+    result = runner.run([LLMMessage(role="user", content="Read README")])
+
+    assert result.success is False
+    assert result.error_message == "ProviderToolAuthorityFlagInvalid"
+    assert result.rounds_used == 0
+    assert result.outcome_feedback_enabled is False
+    assert result.reasoning_mode is None
+    assert result.reasoning_complexity is ReasoningDecisionComplexity.STANDARD
+    assert result.mutation_route is False
+    assert llm.requests == []
+
+
+def test_direct_mutation_runner_requires_validation_and_read_tools(tmp_path) -> None:
+    registry = _mutation_registry()
+    runtime = _runtime(_LLM([]), registry, _Executor())
+    target = str(tmp_path / "README.md")
+    missing_validation = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-direct-missing-validation-tool", description="Modify README", kind="implement"),
+        tools=build_provider_tool_definitions(registry, ["file_reader", "file_patch_writer"]),
+        allow_mutations=True,
+        user_confirmed=True,
+        read_scope=[target],
+        write_scope=[target],
+        project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
+    )
+    assert missing_validation._mutation_boundary_error() == "ProviderMutationValidationToolRequired"
+
+    registry.register(COMMAND_EXECUTOR_DEFINITION, lambda _input: None)
+    missing_read = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-direct-missing-read-tool", description="Modify README", kind="implement"),
+        tools=build_provider_tool_definitions(registry, ["file_patch_writer", "command_executor"]),
+        allow_mutations=True,
+        user_confirmed=True,
+        read_scope=[target],
+        write_scope=[target],
+        project_path=str(tmp_path),
+        validation_command="python -m pytest -q",
+    )
+    assert missing_read._mutation_boundary_error() == "ProviderMutationReadToolRequired"
+
+
 def test_task_executor_surfaces_evidence_coverage_after_finalization(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
@@ -5054,6 +6124,113 @@ def test_provider_roundtrip_result_binds_outcome_feedback_and_failed_attempt_bud
     assert diagnostic["finish_reason"] is None
     assert diagnostic["outcome"] is None
     assert diagnostic["error_type"] == "RuntimeError"
+
+
+def test_provider_request_failure_sanitizes_secret_before_task_result_projection(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    exposed_secret = "sk-request-secret-1234567890"
+    llm = _LLM([])
+    llm.settings.provider_tool_execution_enabled = True
+    provider_error = RuntimeError(
+        f"Incorrect API key provided: {exposed_secret}; "
+        f"Authorization: Bearer {exposed_secret}"
+    )
+    provider_error.finish_reason = (
+        f"Authorization: Bearer {exposed_secret}\n" + ("length " * 200)
+    )
+    llm.complete = lambda _request: (_ for _ in ()).throw(provider_error)
+    runtime = _runtime(llm, _registry(), _Executor())
+    task = Task(id="task-provider-secret-request", description="Read README.md")
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(task=task, parent_context={"goal": task.description}),
+        tool_names=["file_reader"],
+        max_rounds=1,
+    )
+
+    serialized = result.model_dump_json()
+    assert result.status == TaskStatus.FAILED
+    assert exposed_secret not in serialized
+    assert "<redacted>" in result.error
+    assert result.result_metadata.failure.details["runner_exception_type"] == "RuntimeError"
+    assert len(result.error) <= 320
+    finish_reason = result.attributes["budget_diagnostics"][0]["finish_reason"]
+    assert exposed_secret not in finish_reason
+    assert "\n" not in finish_reason
+    assert len(finish_reason) <= 64
+
+
+def test_provider_response_finish_reason_is_sanitized_before_roundtrip_result(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    exposed_secret = "sk-response-finish-secret-1234567890"
+    llm = _LLM(
+        [
+            LLMResponse(
+                content="Read-only answer.",
+                model="deepseek-v4-flash",
+                provider="deepseek",
+                finish_reason=(
+                    f"Authorization: Bearer {exposed_secret}\n" + ("stop " * 200)
+                ),
+            )
+        ]
+    )
+    runtime = _runtime(llm, _registry(), _Executor())
+
+    result = ProviderToolRoundTripRunner(
+        _Owner(runtime),
+        Task(id="task-response-finish-secret", description="Answer from evidence"),
+        tools=build_provider_tool_definitions(runtime.tool_registry, ["file_reader"]),
+        max_rounds=1,
+    ).run([LLMMessage(role="user", content="Answer from evidence")])
+
+    assert result.success is True
+    assert result.final_response is not None
+    assert exposed_secret not in result.final_response.finish_reason
+    assert "\n" not in result.final_response.finish_reason
+    assert len(result.final_response.finish_reason) <= 64
+
+
+def test_provider_in_run_execution_failure_sanitizes_unlabeled_secret(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "memory.context_assembly.request_builder.ProviderTokenCounter.from_settings",
+        lambda _settings: _TokenCounter(),
+    )
+    exposed_secret = "sk-unlabeled-secret-1234567890"
+    monkeypatch.setattr(
+        "core.provider_tool_roundtrip.ToolEventLoopRunner.run_provider_tool_calls",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError(f"provider runtime rejected {exposed_secret}\n" + ("x" * 2_000))
+        ),
+    )
+    llm = _LLM([_tool_response(call_id="secret-runtime-call")])
+    llm.settings.provider_tool_execution_enabled = True
+    runtime = _runtime(llm, _registry(), _Executor())
+    task = Task(id="task-provider-secret-runtime", description="Read README.md")
+
+    result = ToolPlanningTaskExecutor(runtime).execute_provider_tool_task(
+        task,
+        TaskExecutionContext(task=task, parent_context={"goal": task.description}),
+        tool_names=["file_reader"],
+        max_rounds=1,
+    )
+
+    serialized = result.model_dump_json()
+    assert result.status == TaskStatus.FAILED
+    assert exposed_secret not in serialized
+    assert "<redacted>" in result.error
+    assert "\n" not in result.error
+    assert result.result_metadata.failure.details["runner_exception_type"] == "ValueError"
+    assert len(result.error) <= 320
 
 
 def test_provider_roundtrip_failed_attempt_preserves_known_error_usage_and_finish(monkeypatch) -> None:

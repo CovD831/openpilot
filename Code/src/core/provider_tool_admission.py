@@ -14,7 +14,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from core.llm import LLMToolCall, LLMToolResult
 from core.tool_contracts import PermissionLevel, ToolCapability
@@ -27,11 +27,22 @@ from metadata import (
     ToolInputMetadata,
 )
 from tools.mutation_descriptor import FILE_MUTATION_TOOLS
+from tools.command_tool import ExecutionMode
+from tools.web_searcher import SAFE_SEARCH_PARAMS
 from tools.tool_selection import SelectionReason, ToolSelection
 
 
 class ProviderToolAdmissionError(ValueError):
     """Raised for malformed or ambiguous provider tool-call batches."""
+
+
+class _ValidationCommandViolation(BaseModel):
+    """Typed validation-command admission fact used for error routing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    code: Literal["duplicate", "mismatch", "mode", "cwd"]
+    message: str
 
 
 class ProviderToolAdmission(BaseModel):
@@ -60,6 +71,40 @@ class ProviderToolAdmission(BaseModel):
         return self
 
 
+def provider_tool_wire_fields(definition: Any) -> tuple[str, ...]:
+    """Return the exact provider-visible fields declared by one tool contract."""
+
+    contract = getattr(definition, "contract_metadata", None)
+    if contract is None:
+        return ()
+    ordered: list[str] = []
+    conditional_fields: list[str] = []
+    for requirement in getattr(contract, "conditional_requirements", []) or []:
+        if not isinstance(requirement, dict):
+            continue
+        conditional_fields.extend(str(field) for field in (requirement.get("when", {}) or {}))
+        conditional_fields.extend(str(field) for field in (requirement.get("required", []) or []))
+        conditional_fields.extend(
+            str(field)
+            for group in (requirement.get("required_any_of", []) or [])
+            for field in group
+        )
+    for raw_field in (
+        *(getattr(contract, "required_input_fields", []) or []),
+        *(
+            field
+            for group in (getattr(contract, "required_any_of", []) or [])
+            for field in group
+        ),
+        *(getattr(contract, "input_defaults", {}) or {}),
+        *conditional_fields,
+    ):
+        field = str(raw_field or "").strip()
+        if field and field not in ordered:
+            ordered.append(field)
+    return tuple(ordered)
+
+
 def admit_provider_tool_calls(
     tool_calls: Sequence[LLMToolCall],
     *,
@@ -68,6 +113,8 @@ def admit_provider_tool_calls(
     round_index: int,
     registry: Any,
     budget: RuntimeBudgetMetadata,
+    advertised_tool_names: Sequence[str],
+    allow_mutations: bool = False,
     user_confirmed: bool = False,
     read_scope: Sequence[str] | None = None,
     write_scope: Sequence[str] | None = None,
@@ -75,9 +122,16 @@ def admit_provider_tool_calls(
     validation_command: str | None = None,
     validation_cwd: str | None = None,
     validation_commands_used: int = 0,
+    required_reads_complete: bool = True,
+    require_mutation_before_validation: bool = False,
+    mutation_observed: bool = False,
 ) -> list[ProviderToolAdmission]:
     """Bind and admit a provider tool-call batch without executing anything."""
 
+    if not isinstance(allow_mutations, bool):
+        raise ProviderToolAdmissionError("allow_mutations must be a boolean")
+    if not isinstance(user_confirmed, bool):
+        raise ProviderToolAdmissionError("user_confirmed must be a boolean")
     calls = list(tool_calls)
     provider_ids = [call.id for call in calls]
     if not task_id or not session_id or round_index < 1:
@@ -86,12 +140,18 @@ def admit_provider_tool_calls(
         raise ProviderToolAdmissionError("provider tool call IDs must be unique within one response")
 
     admissions: list[ProviderToolAdmission] = []
+    advertised_names = frozenset(
+        str(name).strip()
+        for name in advertised_tool_names
+        if str(name).strip()
+    )
     prior_counts = {
         "reads": 0,
         "edits": 0,
         "creates": 0,
         "calls": 0,
         "validation": max(0, int(validation_commands_used)),
+        "mutations": int(bool(mutation_observed)),
     }
     for ordinal, call in enumerate(calls, start=1):
         admission = _admit_one(
@@ -102,6 +162,8 @@ def admit_provider_tool_calls(
             ordinal=ordinal,
             registry=registry,
             budget=budget,
+            advertised_tool_names=advertised_names,
+            allow_mutations=allow_mutations,
             user_confirmed=user_confirmed,
             prior_counts=prior_counts,
             read_scope=read_scope,
@@ -109,6 +171,8 @@ def admit_provider_tool_calls(
             project_path=project_path,
             validation_command=validation_command,
             validation_cwd=validation_cwd,
+            required_reads_complete=required_reads_complete,
+            require_mutation_before_validation=require_mutation_before_validation,
         )
         admissions.append(admission)
         if admission.status == "admitted":
@@ -175,6 +239,8 @@ def _admit_one(
     ordinal: int,
     registry: Any,
     budget: RuntimeBudgetMetadata,
+    advertised_tool_names: frozenset[str],
+    allow_mutations: bool,
     user_confirmed: bool,
     prior_counts: dict[str, int],
     read_scope: Sequence[str] | None,
@@ -182,31 +248,29 @@ def _admit_one(
     project_path: str | None,
     validation_command: str | None,
     validation_cwd: str | None,
+    required_reads_complete: bool,
+    require_mutation_before_validation: bool,
 ) -> ProviderToolAdmission:
     project_call_id = f"{task_id}:r{round_index}:c{ordinal}"
     tool_name = call.function.name
-    arguments, argument_error = _decode_arguments(call)
-    input_metadata = ToolInputMetadata.from_mapping(tool_name, arguments)
-    tool_call = ToolCallMetadata(
-        session_id=session_id,
-        task_id=task_id,
-        step_id=f"step_{round_index}_{ordinal}",
-        call_id=project_call_id,
-        provider_call_id=call.id,
-        tool_name=tool_name,
-        input_metadata=input_metadata,
-        reason="provider-native tool call",
-        round_index=round_index,
-    )
 
-    if argument_error:
-        return _blocked(
-            tool_call,
-            error_type="InvalidToolArguments",
-            error_message=argument_error,
-            recoverable=True,
-            suggested_recovery="Return one JSON object containing the tool arguments.",
+    def build_tool_call(input_metadata: ToolInputMetadata) -> ToolCallMetadata:
+        return ToolCallMetadata(
+            session_id=session_id,
+            task_id=task_id,
+            step_id=f"step_{round_index}_{ordinal}",
+            call_id=project_call_id,
+            provider_call_id=call.id,
+            tool_name=tool_name,
+            input_metadata=input_metadata,
+            reason="provider-native tool call",
+            round_index=round_index,
         )
+
+    # Resolve registry/executor identity before interpreting any provider
+    # arguments. The empty project-owned envelope keeps an unknown call
+    # recoverable without binding malformed or undeclared provider fields.
+    tool_call = build_tool_call(ToolInputMetadata(tool_name=tool_name))
 
     definition = getattr(registry, "get", lambda _name: None)(tool_name)
     if definition is None or getattr(registry, "get_executor", lambda _name: None)(tool_name) is None:
@@ -218,10 +282,96 @@ def _admit_one(
             suggested_recovery="Choose a registered tool with an executable contract.",
         )
 
+    if tool_name not in advertised_tool_names:
+        return _blocked(
+            tool_call,
+            error_type="ProviderToolNotAdvertised",
+            error_message=f"Tool {tool_name} was not exposed in this provider request.",
+            recoverable=True,
+            suggested_recovery="Choose a tool from the current request tool surface.",
+        )
+
+    capabilities = set(getattr(definition, "capabilities", []) or [])
+    mutating = bool(
+        {ToolCapability.FILE_WRITE, ToolCapability.FILE_DELETE} & capabilities
+    ) or tool_name in FILE_MUTATION_TOOLS
+    if mutating and not allow_mutations:
+        return _blocked(
+            tool_call,
+            error_type="ProviderToolMutationOptInRequired",
+            error_message="Provider-native mutation requires explicit allow_mutations authority.",
+            recoverable=False,
+            suggested_recovery="Use a read-only tool or obtain explicit mutation authority.",
+        )
+    if mutating and not write_scope:
+        return _blocked(
+            tool_call,
+            error_type="ProviderToolMutationScopeRequired",
+            error_message="Provider-native mutation requires a non-empty explicit write scope.",
+            recoverable=False,
+            suggested_recovery="Bind an explicit non-empty write_files scope before mutation.",
+        )
+
+    arguments, argument_error = _decode_arguments(call)
+
+    if argument_error:
+        return _blocked(
+            tool_call,
+            error_type="InvalidToolArguments",
+            error_message=argument_error,
+            recoverable=True,
+            suggested_recovery="Return one JSON object containing the tool arguments.",
+        )
+
+    undeclared_fields = sorted(set(arguments) - set(provider_tool_wire_fields(definition)))
+    if undeclared_fields:
+        return _blocked(
+            tool_call,
+            error_type="ProviderToolUndeclaredArgument",
+            error_message=(
+                f"Provider arguments not declared by {tool_name}: "
+                + ", ".join(undeclared_fields[:8])
+            )[:256],
+            recoverable=True,
+            suggested_recovery="Retry using only fields declared by the provider tool schema.",
+        )
+
+    typed_input_error: str | None = None
+    try:
+        input_metadata = ToolInputMetadata.from_mapping(tool_name, arguments)
+    except ValidationError as exc:
+        fields = _validation_error_fields(exc)
+        input_metadata = ToolInputMetadata(
+            tool_name=tool_name,
+            attributes={"invalid_input_fields": fields},
+        )
+        typed_input_error = (
+            f"Invalid typed input for {tool_name}: {', '.join(fields)}"
+        )[:256]
+    tool_call = build_tool_call(input_metadata)
+    if typed_input_error:
+        return _blocked(
+            tool_call,
+            error_type="InvalidToolArguments",
+            error_message=typed_input_error,
+            recoverable=True,
+            suggested_recovery="Retry with values matching the typed provider tool schema.",
+        )
+
     contract = getattr(definition, "contract_metadata", None)
     for field_name, default in (getattr(contract, "input_defaults", {}) or {}).items():
         if getattr(input_metadata, str(field_name), None) in (None, "", [], {}):
             setattr(input_metadata, str(field_name), deepcopy(default))
+
+    value_error = _provider_input_value_error(tool_name, input_metadata)
+    if value_error:
+        return _blocked(
+            tool_call,
+            error_type="InvalidToolArguments",
+            error_message=value_error,
+            recoverable=True,
+            suggested_recovery="Retry with values matching the typed provider tool schema.",
+        )
 
     contract_error = _contract_error(definition, input_metadata)
     if contract_error:
@@ -248,7 +398,6 @@ def _admit_one(
         )
 
     permission_level = str(getattr(definition, "permission_level", PermissionLevel.MEDIUM) or "medium").lower()
-    capabilities = set(getattr(definition, "capabilities", []) or [])
     if ToolCapability.FILE_READ in capabilities and read_scope is not None:
         scope_violation = _read_scope_violation(input_metadata, read_scope, project_path)
         if scope_violation:
@@ -259,7 +408,14 @@ def _admit_one(
                 recoverable=write_scope is None,
                 suggested_recovery="Use a file path from the explicit read_files scope or request scope clarification.",
             )
-    mutating = bool({ToolCapability.FILE_WRITE, ToolCapability.FILE_DELETE} & capabilities) or tool_name in FILE_MUTATION_TOOLS
+    if mutating and not required_reads_complete:
+        return _blocked(
+            tool_call,
+            error_type="ProviderDeclaredReadEvidenceRequired",
+            error_message="Every declared read must have complete typed evidence before mutation.",
+            recoverable=False,
+            suggested_recovery="Complete each declared read before requesting a mutation.",
+        )
     if mutating and write_scope is not None:
         scope_violation = _write_scope_violation(
             input_metadata,
@@ -273,6 +429,23 @@ def _admit_one(
                 error_message=scope_violation,
                 recoverable=False,
                 suggested_recovery="Use a mutation target from the explicit write_files scope.",
+            )
+    if tool_name == "command_executor" and require_mutation_before_validation:
+        if not str(validation_command or "").strip():
+            return _blocked(
+                tool_call,
+                error_type="ProviderMutationValidationCommandRequired",
+                error_message="Mutation-mode command execution requires a bound exact validation_command.",
+                recoverable=False,
+                suggested_recovery="Bind the task's exact validation command before mutation execution.",
+            )
+        if prior_counts["mutations"] < 1:
+            return _blocked(
+                tool_call,
+                error_type="ProviderMutationEvidenceRequiredBeforeValidation",
+                error_message="Exact validation requires an admitted mutation in this or an earlier round.",
+                recoverable=False,
+                suggested_recovery="Complete the scoped mutation before running exact validation.",
             )
     if validation_command and tool_name == "command_executor":
         # ``command_executor`` defaults to dry_run when mode is omitted.  A
@@ -290,15 +463,11 @@ def _admit_one(
             validation_commands_used=prior_counts["validation"],
         )
         if validation_violation:
-            error_type = (
-                "ProviderToolValidationDuplicate"
-                if "already admitted" in validation_violation
-                else "ProviderToolValidationViolation"
-            )
+            error_type = "ProviderToolValidationDuplicate" if validation_violation.code == "duplicate" else "ProviderToolValidationViolation"
             return _blocked(
                 tool_call,
                 error_type=error_type,
-                error_message=validation_violation,
+                error_message=validation_violation.message,
                 recoverable=False,
                 suggested_recovery="Run the exact typed validation command once after the mutation.",
             )
@@ -354,6 +523,44 @@ def _decode_arguments(call: LLMToolCall) -> tuple[dict[str, Any], str | None]:
     if not isinstance(decoded, dict):
         return {}, f"Tool {call.function.name} arguments must be a JSON object."
     return decoded, None
+
+
+def _validation_error_fields(exc: ValidationError) -> list[str]:
+    """Return bounded field/type facts without echoing untrusted values."""
+
+    fields: list[str] = []
+    for item in exc.errors(include_context=False)[:4]:
+        location = ".".join(str(part) for part in item.get("loc", ())) or "input"
+        error_type = str(item.get("type", "invalid"))
+        fields.append(f"{location} ({error_type})"[:96])
+    return fields or ["input (invalid)"]
+
+
+def _provider_input_value_error(
+    tool_name: str,
+    input_metadata: ToolInputMetadata,
+) -> str | None:
+    """Apply provider-only bounds that are stricter than broad runtime inputs."""
+
+    if tool_name == "file_reader":
+        if input_metadata.offset is not None and input_metadata.offset < 0:
+            return "file_reader offset must be greater than or equal to 0."
+        if input_metadata.max_lines is not None and input_metadata.max_lines < 1:
+            return "file_reader max_lines must be greater than 0."
+    if tool_name == "web_searcher":
+        safe_search = str(input_metadata.safe_search or "").strip().lower()
+        if safe_search and safe_search not in SAFE_SEARCH_PARAMS:
+            return "web_searcher safe_search must be one of: off, moderate, strict."
+    if tool_name == "command_executor":
+        mode = str(input_metadata.mode or "").strip().lower()
+        allowed_modes = {item.value for item in ExecutionMode}
+        if mode and mode not in allowed_modes:
+            return (
+                "command_executor mode must be one of: "
+                + ", ".join(item.value for item in ExecutionMode)
+                + "."
+            )
+    return None
 
 
 def _contract_error(definition: Any, input_metadata: ToolInputMetadata) -> str | None:
@@ -429,7 +636,13 @@ def _resource_counts(
     creates = int(writes and operation in {"create_file", "file_create", "directory_generate"})
     edits = int(writes and not creates)
     validation = int(bool(validation_command and input_metadata.tool_name == "command_executor"))
-    return {"reads": reads, "edits": edits, "creates": creates, "validation": validation}
+    return {
+        "reads": reads,
+        "edits": edits,
+        "creates": creates,
+        "validation": validation,
+        "mutations": int(writes),
+    }
 
 
 def _canonical_path(raw_path: Any, project_path: str | None) -> str:
@@ -554,20 +767,32 @@ def _validation_command_violation(
     validation_command: str,
     validation_cwd: str | None,
     validation_commands_used: int,
-) -> str | None:
+) -> _ValidationCommandViolation | None:
     if validation_commands_used > 0:
-        return "The exact validation command was already admitted; duplicate validation is denied."
+        return _ValidationCommandViolation(
+            code="duplicate",
+            message="The exact validation command was already admitted; duplicate validation is denied.",
+        )
     expected = normalize_command_argv(validation_command)
     actual = normalize_command_argv(str(input_metadata.command or ""))
     if expected is None or actual != expected:
-        return "Provider command does not exactly match the typed validation_command."
+        return _ValidationCommandViolation(
+            code="mismatch",
+            message="Provider command does not exactly match the typed validation_command.",
+        )
     mode = str(input_metadata.mode or "").strip().lower()
-    if mode and mode not in {"automatic", "execute", "run", "exec"}:
-        return "Provider validation command must use automatic execution mode."
+    if mode and mode != ExecutionMode.AUTOMATIC.value:
+        return _ValidationCommandViolation(
+            code="mode",
+            message="Provider validation command must use automatic execution mode.",
+        )
     requested_cwd = str(input_metadata.cwd or "").strip()
     if requested_cwd and validation_cwd:
         if _canonical_path(requested_cwd, None) != _canonical_path(validation_cwd, None):
-            return "Provider validation command cwd does not match the project root."
+            return _ValidationCommandViolation(
+                code="cwd",
+                message="Provider validation command cwd does not match the project root.",
+            )
     return None
 
 
@@ -581,6 +806,12 @@ def _budget_available(
         and budget.file_reads_used + prior_counts["reads"] + counts["reads"] <= budget.max_file_reads
         and budget.file_edits_used + prior_counts["edits"] + counts["edits"] <= budget.max_file_edits
         and budget.file_creates_used + prior_counts["creates"] + counts["creates"] <= budget.max_file_creates
+        and (
+            budget.verification_attempts_used
+            + prior_counts["validation"]
+            + counts["validation"]
+            <= budget.max_verification_attempts
+        )
     )
 
 
@@ -616,5 +847,6 @@ __all__ = [
     "ProviderToolAdmission",
     "ProviderToolAdmissionError",
     "admit_provider_tool_calls",
+    "provider_tool_wire_fields",
     "provider_tool_error",
 ]

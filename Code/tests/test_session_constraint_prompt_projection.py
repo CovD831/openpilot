@@ -130,6 +130,27 @@ def test_tool_planner_projects_active_constraints_once(tmp_path) -> None:
     assert "SessionConstraintState(" not in prompt
 
 
+def test_tool_planner_accepts_unchanged_authority_after_cursor_advance(tmp_path) -> None:
+    task = Task(id="task-1", description="Repair divide")
+    original = _state()
+    advanced = original.model_copy(update={"processed_through_turn": 50})
+    context = TaskExecutionContext(
+        task=task,
+        parent_context={"goal": "Repair divide", "session_constraints": original},
+        shared_state={"session_constraints": advanced},
+        execution_history=[],
+    )
+
+    prompt = ToolPlanningTaskExecutor(_Runtime(tmp_path))._build_tool_plan_prompt(
+        task.description,
+        "Repair divide",
+        "surface",
+        context,
+    )
+
+    assert "Active Session Constraints" in prompt
+
+
 def test_tool_planner_retry_prompt_keeps_active_constraints(tmp_path) -> None:
     task = Task(id="task-1", description="Repair divide")
     context = TaskExecutionContext(

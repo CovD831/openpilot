@@ -60,8 +60,8 @@ class ContextLoaderAgent:
                 raise ValueError("session ingress project identity mismatch")
             if (
                 session_constraints is not None
-                and session_constraints.canonical_hash
-                != session_ingress_state.session_constraints.canonical_hash
+                and session_constraints.authority_hash
+                != session_ingress_state.session_constraints.authority_hash
             ):
                 raise ValueError("session ingress and explicit constraints differ")
             if session_ingress_state.session_constraints.project_root:
